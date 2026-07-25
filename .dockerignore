@@ -1,0 +1,14 @@
+bin/
+/crawler
+/dnspublisher
+data/
+web/node_modules/
+web/dist/
+web/*.tsbuildinfo
+web/e2e/screenshots/
+scratch_clprobe/
+.agents/
+.codex/
+.git/
+.github/
+*.md

@@ -1,0 +1,26 @@
+# syntax=docker/dockerfile:1.7
+FROM golang:1.26@sha256:ae5a2316d12f3e78fd99177dad452e6ad4f240af2d71d57b480c3477f250fec6 AS build
+ARG SOURCE_REVISION=unknown
+ARG SOURCE_URL=https://github.com/MysticRyuujin/enrscout
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
+COPY cmd ./cmd
+COPY internal ./internal
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 go build -mod=readonly -trimpath -buildvcs=false -ldflags="-s -w -X github.com/MysticRyuujin/enrscout/internal/buildinfo.Revision=${SOURCE_REVISION} -X github.com/MysticRyuujin/enrscout/internal/buildinfo.SourceURL=${SOURCE_URL}" -o /out/enrscout-crawler ./cmd/crawler
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 go build -mod=readonly -trimpath -buildvcs=false -ldflags="-s -w -X github.com/MysticRyuujin/enrscout/internal/buildinfo.Revision=${SOURCE_REVISION} -X github.com/MysticRyuujin/enrscout/internal/buildinfo.SourceURL=${SOURCE_URL}" -o /out/enrscout-dnspublisher ./cmd/dnspublisher
+RUN install -d -o 65532 -g 65532 /out/identity
+
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:aef9602f8710ec12bde19d593fed1f76c708531bb7aba205110f1029786ead7b
+COPY --from=build /out/enrscout-crawler /usr/local/bin/enrscout-crawler
+COPY --from=build /out/enrscout-dnspublisher /usr/local/bin/enrscout-dnspublisher
+COPY --from=build --chown=65532:65532 /out/identity /identity
+COPY LICENSE NOTICE /licenses/enrscout/
+LABEL org.opencontainers.image.source="https://github.com/MysticRyuujin/enrscout" \
+      org.opencontainers.image.licenses="AGPL-3.0-or-later"
+USER nonroot
+ENTRYPOINT ["/usr/local/bin/enrscout-crawler"]

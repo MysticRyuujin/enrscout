@@ -1,0 +1,38 @@
+name: enrscout-e2e
+
+services:
+  api:
+    build:
+      context: ../..
+      dockerfile: Dockerfile.api
+    command:
+      - --addr=:8080
+      - --networks=mainnet,hoodi,sepolia
+      - --data=/fixtures
+      - --prefix=snapshots
+      - --max-snapshot-age=87600h
+    volumes:
+      - ./fixtures:/fixtures:ro
+    ports:
+      - "127.0.0.1:8080:8080"
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+
+  web:
+    build:
+      context: ../..
+      dockerfile: web/Dockerfile
+    depends_on:
+      - api
+    ports:
+      - "127.0.0.1:8081:8081"
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]

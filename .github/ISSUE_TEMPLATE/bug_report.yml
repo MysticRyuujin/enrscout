@@ -1,0 +1,40 @@
+name: Bug report
+description: Report a reproducible ENRScout problem.
+title: "bug: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Do not include secrets, private keys, or undisclosed vulnerabilities.
+  - type: input
+    id: revision
+    attributes:
+      label: Revision or image digest
+      placeholder: Commit SHA or container digest
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, architecture, deployment method, and relevant client versions.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction
+      description: Minimal configuration and exact steps, with sensitive values removed.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Logs or evidence
+      description: Include bounded relevant excerpts and redact credentials and public IPs when appropriate.

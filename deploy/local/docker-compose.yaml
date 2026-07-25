@@ -1,0 +1,136 @@
+name: enrscout
+
+services:
+  minio:
+    image: minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+
+  crawler:
+    build:
+      context: ../..
+      dockerfile: Dockerfile.crawler
+      args:
+        SOURCE_REVISION: ${SOURCE_REVISION:-unknown}
+        SOURCE_URL: ${SOURCE_URL:-https://github.com/MysticRyuujin/enrscout}
+    restart: unless-stopped
+    stop_grace_period: 60s
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      S3_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      ENRSCOUT_IMAGE_DIGEST: ${ENRSCOUT_IMAGE_DIGEST:-}
+    command:
+      - --advertiser-networks=mainnet,hoodi,sepolia
+      - --advertiser-port-base=30303
+      - --el-identities-per-network=1
+      - --identity-dir=/identity
+      - --s3-endpoint=minio:9000
+      - --s3-ssl=false
+      - --s3-bucket=enrscout
+      - --s3-create-bucket
+      - --snapshot-interval=30s
+      - --ip-stack=ipv4
+      - --metrics-addr=:9100
+      # Listen on all interfaces in-container; host publish stays loopback-only below.
+      - --pprof=:6060
+      - --geolite-city=/geoip/GeoLite2-City.mmdb
+      - --geolite-asn=/geoip/GeoLite2-ASN.mmdb
+    ports:
+      # Three ports per network: EL discovery/RLPx, CL discovery, CL TCP/QUIC.
+      - "0.0.0.0:30303:30303/udp"
+      - "0.0.0.0:30303:30303/tcp"
+      - "0.0.0.0:30304:30304/udp"
+      - "0.0.0.0:30305:30305/udp"
+      - "0.0.0.0:30305:30305/tcp"
+      - "0.0.0.0:30306:30306/udp"
+      - "0.0.0.0:30306:30306/tcp"
+      - "0.0.0.0:30307:30307/udp"
+      - "0.0.0.0:30308:30308/udp"
+      - "0.0.0.0:30308:30308/tcp"
+      - "0.0.0.0:30309:30309/udp"
+      - "0.0.0.0:30309:30309/tcp"
+      - "0.0.0.0:30310:30310/udp"
+      - "0.0.0.0:30311:30311/udp"
+      - "0.0.0.0:30311:30311/tcp"
+      - "127.0.0.1:9100:9100"
+      - "127.0.0.1:6060:6060"
+    volumes:
+      - ../../data/geoip:/geoip:ro
+      - crawler-identities:/identity
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+
+  api:
+    build:
+      context: ../..
+      dockerfile: Dockerfile.api
+      args:
+        SOURCE_REVISION: ${SOURCE_REVISION:-unknown}
+        SOURCE_URL: ${SOURCE_URL:-https://github.com/MysticRyuujin/enrscout}
+    restart: unless-stopped
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      S3_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    command:
+      - --addr=:8080
+      - --networks=mainnet,hoodi,sepolia
+      - --s3-endpoint=minio:9000
+      - --s3-ssl=false
+      - --s3-bucket=enrscout
+      - --refresh=30s
+      # Listen on all interfaces in-container; host publish stays loopback-only below.
+      - --pprof=:6060
+    ports:
+      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:6061:6060"
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+
+  web:
+    build:
+      context: ../..
+      dockerfile: web/Dockerfile
+    depends_on:
+      - api
+    ports:
+      - "127.0.0.1:8081:8081"
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+
+volumes:
+  minio-data:
+  crawler-identities:

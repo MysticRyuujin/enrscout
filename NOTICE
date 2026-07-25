@@ -1,0 +1,48 @@
+ENRScout
+Copyright (C) 2026 the ENRScout authors
+
+This program is free software: you can redistribute it and/or modify it under the
+terms of the GNU Affero General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later version.
+See the LICENSE file for the full text.
+
+------------------------------------------------------------------------------
+Third-party components
+------------------------------------------------------------------------------
+
+go-ethereum (github.com/ethereum/go-ethereum)
+    Library packages used: accounts/keystore, common, core, core/forkid,
+    core/types, crypto, log, p2p, p2p/discover, p2p/dnsdisc, p2p/enode, p2p/enr,
+    p2p/netutil, p2p/rlpx, params, rlp.
+    Licensed under the GNU Lesser General Public License v3.0 (LGPL-3.0).
+    LGPL-3.0 permits use within this AGPL-3.0 work. Users are entitled to the
+    relinking rights the LGPL provides; build instructions are in the README so a
+    modified version of the linked library may be substituted.
+    No code was copied from go-ethereum's GPL-3.0 `cmd/` tooling.
+
+MaxMind GeoLite2
+    This product includes GeoLite2 data created by MaxMind, available from
+    https://www.maxmind.com. Use is subject to the GeoLite2 End User License
+    Agreement. GeoLite2 databases are not distributed with this repository; they are
+    fetched at deploy time using an operator-supplied license key.
+
+go-libp2p (github.com/libp2p/go-libp2p)
+    Used to probe consensus-layer (beacon) nodes over libp2p and read the
+    identify AgentVersion. MIT licensed.
+
+DuckDB and duckdb-go (github.com/duckdb/duckdb-go)
+    DuckDB is embedded by the API query engine through its official Go bindings.
+    MIT licensed. Copyright the DuckDB Foundation and contributors.
+
+MinIO Go client (github.com/minio/minio-go)
+    S3-compatible object storage client. Apache License 2.0.
+
+Prometheus Go client (github.com/prometheus/client_golang)
+    Metrics exposition and collectors. Apache License 2.0.
+
+parquet-go (github.com/parquet-go/parquet-go)
+    Snapshot serialization. Apache License 2.0.
+
+React, deck.gl, and their supporting web packages
+    Used by the static explorer under permissive licenses. Exact package names and
+    versions are recorded in web/package-lock.json.
