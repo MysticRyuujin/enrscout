@@ -49,11 +49,23 @@ var (
 	}, []string{"domain"})
 	mDNSPublishTotal = promauto.NewGauge(prometheus.GaugeOpts{
 		Name: "enrscout_dns_artifact_nodes_total",
-		Help: "Nodes across all trees in the last successful artifact-write cycle. Nothing is pushed to DNS yet.",
+		Help: "Nodes across all trees in the last successful artifact-write cycle. See enrscout_dns_published_* for DNS publication.",
 	})
 	mDNSPublishTimestamp = promauto.NewGauge(prometheus.GaugeOpts{
 		Name: "enrscout_dns_last_artifact_write_timestamp_seconds",
 		Help: "Unix time of the last cycle that wrote tree artifacts. Not a DNS publication time.",
+	})
+	mDNSRecordsChanged = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "enrscout_dns_published_records_changed_total",
+		Help: "TXT records created, updated, or deleted in the zone, by domain.",
+	}, []string{"domain"})
+	mDNSPublishedTimestamp = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "enrscout_dns_last_publish_timestamp_seconds",
+		Help: "Unix time of the last cycle that pushed records to DNS. Stays zero while publishing is unconfigured.",
+	})
+	mDNSPushErrors = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "enrscout_dns_publish_errors_total",
+		Help: "DNS pushes that failed, leaving the zone and the collapse baseline unchanged.",
 	})
 	mDNSPublishErrors = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "enrscout_dns_artifact_write_errors_total",
@@ -81,6 +93,8 @@ type output struct {
 }
 
 const outputSchemaVersion = 1
+
+const publishedSuffix = ".published"
 
 const maxKeyPassphraseBytes = 8 << 10
 
@@ -110,6 +124,8 @@ func run() error {
 		s3Bucket     = flag.String("s3-bucket", "enrscout", "S3 bucket")
 		s3Region     = flag.String("s3-region", "us-east-1", "S3 region")
 		s3SSL        = flag.Bool("s3-ssl", true, "use TLS for the S3 endpoint (set false only for a trusted local endpoint)")
+		cfZone       = flag.String("cloudflare-zone-id", "", "Cloudflare zone to publish TXT records into (empty = write artifacts only)")
+		cfTokenFile  = flag.String("cloudflare-token-file", "", "file holding a Cloudflare API token scoped to Zone:DNS:Edit on that zone")
 	)
 	flag.Parse()
 
@@ -144,6 +160,14 @@ func run() error {
 	if *publishEvery > 0 && *outDir == "" {
 		return errors.New("--publish-interval requires --out: the written artifacts carry the collapse baseline and sequence floor across cycles")
 	}
+	if (*cfZone == "") != (*cfTokenFile == "") {
+		return errors.New("--cloudflare-zone-id and --cloudflare-token-file must be set together")
+	}
+	// Publishing needs the durable published-state artifact to hold its collapse baseline and the
+	// record set retained for clients still on the previous root.
+	if *cfZone != "" && *outDir == "" {
+		return errors.New("--cloudflare-zone-id requires --out: the published-state artifact carries the collapse baseline and the retained record set")
+	}
 	nets, err := parseNetworks(*networks)
 	if err != nil {
 		return err
@@ -175,10 +199,19 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	var publisher recordPublisher
+	if *cfZone != "" {
+		token, err := readPrivateFile(*cfTokenFile, "cloudflare token", maxCloudflareTokenBytes)
+		if err != nil {
+			return err
+		}
+		publisher = newCloudflareDNS(*cfZone, strings.TrimSpace(string(token)))
+	}
 	return runMultiTree(ctx, st, snapshot.Layout{Prefix: *prefix}, multiConfig{
 		networks: nets, baseDomain: *baseDomain, outDir: *outDir, key: key, sel: sel,
 		publishEvery: *publishEvery, maxSnapshotAge: *maxSnapAge,
 		minTreeNodes: *minTreeNodes, maxDropPct: *maxDropPct, validate: *validate,
+		publisher: publisher,
 	})
 }
 
@@ -209,6 +242,13 @@ type multiConfig struct {
 	minTreeNodes   int
 	maxDropPct     int
 	validate       bool
+	publisher      recordPublisher
+}
+
+// recordPublisher reconciles a zone's TXT records under a domain. retain names records kept even
+// when absent from want, so a client still holding the previous root can finish traversing it.
+type recordPublisher interface {
+	Sync(ctx context.Context, domain string, want, retain map[string]string) (changed int, err error)
 }
 
 func collapsed(current, previous, maxDropPct int) bool {
@@ -268,6 +308,12 @@ func runMultiTree(ctx context.Context, st store.Store, layout snapshot.Layout, c
 				published++
 				slog.Info("wrote tree artifact", "domain", out.Domain, "nodes", out.Nodes, "seq", out.Seq)
 			}
+			if err := publishNetwork(ctx, cfg, net, trees); err != nil {
+				mDNSPushErrors.Inc()
+				mDNSPublishSkipped.WithLabelValues("push_failed").Inc()
+				slog.Error("skip network: DNS push failed, leaving the zone and collapse baseline unchanged", "network", net, "err", err)
+				continue
+			}
 		}
 		if published > 0 {
 			mDNSPublishTotal.Set(float64(total))
@@ -319,24 +365,84 @@ func treeSequence(generatedAt time.Time, previousSeq uint64) uint {
 	return uint(seq)
 }
 
-// baselineFor reads the last published artifact for domain. A zero-node artifact predates the
+// publishNetwork pushes a network's trees, then commits their published state. Committing only
+// after every push succeeds is what keeps a failed push from moving the collapse baseline onto a
+// tree DNS never served.
+func publishNetwork(ctx context.Context, cfg multiConfig, network string, trees []output) error {
+	if cfg.publisher == nil {
+		return nil
+	}
+	for _, out := range trees {
+		prev, err := publishedArtifact(cfg.outDir, out.Domain, network, out.Capability)
+		if err != nil {
+			return fmt.Errorf("read published state %s: %w", out.Domain, err)
+		}
+		var retain map[string]string
+		if prev != nil {
+			retain = prev.Records
+		}
+		changed, err := cfg.publisher.Sync(ctx, out.Domain, out.Records, retain)
+		if err != nil {
+			return fmt.Errorf("publish %s: %w", out.Domain, err)
+		}
+		mDNSRecordsChanged.WithLabelValues(out.Domain).Add(float64(changed))
+		slog.Info("published tree to DNS", "domain", out.Domain, "nodes", out.Nodes, "seq", out.Seq, "records_changed", changed)
+	}
+	for _, out := range trees {
+		if _, err := emitArtifact(out, cfg.outDir, out.Domain+publishedSuffix); err != nil {
+			return fmt.Errorf("commit published state %s: %w", out.Domain, err)
+		}
+	}
+	mDNSPublishedTimestamp.SetToCurrentTime()
+	return nil
+}
+
+// baselineFor reads the last built artifact for domain. A zero-node artifact predates the
 // empty-tree guard, so it yields no collapse baseline rather than wedging the domain forever, but
 // its sequence still has to be exceeded.
 func baselineFor(outDir, domain, network, capability string) (nodes int, seq uint64, err error) {
-	if outDir == "" {
-		return 0, 0, nil
-	}
-	prev, exists, err := readPrevious(filepath.Join(outDir, domain+".json"))
-	if err != nil {
-		return 0, 0, err
-	}
-	if !exists {
-		return 0, 0, nil
-	}
-	if err := validateBaseline(prev, domain, network, capability); err != nil {
+	prev, err := ownArtifact(outDir, domain, domain, network, capability)
+	if err != nil || prev == nil {
 		return 0, 0, err
 	}
 	return prev.Nodes, prev.Seq, nil
+}
+
+// publishedArtifact reads what a domain last got into DNS, which is nil until a push succeeds.
+func publishedArtifact(outDir, domain, network, capability string) (*output, error) {
+	return ownArtifact(outDir, domain+publishedSuffix, domain, network, capability)
+}
+
+func ownArtifact(outDir, name, domain, network, capability string) (*output, error) {
+	if outDir == "" {
+		return nil, nil
+	}
+	prev, exists, err := readPrevious(filepath.Join(outDir, name+".json"))
+	if err != nil || !exists {
+		return nil, err
+	}
+	if err := validateBaseline(prev, domain, network, capability); err != nil {
+		return nil, err
+	}
+	return prev, nil
+}
+
+// Sequence floor tracks the last build, or a reused sequence leaves resolvers on a cached root for
+// changed content. Collapse baseline tracks the last successful publish, or a build a failed push
+// never delivered becomes the number the next cycle measures its drop against.
+func baselinesFor(cfg multiConfig, domain, network, capability string) (nodes int, seq uint64, err error) {
+	nodes, seq, err = baselineFor(cfg.outDir, domain, network, capability)
+	if err != nil || cfg.publisher == nil {
+		return nodes, seq, err
+	}
+	published, err := publishedArtifact(cfg.outDir, domain, network, capability)
+	if err != nil {
+		return 0, 0, err
+	}
+	if published == nil {
+		return 0, seq, nil
+	}
+	return published.Nodes, seq, nil
 }
 
 // issued carries the sequence this process last published per domain. Without --out there is no
@@ -352,7 +458,7 @@ func buildNetworkTrees(rows []nodeset.Row, network string, generatedAt, evaluate
 	}
 	for _, capability := range capabilities {
 		domain := capability + "." + network + "." + cfg.baseDomain
-		previousNodes, previousSeq, err := baselineFor(cfg.outDir, domain, network, capability)
+		previousNodes, previousSeq, err := baselinesFor(cfg, domain, network, capability)
 		if err != nil {
 			return nil, skipDecision{"baseline_unreadable", "collapse baseline is unusable, keeping the last published trees",
 				[]any{"domain", domain, "err", err}}, nil
