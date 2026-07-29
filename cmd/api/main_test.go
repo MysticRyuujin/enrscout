@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/MysticRyuujin/enrscout/internal/query"
-	"github.com/MysticRyuujin/enrscout/internal/store"
 )
 
 func TestWriteErrDoesNotExposeInternalDetails(t *testing.T) {
@@ -184,24 +183,6 @@ func TestCompactMapUsesTupleAndIDPrefix(t *testing.T) {
 	if points[0] != want {
 		t.Fatalf("point = %#v, want %#v", points[0], want)
 	}
-}
-
-func statusField(body any) string {
-	m, ok := body.(map[string]any)
-	if !ok {
-		return ""
-	}
-	s, _ := m["status"].(string)
-	return s
-}
-
-func mustFSStore(t *testing.T) store.Store {
-	t.Helper()
-	s, err := store.NewFS(t.TempDir())
-	if err != nil {
-		t.Fatalf("new fs store: %v", err)
-	}
-	return s
 }
 
 // Rollovers make every in-flight request miss the same key at once, and the connection pool is small
