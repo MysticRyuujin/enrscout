@@ -7,8 +7,14 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/ethereum/go-ethereum/p2p/enode"
+
+	"github.com/MysticRyuujin/enrscout/internal/nodeset"
 )
 
 // fakeZone is a Cloudflare stand-in that records the order batches arrive in, which is what the
@@ -399,5 +405,154 @@ func TestBatchesRespectTheOperationLimit(t *testing.T) {
 		if b.len() > cloudflareBatchMax {
 			t.Fatalf("batch %d carries %d operations, over the %d limit", i, b.len(), cloudflareBatchMax)
 		}
+	}
+}
+
+func balanceRows(t *testing.T, perClient map[string]int) []nodeset.Row {
+	t.Helper()
+	var rows []nodeset.Row
+	score := int32(10)
+	names := make([]string, 0, len(perClient))
+	for name := range perClient {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	last := 1
+	for _, name := range names {
+		for i := 0; i < perClient[name]; i++ {
+			row := currentMainnetEL(t, v4Row(t, byte(last), 30303, score), time.Now())
+			row.Client = name
+			row.FPStatus = "ok"
+			row.ID = fmt.Sprintf("%s-%04d", name, i)
+			rows = append(rows, row)
+			last++
+			if last > 250 {
+				last = 1
+			}
+		}
+	}
+	return rows
+}
+
+// Keyed by bucket rather than raw label: an unrecognized name is selected through the unknown bucket
+// and must be counted there.
+func clientMix(nodes []*enode.Node, rows []nodeset.Row) map[string]int {
+	byENR := map[string]string{}
+	for _, r := range rows {
+		byENR[r.ENR] = clientBucket(r)
+	}
+	mix := map[string]int{}
+	for _, n := range nodes {
+		mix[byENR[n.String()]]++
+	}
+	return mix
+}
+
+// Score correlates with client, so taking the highest scoring nodes outright drops whole clients from
+// a list peers bootstrap against. Every client in the pool must survive the limit.
+func TestProportionalBalanceKeepsEveryClient(t *testing.T) {
+	pool := map[string]int{"Geth": 400, "Reth": 120, "Erigon": 80, "Besu": 50, "Nethermind": 30}
+	rows := balanceRows(t, pool)
+	opt := selectOpts{minScore: 1, protocol: "any", layer: "el", capability: "all", limit: 25, balance: balanceProportional}
+
+	got := selectNodes(rows, opt, time.Now())
+	if len(got) != 25 {
+		t.Fatalf("selected %d nodes, want 25", len(got))
+	}
+	mix := clientMix(got, rows)
+	for client := range pool {
+		if mix[client] == 0 {
+			t.Errorf("client %s was excluded entirely", client)
+		}
+	}
+	if mix["Geth"] >= 20 {
+		t.Errorf("Geth took %d of 25 slots; the pool share is 60%%", mix["Geth"])
+	}
+}
+
+// The tree layout depends on input order and every changed record costs a DNS write, so an unchanged
+// candidate set must select an identical set in an identical order.
+func TestProportionalBalanceIsDeterministic(t *testing.T) {
+	rows := balanceRows(t, map[string]int{"Geth": 40, "Reth": 20, "Besu": 11})
+	opt := selectOpts{minScore: 1, protocol: "any", layer: "el", capability: "all", limit: 15, balance: balanceProportional}
+
+	first := selectNodes(rows, opt, time.Now())
+	for range 5 {
+		again := selectNodes(rows, opt, time.Now())
+		if len(again) != len(first) {
+			t.Fatalf("selection size changed between runs: %d then %d", len(first), len(again))
+		}
+		for i := range first {
+			if first[i].String() != again[i].String() {
+				t.Fatalf("selection order changed at index %d", i)
+			}
+		}
+	}
+}
+
+func TestBalanceNoneTakesHighestScoringOnly(t *testing.T) {
+	rows := balanceRows(t, map[string]int{"Geth": 40, "Reth": 20})
+	opt := selectOpts{minScore: 1, protocol: "any", layer: "el", capability: "all", limit: 10, balance: balanceNone}
+	if got := len(selectNodes(rows, opt, time.Now())); got != 10 {
+		t.Fatalf("selected %d nodes, want 10", got)
+	}
+}
+
+// A limit larger than the pool must still fill from every client without over-allocating.
+func TestProportionalBalanceHandlesLimitAbovePool(t *testing.T) {
+	rows := balanceRows(t, map[string]int{"Geth": 5, "Reth": 3, "Besu": 1})
+	opt := selectOpts{minScore: 1, protocol: "any", layer: "el", capability: "all", limit: 100, balance: balanceProportional}
+	got := selectNodes(rows, opt, time.Now())
+	if len(got) != 9 {
+		t.Fatalf("selected %d nodes, want the whole 9 node pool", len(got))
+	}
+}
+
+// Row.Client can be self-declared in an ENR, so invented names must not each reserve a slot.
+func TestInventedClientNamesCannotCrowdOutRealClients(t *testing.T) {
+	var rows []nodeset.Row
+	real := map[string]int{"Geth": 40, "Reth": 20, "Besu": 10}
+	rows = append(rows, balanceRows(t, real)...)
+	// One sybil per slot, each claiming a different unrecognized client, none fingerprinted.
+	for i := range 40 {
+		row := currentMainnetEL(t, v4Row(t, byte(i+60), 30303, 10), time.Now())
+		row.Client = fmt.Sprintf("TotallyRealClient%02d", i)
+		row.FPStatus = "pending"
+		row.ID = fmt.Sprintf("sybil-%04d", i)
+		rows = append(rows, row)
+	}
+
+	opt := selectOpts{minScore: 1, protocol: "any", layer: "el", capability: "all", limit: 25, balance: balanceProportional}
+	got := selectNodes(rows, opt, time.Now())
+	mix := clientMix(got, rows)
+
+	for name := range mix {
+		if strings.HasPrefix(name, "TotallyRealClient") {
+			t.Errorf("invented name %q became its own bucket and reserved a slot", name)
+		}
+	}
+	for client := range real {
+		if mix[client] == 0 {
+			t.Errorf("real client %s was crowded out", client)
+		}
+	}
+	// Collapsing into one bucket caps the sybils at that bucket's proportional share. Contributing
+	// 40 of 110 candidates does earn ~36% of the tree; what it must not earn is 40 reserved slots.
+	if unknown := mix[unknownClient]; unknown > 10 {
+		t.Errorf("unknown bucket took %d of 25 slots, above its ~36%% pool share", unknown)
+	}
+}
+
+// A recognized name without a verified fingerprint is still only a claim, so it must not reserve a slot.
+func TestUnverifiedFingerprintDoesNotReserveASlot(t *testing.T) {
+	claimed := currentMainnetEL(t, v4Row(t, 9, 30303, 10), time.Now())
+	claimed.Client = "Reth"
+	claimed.FPStatus = "pending"
+	if got := clientBucket(claimed); got != unknownClient {
+		t.Errorf("unverified Reth claim bucketed as %q, want %q", got, unknownClient)
+	}
+	claimed.FPStatus = "ok"
+	if got := clientBucket(claimed); got != "Reth" {
+		t.Errorf("verified Reth bucketed as %q, want Reth", got)
 	}
 }

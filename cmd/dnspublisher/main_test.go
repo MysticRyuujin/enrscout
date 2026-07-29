@@ -548,7 +548,7 @@ func TestSelectNodesAgeUsesPublicationTime(t *testing.T) {
 }
 
 func TestSelectOptsValidate(t *testing.T) {
-	valid := selectOpts{minScore: 1, maxAge: time.Hour, protocol: "any", layer: "el"}
+	valid := selectOpts{minScore: 1, maxAge: time.Hour, protocol: "any", layer: "el", balance: balanceProportional}
 	if err := valid.Validate(); err != nil {
 		t.Fatalf("valid options rejected: %v", err)
 	}
@@ -568,7 +568,7 @@ func TestSelectOptsValidate(t *testing.T) {
 		{"invalid protocol", mutate(func(o *selectOpts) { o.protocol = "v6" })},
 		{"invalid layer", mutate(func(o *selectOpts) { o.layer = "exec" })},
 		{"negative limit", mutate(func(o *selectOpts) { o.limit = -1 })},
-		{"negative per-client cap", mutate(func(o *selectOpts) { o.maxPerClient = -1 })},
+		{"unknown client balance", mutate(func(o *selectOpts) { o.balance = "weighted" })},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
