@@ -773,6 +773,68 @@ func TestSignedTreeDeterministicAndValid(t *testing.T) {
 	}
 }
 
+// recordResolver serves a tree's own ToTXT output in place of a live zone.
+type recordResolver struct {
+	records map[string]string
+	lookups int
+}
+
+func (r *recordResolver) LookupTXT(_ context.Context, name string) ([]string, error) {
+	r.lookups++
+	value, ok := r.records[strings.TrimSuffix(name, ".")]
+	if !ok {
+		return nil, &net.DNSError{Err: "no such host", Name: name, IsNotFound: true}
+	}
+	return []string{value}, nil
+}
+
+// ParseURL only checks the root signature, so nothing else here proves a client can walk the
+// records back to the ENRs. That is the property publishing to DNS depends on.
+func TestPublishedRecordsResolveBackToEveryNode(t *testing.T) {
+	const domain = "all.mainnet.example.org"
+	key, err := crypto.HexToECDSA(testKeyHex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := make(map[string]bool, 40)
+	nodes := make([]*enode.Node, 0, 40)
+	for i := range 40 {
+		n := mainnetELNode(t, byte(i+1), false)
+		nodes = append(nodes, n)
+		want[n.String()] = true
+	}
+	tree, err := dnsdisc.MakeTree(1, nodes, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	url, err := tree.Sign(key, domain)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolver := &recordResolver{records: tree.ToTXT(domain)}
+	client := dnsdisc.NewClient(dnsdisc.Config{Resolver: resolver, RateLimit: 1_000_000})
+	synced, err := client.SyncTree(url)
+	if err != nil {
+		t.Fatalf("a client cannot resolve the published records: %v", err)
+	}
+	if got := len(synced.Nodes()); got != len(nodes) {
+		t.Fatalf("recovered %d nodes, want %d", got, len(nodes))
+	}
+	for _, n := range synced.Nodes() {
+		if !want[n.String()] {
+			t.Errorf("resolved a node that was never published: %s", n.String())
+		}
+		delete(want, n.String())
+	}
+	if len(want) != 0 {
+		t.Errorf("%d published nodes were unreachable through the records", len(want))
+	}
+	if resolver.lookups < len(nodes) {
+		t.Errorf("only %d lookups for %d nodes; the tree cannot have been walked", resolver.lookups, len(nodes))
+	}
+}
+
 // An empty artifact written before the empty-tree guard must not wedge its domain: it carries no
 // collapse baseline, but its sequence still has to be exceeded so resolvers see the replacement.
 func TestZeroNodeArtifactYieldsNoBaselineButStillRaisesTheSequence(t *testing.T) {
