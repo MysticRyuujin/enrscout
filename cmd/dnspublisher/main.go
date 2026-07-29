@@ -168,6 +168,11 @@ func run() error {
 	if *cfZone != "" && *outDir == "" {
 		return errors.New("--cloudflare-zone-id requires --out: the published-state artifact carries the collapse baseline and the retained record set")
 	}
+	// One generation of records is retained, so a generation survives roughly two intervals. Below the
+	// client root-recheck interval that grace is shorter than the window clients hold a stale root in.
+	if *cfZone != "" && *publishEvery > 0 && *publishEvery < minPublishInterval {
+		return fmt.Errorf("--publish-interval must be at least %s when publishing to DNS: retained records must outlive a client's cached root", minPublishInterval)
+	}
 	nets, err := parseNetworks(*networks)
 	if err != nil {
 		return err
@@ -386,12 +391,12 @@ func publishNetwork(ctx context.Context, cfg multiConfig, network string, trees 
 			return fmt.Errorf("publish %s: %w", out.Domain, err)
 		}
 		mDNSRecordsChanged.WithLabelValues(out.Domain).Add(float64(changed))
-		slog.Info("published tree to DNS", "domain", out.Domain, "nodes", out.Nodes, "seq", out.Seq, "records_changed", changed)
-	}
-	for _, out := range trees {
+		// Committed per tree rather than after the whole network: once a tree is in DNS its state must
+		// be recorded, or a later failure leaves it serving records the next cycle would prune.
 		if _, err := emitArtifact(out, cfg.outDir, out.Domain+publishedSuffix); err != nil {
 			return fmt.Errorf("commit published state %s: %w", out.Domain, err)
 		}
+		slog.Info("published tree to DNS", "domain", out.Domain, "nodes", out.Nodes, "seq", out.Seq, "records_changed", changed)
 	}
 	mDNSPublishedTimestamp.SetToCurrentTime()
 	return nil

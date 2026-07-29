@@ -21,9 +21,13 @@ const (
 	cloudflareEntryTTL = 3600
 	cloudflareRootTTL  = 300
 	cloudflareTimeout  = 30 * time.Second
+	cloudflareSettle   = 15 * time.Second
 	maxCloudflareBody  = 8 << 20
 
 	maxCloudflareTokenBytes = 1 << 10
+
+	// dnsdisc clients re-check a tree root every 30 minutes by default.
+	minPublishInterval = 30 * time.Minute
 )
 
 type cloudflareDNS struct {
@@ -31,6 +35,7 @@ type cloudflareDNS struct {
 	baseURL string
 	zoneID  string
 	token   string
+	settle  time.Duration
 }
 
 func newCloudflareDNS(zoneID, token string) *cloudflareDNS {
@@ -39,6 +44,7 @@ func newCloudflareDNS(zoneID, token string) *cloudflareDNS {
 		baseURL: cloudflareAPI,
 		zoneID:  zoneID,
 		token:   token,
+		settle:  cloudflareSettle,
 	}
 }
 
@@ -132,9 +138,15 @@ func normalizeTXT(content string) string {
 	return b.String()
 }
 
+// ToTXT emits uppercase base32 labels; a zone returns them lowercased, and comparing raw names would
+// see every entry as both missing and stale.
+func dnsKey(name string) string {
+	return strings.ToLower(strings.TrimSuffix(name, "."))
+}
+
 func (c *cloudflareDNS) existing(ctx context.Context, domain string) (map[string]cfRecord, error) {
 	out := map[string]cfRecord{}
-	suffix := "." + domain
+	suffix := "." + dnsKey(domain)
 	for page := 1; ; page++ {
 		path := fmt.Sprintf("/zones/%s/dns_records?type=TXT&per_page=%d&page=%d", c.zoneID, cloudflarePageSize, page)
 		env, err := c.do(ctx, http.MethodGet, path, nil)
@@ -146,11 +158,11 @@ func (c *cloudflareDNS) existing(ctx context.Context, domain string) (map[string
 			return nil, err
 		}
 		for _, r := range records {
-			name := strings.TrimSuffix(r.Name, ".")
-			if name == domain || strings.HasSuffix(name, suffix) {
-				r.Name = name
+			key := dnsKey(r.Name)
+			if key == dnsKey(domain) || strings.HasSuffix(key, suffix) {
+				r.Name = key
 				r.Content = normalizeTXT(r.Content)
-				out[name] = r
+				out[key] = r
 			}
 		}
 		if len(records) == 0 || env.Info.TotalPages <= page {
@@ -190,15 +202,19 @@ func (c *cloudflareDNS) Sync(ctx context.Context, domain string, want, retain ma
 	if err != nil {
 		return 0, fmt.Errorf("list records: %w", err)
 	}
-	var entries, root, stale cfBatch
+	wanted := make(map[string]string, len(want))
 	for name, content := range want {
+		wanted[dnsKey(name)] = content
+	}
+	var entries, root, stale cfBatch
+	for name, content := range wanted {
 		current, exists := have[name]
 		if exists && current.Content == content && current.TTL == ttlFor(name, domain) {
 			continue
 		}
 		record := cfRecord{Type: "TXT", Name: name, Content: content, TTL: ttlFor(name, domain)}
 		target := &entries
-		if name == domain {
+		if name == dnsKey(domain) {
 			target = &root
 		}
 		if exists {
@@ -208,32 +224,52 @@ func (c *cloudflareDNS) Sync(ctx context.Context, domain string, want, retain ma
 		}
 		target.Posts = append(target.Posts, record)
 	}
-	for name, current := range have {
-		if _, keep := want[name]; keep {
-			continue
+	// A nil retain means nothing is known to have been published, so the zone may already be serving
+	// a tree this process did not write. Pruning then would delete a live generation.
+	if retain != nil {
+		retained := make(map[string]struct{}, len(retain))
+		for name := range retain {
+			retained[dnsKey(name)] = struct{}{}
 		}
-		if _, keep := retain[name]; keep {
-			continue
+		for name, current := range have {
+			if _, keep := wanted[name]; keep {
+				continue
+			}
+			if _, keep := retained[name]; keep {
+				continue
+			}
+			stale.Deletes = append(stale.Deletes, cfRecord{ID: current.ID})
 		}
-		stale.Deletes = append(stale.Deletes, cfRecord{ID: current.ID})
 	}
 
-	changed := entries.len() + root.len() + stale.len()
+	changed := 0
 	for _, chunk := range chunkBatch(entries) {
 		if err := c.submit(ctx, chunk); err != nil {
-			return 0, fmt.Errorf("write entries: %w", err)
+			return changed, fmt.Errorf("write entries: %w", err)
+		}
+		changed += chunk.len()
+	}
+	// Ordering the API writes does not order propagation to the edge, so give new entries a moment to
+	// become resolvable before the root starts pointing at them.
+	if entries.len() > 0 && c.settle > 0 {
+		select {
+		case <-ctx.Done():
+			return changed, ctx.Err()
+		case <-time.After(c.settle):
 		}
 	}
 	if err := c.submit(ctx, root); err != nil {
-		return 0, fmt.Errorf("write root: %w", err)
+		return changed, fmt.Errorf("write root: %w", err)
 	}
+	changed += root.len()
 	// A failed prune leaves records the current root simply does not reference, so it must not fail
 	// a publish that already succeeded.
 	for _, chunk := range chunkBatch(stale) {
 		if err := c.submit(ctx, chunk); err != nil {
 			slog.Warn("stale DNS records left in place", "domain", domain, "records", len(chunk.Deletes), "err", err)
-			break
+			return changed, nil
 		}
+		changed += chunk.len()
 	}
 	return changed, nil
 }

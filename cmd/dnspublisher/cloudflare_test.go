@@ -26,6 +26,7 @@ func newFakeZone(existing ...cfRecord) *fakeZone {
 	for _, r := range existing {
 		z.nextID++
 		r.ID = fmt.Sprintf("id%d", z.nextID)
+		r.Name = strings.ToLower(r.Name)
 		z.records[r.Name] = r
 	}
 	return z
@@ -61,6 +62,8 @@ func (z *fakeZone) handler() http.Handler {
 					z.nextID++
 					p.ID = fmt.Sprintf("id%d", z.nextID)
 				}
+				// A real zone stores names lowercased, which is what exposes case-sensitive diffing.
+				p.Name = strings.ToLower(p.Name)
 				z.records[p.Name] = p
 			}
 			_ = json.NewEncoder(w).Encode(cfEnvelope{Success: true, Result: json.RawMessage(`{}`)})
@@ -87,6 +90,7 @@ func fakeCloudflare(t *testing.T, z *fakeZone) *cloudflareDNS {
 	t.Cleanup(srv.Close)
 	c := newCloudflareDNS("zone1", "token")
 	c.baseURL = srv.URL
+	c.settle = 0
 	return c
 }
 
@@ -132,13 +136,13 @@ func TestSyncRetainsThePreviousGeneration(t *testing.T) {
 	if _, err := c.Sync(context.Background(), cfDomain, want, retain); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := z.records["OLD."+cfDomain]; !ok {
+	if _, ok := z.records[dnsKey("OLD."+cfDomain)]; !ok {
 		t.Error("retained record was deleted; a client on the previous root cannot finish its walk")
 	}
-	if _, ok := z.records["ANCIENT."+cfDomain]; ok {
+	if _, ok := z.records[dnsKey("ANCIENT."+cfDomain)]; ok {
 		t.Error("two-generations-old record was never garbage collected")
 	}
-	if _, ok := z.records["NEW."+cfDomain]; !ok {
+	if _, ok := z.records[dnsKey("NEW."+cfDomain)]; !ok {
 		t.Error("new entry was not written")
 	}
 }
@@ -291,6 +295,73 @@ func TestArtifactOnlyModeKeepsItsOwnBaseline(t *testing.T) {
 	}
 	if nodes != 750 || seq != 4 {
 		t.Errorf("artifact-only baseline = (%d, %d), want (750, 4)", nodes, seq)
+	}
+}
+
+// ToTXT emits uppercase base32 labels and a zone lowercases them, so a case-sensitive diff sees
+// every entry as both missing and stale and churns the whole tree on every cycle.
+func TestSyncIsStableAcrossCaseFoldedNames(t *testing.T) {
+	z := newFakeZone()
+	c := fakeCloudflare(t, z)
+	want := map[string]string{
+		cfDomain:                                 "enrtree-root:v1 seq=1",
+		"I7575NHE3IIZZT6HFE7BRX6NP4." + cfDomain: "enr:-abc",
+		"JWXYDBPXYWG6FX3GMDIBFA6CJ4." + cfDomain: "enrtree-branch:",
+	}
+	if _, err := c.Sync(context.Background(), cfDomain, want, nil); err != nil {
+		t.Fatal(err)
+	}
+	first := len(z.batches)
+	if first == 0 {
+		t.Fatal("first publish wrote nothing")
+	}
+	changed, err := c.Sync(context.Background(), cfDomain, want, map[string]string{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed != 0 {
+		t.Errorf("republishing an identical tree changed %d records", changed)
+	}
+	if len(z.batches) != first {
+		t.Errorf("republishing issued %d more batches; uppercase labels are not matching the stored names", len(z.batches)-first)
+	}
+	if len(z.records) != len(want) {
+		t.Errorf("zone holds %d records for a %d record tree; entries were duplicated", len(z.records), len(want))
+	}
+}
+
+// Pointing at a zone already serving a tree must not delete it before anything has been published.
+func TestFirstPublishNeverPrunes(t *testing.T) {
+	foreign := cfRecord{Type: "TXT", Name: "existing." + cfDomain, Content: "enr:-live", TTL: cloudflareEntryTTL}
+	z := newFakeZone(foreign)
+	c := fakeCloudflare(t, z)
+
+	if _, err := c.Sync(context.Background(), cfDomain, map[string]string{cfDomain: "enrtree-root:v1 seq=1"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := z.records[dnsKey("existing."+cfDomain)]; !ok {
+		t.Error("first publish deleted a record it had never published")
+	}
+}
+
+func TestChangedCountsAppliedWritesOnly(t *testing.T) {
+	z := newFakeZone()
+	z.failOn = func(b cfBatch) error {
+		for _, r := range append(b.Puts, b.Posts...) {
+			if r.Name == cfDomain {
+				return errors.New("root rejected")
+			}
+		}
+		return nil
+	}
+	c := fakeCloudflare(t, z)
+	want := map[string]string{cfDomain: "enrtree-root:v1 seq=1", "AAA." + cfDomain: "enr:-abc"}
+	changed, err := c.Sync(context.Background(), cfDomain, want, nil)
+	if err == nil {
+		t.Fatal("expected the root write to fail")
+	}
+	if changed != 1 {
+		t.Errorf("changed = %d, want 1: the entry landed even though the root did not", changed)
 	}
 }
 
