@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation } from "react-router";
 import { fetchMeta } from "../api";
 
 const DEFAULT_SOURCE_URL = "https://github.com/MysticRyuujin/enrscout";
