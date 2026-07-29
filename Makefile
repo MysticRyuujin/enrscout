@@ -1,5 +1,8 @@
 .PHONY: build crawler api compile test test-race test-nethermind-compat lint staticcheck vulncheck \
-	web-install web-audit web-build ci ci-go ci-web tidy run-crawler run-api e2e
+	validate-compose web-install web-audit web-build ci ci-go ci-web tidy run-crawler run-api e2e
+
+# Ordered tasks, not a parallel build graph: web-build reads what web-install writes.
+.NOTPARALLEL:
 
 NETWORK ?= mainnet
 ADVERTISER_NETWORKS ?= mainnet,hoodi,sepolia
@@ -46,6 +49,10 @@ staticcheck:
 vulncheck:
 	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
 
+validate-compose:
+	docker compose -f deploy/local/docker-compose.yaml config --quiet
+	docker compose -f deploy/e2e/docker-compose.yaml config --quiet
+
 web-install:
 	cd web && npm ci --ignore-scripts
 
@@ -56,7 +63,7 @@ web-build:
 	cd web && npm run build
 
 # CI invokes these targets so the check list has no second copy to drift from.
-ci-go: compile lint staticcheck test-race vulncheck
+ci-go: compile lint staticcheck test-race vulncheck validate-compose
 
 ci-web: web-install web-audit web-build
 

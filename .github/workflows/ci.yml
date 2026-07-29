@@ -34,9 +34,7 @@ jobs:
       - name: Reachable Go vulnerabilities
         run: make vulncheck
       - name: Validate Compose files
-        run: |
-          docker compose -f deploy/local/docker-compose.yaml config --quiet
-          docker compose -f deploy/e2e/docker-compose.yaml config --quiet
+        run: make validate-compose
 
   web:
     runs-on: ubuntu-latest
