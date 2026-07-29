@@ -15,40 +15,30 @@ permissions:
   id-token: write
 
 concurrency:
-  group: release-images-${{ github.ref }}
+  group: release-images-${{ github.event.release.tag_name || inputs.tag }}
   cancel-in-progress: false
 
 env:
   REGISTRY: ghcr.io
 
 jobs:
-  images:
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    environment: release
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - component: crawler
-            dockerfile: Dockerfile.crawler
-          - component: api
-            dockerfile: Dockerfile.api
-          - component: web
-            dockerfile: web/Dockerfile
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      tag: ${{ steps.vars.outputs.tag }}
+      sha: ${{ steps.rev.outputs.sha }}
     steps:
       - name: Resolve and validate tag
         id: vars
         env:
           RAW_TAG: ${{ github.event.release.tag_name || inputs.tag }}
-          COMPONENT: ${{ matrix.component }}
         run: |
           if [[ ! "$RAW_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::Invalid release tag '$RAW_TAG' (expected vMAJOR.MINOR.PATCH)"
             exit 1
           fi
           echo "tag=$RAW_TAG" >> "$GITHUB_OUTPUT"
-          echo "image=${REGISTRY}/${GITHUB_REPOSITORY_OWNER,,}/enrscout-${COMPONENT}" >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -69,6 +59,70 @@ jobs:
           fi
           echo "sha=$head" >> "$GITHUB_OUTPUT"
 
+  build:
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    environment: release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - component: crawler
+            dockerfile: Dockerfile.crawler
+            platform: linux/amd64
+            arch: amd64
+            runner: ubuntu-24.04
+          - component: crawler
+            dockerfile: Dockerfile.crawler
+            platform: linux/arm64
+            arch: arm64
+            runner: ubuntu-24.04-arm
+          - component: api
+            dockerfile: Dockerfile.api
+            platform: linux/amd64
+            arch: amd64
+            runner: ubuntu-24.04
+          - component: api
+            dockerfile: Dockerfile.api
+            platform: linux/arm64
+            arch: arm64
+            runner: ubuntu-24.04-arm
+          - component: web
+            dockerfile: web/Dockerfile
+            platform: linux/amd64
+            arch: amd64
+            runner: ubuntu-24.04
+          - component: web
+            dockerfile: web/Dockerfile
+            platform: linux/arm64
+            arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Resolve image name
+        id: vars
+        env:
+          COMPONENT: ${{ matrix.component }}
+        run: echo "image=${REGISTRY}/${GITHUB_REPOSITORY_OWNER,,}/enrscout-${COMPONENT}" >> "$GITHUB_OUTPUT"
+
+      # By resolved sha, not the tag: build waits for release-environment approval, and a tag
+      # moved in that window would build code that disagrees with the recorded SOURCE_REVISION.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify the checked-out commit
+        env:
+          SHA: ${{ needs.prepare.outputs.sha }}
+        run: |
+          head="$(git rev-parse HEAD)"
+          if [[ "$head" != "$SHA" ]]; then
+            echo "::error::Checked-out HEAD ($head) is not the prepared revision ($SHA)"
+            exit 1
+          fi
+
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
       - name: Log in to GHCR
@@ -84,42 +138,112 @@ jobs:
         with:
           images: ${{ steps.vars.outputs.image }}
           tags: |
-            type=raw,value=${{ steps.vars.outputs.tag }}
-            type=raw,value=sha-${{ steps.rev.outputs.sha }}
+            type=raw,value=${{ needs.prepare.outputs.tag }}
+            type=raw,value=sha-${{ needs.prepare.outputs.sha }}
 
-      - name: Build and push
+      - name: Build and push ${{ matrix.platform }} by digest
         id: build
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
           file: ${{ matrix.dockerfile }}
-          push: true
-          platforms: linux/amd64
+          platforms: ${{ matrix.platform }}
           provenance: true
           sbom: true
-          tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            SOURCE_REVISION=${{ steps.rev.outputs.sha }}
+            SOURCE_REVISION=${{ needs.prepare.outputs.sha }}
             SOURCE_URL=${{ github.server_url }}/${{ github.repository }}
             VITE_API_BASE=
             VITE_NETWORKS=
-          cache-from: type=gha,scope=${{ matrix.component }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.component }}
+          outputs: type=image,name=${{ steps.vars.outputs.image }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=image-${{ matrix.component }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=image-${{ matrix.component }}-${{ matrix.arch }}
+
+      - name: Export image digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/digests"
+          touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
+
+      - name: Upload image digest
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: digests-${{ matrix.component }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    needs: [prepare, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: release
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [crawler, api, web]
+    steps:
+      - name: Resolve image name
+        id: vars
+        env:
+          COMPONENT: ${{ matrix.component }}
+        run: echo "image=${REGISTRY}/${GITHUB_REPOSITORY_OWNER,,}/enrscout-${COMPONENT}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@371161bbe7024a29a25c5e19bfcbc0804fe9ad2c # v4.5.2
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ steps.vars.outputs.image }}
+          tags: |
+            type=raw,value=${{ needs.prepare.outputs.tag }}
+            type=raw,value=sha-${{ needs.prepare.outputs.sha }}
+
+      - name: Download platform digests
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          pattern: digests-${{ matrix.component }}-*
+          path: ${{ runner.temp }}/digests
+          merge-multiple: true
+
+      - name: Create and validate multi-platform image
+        id: merge
+        env:
+          IMAGE: ${{ steps.vars.outputs.image }}
+        run: |
+          mapfile -t tags < <(jq -r '.tags[]' <<< "$DOCKER_METADATA_OUTPUT_JSON")
+          digest="$(.github/scripts/merge-manifest.sh "$IMAGE" "$RUNNER_TEMP/digests" "${tags[@]}")"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
 
       - name: Install cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
-      - name: Sign the pushed digest (keyless)
+      # --recursive also signs each per-arch child, so pinning an arch-specific digest verifies.
+      - name: Sign the multi-platform digest (keyless)
         env:
           IMAGE: ${{ steps.vars.outputs.image }}
-          DIGEST: ${{ steps.build.outputs.digest }}
-        run: cosign sign --yes "${IMAGE}@${DIGEST}"
+          DIGEST: ${{ steps.merge.outputs.digest }}
+        run: cosign sign --yes --recursive "${IMAGE}@${DIGEST}"
 
       - name: Publish pinned digest to job summary
         env:
           IMAGE: ${{ steps.vars.outputs.image }}
-          DIGEST: ${{ steps.build.outputs.digest }}
+          DIGEST: ${{ steps.merge.outputs.digest }}
           COMPONENT: ${{ matrix.component }}
         run: |
           {

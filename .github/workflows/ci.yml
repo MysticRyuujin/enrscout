@@ -54,7 +54,6 @@ jobs:
 
   # Without this, a Dockerfile break first surfaces during a release.
   images:
-    runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -62,22 +61,85 @@ jobs:
         include:
           - component: crawler
             dockerfile: Dockerfile.crawler
+            platform: linux/amd64
+            arch: amd64
+            runner: ubuntu-24.04
+          - component: crawler
+            dockerfile: Dockerfile.crawler
+            platform: linux/arm64
+            arch: arm64
+            runner: ubuntu-24.04-arm
           - component: api
             dockerfile: Dockerfile.api
+            platform: linux/amd64
+            arch: amd64
+            runner: ubuntu-24.04
+          - component: api
+            dockerfile: Dockerfile.api
+            platform: linux/arm64
+            arch: arm64
+            runner: ubuntu-24.04-arm
           - component: web
             dockerfile: web/Dockerfile
+            platform: linux/amd64
+            arch: amd64
+            runner: ubuntu-24.04
+          - component: web
+            dockerfile: web/Dockerfile
+            platform: linux/arm64
+            arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-      - name: Build ${{ matrix.component }} image
+      - name: Build ${{ matrix.component }} image for ${{ matrix.platform }}
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
           file: ${{ matrix.dockerfile }}
           push: false
-          platforms: linux/amd64
-          cache-from: type=gha,scope=ci-${{ matrix.component }}
-          cache-to: type=gha,mode=max,scope=ci-${{ matrix.component }}
+          platforms: ${{ matrix.platform }}
+          cache-from: type=gha,scope=image-${{ matrix.component }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=image-${{ matrix.component }}-${{ matrix.arch }}
+
+  # Without this, a break in the release's manifest assembly first surfaces during a release.
+  # Crawler only: it cross-compiles, so one runner covers both platforms without QEMU.
+  manifest-merge:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      IMAGE: localhost:5000/enrscout-crawler
+    services:
+      registry:
+        image: registry:2
+        ports:
+          - 5000:5000
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        with:
+          driver-opts: network=host
+          buildkitd-config-inline: |
+            [registry."localhost:5000"]
+              http = true
+      - name: Build both platforms by digest
+        run: |
+          mkdir -p "$RUNNER_TEMP/digests"
+          for platform in linux/amd64 linux/arm64; do
+            docker buildx build --platform "$platform" -f Dockerfile.crawler \
+              --provenance=true --sbom=true \
+              --output "type=image,name=${IMAGE},push-by-digest=true,name-canonical=true,push=true" \
+              --metadata-file "$RUNNER_TEMP/meta.json" \
+              --cache-from type=gha,scope=ci-manifest-merge \
+              --cache-to type=gha,mode=max,scope=ci-manifest-merge .
+            digest="$(jq -r '."containerimage.digest"' "$RUNNER_TEMP/meta.json")"
+            touch "$RUNNER_TEMP/digests/${digest#sha256:}"
+          done
+      - name: Merge and validate
+        run: |
+          digest="$(.github/scripts/merge-manifest.sh "$IMAGE" "$RUNNER_TEMP/digests" "${IMAGE}:ci")"
+          echo "merged ${IMAGE}@${digest}"
 
   dependency-review:
     # Dependency review requires GitHub Code Security on a private repository.
@@ -91,7 +153,7 @@ jobs:
   # The single required status check: matrix job names embed matrix values.
   gate:
     if: always()
-    needs: [go, web, images, dependency-review]
+    needs: [go, web, images, manifest-merge, dependency-review]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
