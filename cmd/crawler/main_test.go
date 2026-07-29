@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/ecdsa"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -13,7 +12,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"testing"
 	"time"
 
@@ -314,27 +312,6 @@ func mainnetNode(t *testing.T) *enode.Node {
 	var id enode.ID
 	id[0] = 99
 	return enode.SignNull(&r, id)
-}
-
-func signedMainnetNode(t *testing.T, key *ecdsa.PrivateKey, ip enr.IPv4, seq uint64) *enode.Node {
-	t.Helper()
-	nw, err := netconf.Get("mainnet")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var r enr.Record
-	r.SetSeq(seq)
-	r.Set(ip)
-	r.Set(enr.TCP(30303))
-	r.Set(netconf.EthEntry{ForkID: nw.CurrentForkID()})
-	if err := enode.SignV4(&r, key); err != nil {
-		t.Fatal(err)
-	}
-	n, err := enode.New(enode.ValidSchemes, &r)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return n
 }
 
 func TestRestorePreviousSchema(t *testing.T) {
@@ -649,33 +626,6 @@ func TestPruneGenerationsProtectsManifestGenerationAfterClockRollback(t *testing
 	if len(keys) != 2 || !slices.Contains(keys, currentKey) {
 		t.Fatalf("retained generations = %v; current %q was not protected", keys, currentKey)
 	}
-}
-
-func budgetManifest(networks []string) snapshot.Manifest {
-	m := snapshot.Manifest{
-		SchemaVersion: snapshot.SchemaVersion,
-		CrawlerID:     "retention-test",
-		Networks:      make(map[string]snapshot.NetworkSnapshot, len(networks)),
-	}
-	for _, network := range networks {
-		m.Networks[network] = snapshot.NetworkSnapshot{
-			GenerationKey: "snapshots/" + network + "/2026-07-24T00:00:00.000000000Z.parquet",
-			NodeCount:     2,
-			SHA256:        "0000000000000000000000000000000000000000000000000000000000000000",
-			Bytes:         1,
-		}
-	}
-	return m
-}
-
-// Names at ValidComponent's 64-byte limit: the budget must hold the worst supported manifest.
-func networkNames(count int) []string {
-	out := make([]string, 0, count)
-	for i := range count {
-		name := fmt.Sprintf("network-%02d", i)
-		out = append(out, name+strings.Repeat("x", 64-len(name)))
-	}
-	return out
 }
 
 func TestPruneAggregatesSweepsEveryMethodology(t *testing.T) {
