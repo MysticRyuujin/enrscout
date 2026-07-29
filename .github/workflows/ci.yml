@@ -87,3 +87,19 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+
+  # The single required status check: matrix job names embed matrix values.
+  gate:
+    if: always()
+    needs: [go, web, images, dependency-review]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every upstream job to have succeeded or skipped
+        env:
+          RESULTS: ${{ join(needs.*.result, ',') }}
+        run: |
+          echo "upstream results: $RESULTS"
+          case "$RESULTS" in
+            *failure*|*cancelled*) echo "::error::a required job did not succeed"; exit 1 ;;
+          esac
