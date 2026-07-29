@@ -28,6 +28,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/MysticRyuujin/enrscout/internal/buildinfo"
+	"github.com/MysticRyuujin/enrscout/internal/clientname"
 	"github.com/MysticRyuujin/enrscout/internal/metricsrv"
 	"github.com/MysticRyuujin/enrscout/internal/netconf"
 	"github.com/MysticRyuujin/enrscout/internal/nodeset"
@@ -115,7 +116,7 @@ func run() error {
 		protocol     = flag.String("protocol", "any", "require discovery protocol: any|v4|v5")
 		layer        = flag.String("layer", "el", "restrict to a layer: el|cl|any (EL-only matches discv4-crawl trees and excludes un-peerable beacon nodes)")
 		limit        = flag.Int("limit", 0, "maximum nodes to include (0 = all)")
-		maxPerCl     = flag.Int("max-per-client", 0, "cap nodes per client for diversity (0 = no cap)")
+		balance      = flag.String("client-balance", balanceProportional, "how --limit is shared across clients: proportional (every identified client gets a slot, the rest by pool share) or none (highest scoring first)")
 		dryRun       = flag.Bool("dry-run", false, "allow an ephemeral key and never require --key-file")
 		validate     = flag.Bool("validate", false, "parse the signed tree URL back to verify it")
 		prefix       = flag.String("prefix", "snapshots", "object key prefix")
@@ -134,7 +135,7 @@ func run() error {
 
 	sel := selectOpts{
 		minScore: *minScore, maxAge: *maxAge, protocol: *protocol,
-		layer: *layer, limit: *limit, maxPerClient: *maxPerCl,
+		layer: *layer, limit: *limit, balance: *balance,
 	}
 	if err := sel.Validate(); err != nil {
 		return err
@@ -531,14 +532,20 @@ func emitTree(out output, outDir string) error {
 	return err
 }
 
+const (
+	balanceProportional = "proportional"
+	balanceNone         = "none"
+	unknownClient       = "<unknown>"
+)
+
 type selectOpts struct {
-	minScore     int
-	maxAge       time.Duration
-	protocol     string
-	layer        string
-	capability   string
-	limit        int
-	maxPerClient int
+	minScore   int
+	maxAge     time.Duration
+	protocol   string
+	layer      string
+	capability string
+	limit      int
+	balance    string
 }
 
 // capability is set per tree by buildNetworkTrees, so it is not validated here.
@@ -558,8 +565,8 @@ func (o selectOpts) Validate() error {
 	if o.limit < 0 {
 		return errors.New("--limit must not be negative")
 	}
-	if o.maxPerClient < 0 {
-		return errors.New("--max-per-client must not be negative")
+	if o.balance != balanceProportional && o.balance != balanceNone {
+		return errors.New("--client-balance must be proportional or none")
 	}
 	return nil
 }
@@ -580,8 +587,8 @@ func selectNodes(rows []nodeset.Row, opt selectOpts, now time.Time) []*enode.Nod
 		}
 		return rows[i].ID < rows[j].ID
 	})
-	perClient := map[string]int{}
 	var out []*enode.Node
+	var clients []string
 	for _, r := range rows {
 		if opt.layer != "" && opt.layer != "any" && r.Layer != opt.layer {
 			continue
@@ -608,15 +615,6 @@ func selectNodes(rows []nodeset.Row, opt selectOpts, now time.Time) []*enode.Nod
 				continue
 			}
 		}
-		clientBucket := r.Client
-		if clientBucket == "" {
-			clientBucket = "<unknown>"
-		}
-		if opt.maxPerClient > 0 {
-			if perClient[clientBucket] >= opt.maxPerClient {
-				continue
-			}
-		}
 		n, err := enode.Parse(enode.ValidSchemes, r.ENR)
 		if err != nil {
 			continue
@@ -625,12 +623,128 @@ func selectNodes(rows []nodeset.Row, opt selectOpts, now time.Time) []*enode.Nod
 			continue
 		}
 		out = append(out, n)
-		perClient[clientBucket]++
-		if opt.limit > 0 && len(out) >= opt.limit {
+		clients = append(clients, clientBucket(r))
+	}
+	if opt.limit <= 0 || len(out) <= opt.limit {
+		return out
+	}
+	if opt.balance != balanceProportional {
+		return out[:opt.limit]
+	}
+	return balanceClients(out, clients, opt.limit)
+}
+
+// Row.Client can come straight from a self-declared ENR entry, and even a completed handshake carries
+// an attacker-chosen name, so a label only earns its own reserved slot when a verified fingerprint
+// reports a client this repository recognizes. Everything else shares the unknown bucket, which the
+// floor skips: otherwise a peer advertising many invented client names would take a whole small tree.
+func clientBucket(r nodeset.Row) string {
+	if r.FPStatus != "ok" && r.FPStatus != "stale" {
+		return unknownClient
+	}
+	name := clientname.Canonical(r.Layer, r.Client)
+	if !clientname.Recognized(name) {
+		return unknownClient
+	}
+	return name
+}
+
+// balanceClients allocates the limit across clients rather than taking the highest-scoring nodes
+// outright: score correlates with client, so an unbalanced tree drops whole clients from a list peers
+// bootstrap against. Every identified client gets one slot, the rest are shared out in proportion to
+// how much of the candidate pool each client holds.
+func balanceClients(nodes []*enode.Node, clients []string, limit int) []*enode.Node {
+	pool := map[string][]int{}
+	var order []string
+	for i, c := range clients {
+		if _, seen := pool[c]; !seen {
+			order = append(order, c)
+		}
+		pool[c] = append(pool[c], i)
+	}
+	// Largest pool first, name breaking ties, so remainders are handed out deterministically and an
+	// identical candidate set always yields an identical tree.
+	sort.Slice(order, func(a, b int) bool {
+		if len(pool[order[a]]) != len(pool[order[b]]) {
+			return len(pool[order[a]]) > len(pool[order[b]])
+		}
+		return order[a] < order[b]
+	})
+
+	slots := make(map[string]int, len(order))
+	remaining := limit
+	for _, c := range order {
+		if remaining == 0 {
 			break
 		}
+		// "unknown" is the absence of a fingerprint, not a client worth reserving a slot for.
+		if c == unknownClient {
+			continue
+		}
+		slots[c] = 1
+		remaining--
 	}
-	return out
+	free := 0
+	for _, c := range order {
+		free += len(pool[c]) - slots[c]
+	}
+	type remainder struct {
+		client string
+		frac   float64
+	}
+	var fracs []remainder
+	for _, c := range order {
+		if free <= 0 || remaining <= 0 {
+			break
+		}
+		exact := float64(remaining) * float64(len(pool[c])-slots[c]) / float64(free)
+		whole := min(int(exact), len(pool[c])-slots[c])
+		slots[c] += whole
+		fracs = append(fracs, remainder{c, exact - float64(whole)})
+	}
+	used := 0
+	for _, c := range order {
+		used += slots[c]
+	}
+	sort.Slice(fracs, func(a, b int) bool {
+		if fracs[a].frac != fracs[b].frac {
+			return fracs[a].frac > fracs[b].frac
+		}
+		return fracs[a].client < fracs[b].client
+	})
+	for i := 0; used < limit && len(fracs) > 0; i = (i + 1) % len(fracs) {
+		c := fracs[i].client
+		if slots[c] >= len(pool[c]) {
+			if allFull(slots, pool, order) {
+				break
+			}
+			continue
+		}
+		slots[c]++
+		used++
+	}
+
+	var picked []int
+	for _, c := range order {
+		picked = append(picked, pool[c][:slots[c]]...)
+	}
+	// Restore the ranked order: tree layout depends on input order, so a stable order keeps branch
+	// records identical between cycles that select the same nodes.
+	sort.Ints(picked)
+	selected := make([]*enode.Node, 0, len(picked))
+	for _, i := range picked {
+		selected = append(selected, nodes[i])
+	}
+	return selected
+}
+
+func allFull(slots map[string]int, pool map[string][]int, order []string) bool {
+	for _, c := range order {
+		if slots[c] < len(pool[c]) {
+			return false
+		}
+	}
+	return true
 }
 
 // readKeyPassphrase strips only the first line's CR/LF terminator, preserving a passphrase's own surrounding spaces.
