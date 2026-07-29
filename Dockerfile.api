@@ -11,7 +11,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=1 go build -mod=readonly -trimpath -buildvcs=false -ldflags="-s -w -X github.com/MysticRyuujin/enrscout/internal/buildinfo.Revision=${SOURCE_REVISION} -X github.com/MysticRyuujin/enrscout/internal/buildinfo.SourceURL=${SOURCE_URL}" -o /out/enrscout-api ./cmd/api
 
-FROM gcr.io/distroless/cc-debian12:nonroot@sha256:66aa873a4a14fb164aa01296058efd8253744606d72715e45acface073359faa
+FROM gcr.io/distroless/cc-debian12:nonroot@sha256:fccdbb0a547c14e23fcf4ce8ad62ca5d43b4faae8d22cd292f490fef9946c96e
 COPY --from=build /out/enrscout-api /usr/local/bin/enrscout-api
 COPY LICENSE NOTICE /licenses/enrscout/
 LABEL org.opencontainers.image.source="https://github.com/MysticRyuujin/enrscout" \
