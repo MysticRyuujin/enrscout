@@ -47,12 +47,14 @@ tag_args=()
 for tag in "${tags[@]}"; do
   tag_args+=(--tag "$tag")
 done
-docker buildx imagetools create "${tag_args[@]}" "${refs[@]}"
 
-digest="$(
-  docker buildx imagetools inspect "${tags[0]}" |
-    awk '$1 == "Digest:" {print $2; exit}'
-)"
+# Take the digest from create's own metadata rather than parsing the human-readable
+# inspect output, which is not a stable interface.
+metadata="$(mktemp)"
+trap 'rm -f "$metadata"' EXIT
+docker buildx imagetools create "${tag_args[@]}" --metadata-file "$metadata" "${refs[@]}"
+
+digest="$(jq -r '."containerimage.descriptor".digest' "$metadata")"
 if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
   echo "::error::Could not resolve the multi-platform image digest"
   exit 1
