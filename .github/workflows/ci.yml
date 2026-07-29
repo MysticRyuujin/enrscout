@@ -24,15 +24,15 @@ jobs:
           cache: true
       - run: go mod download
       - name: Build
-        run: go build -trimpath ./...
+        run: make compile
       - name: Vet and gofmt
         run: make lint
       - name: Staticcheck
-        run: go run honnef.co/go/tools/cmd/staticcheck@2026.1 ./...
+        run: make staticcheck
       - name: Test
-        run: go test -race -shuffle=on ./...
+        run: make test-race
       - name: Reachable Go vulnerabilities
-        run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
+        run: make vulncheck
       - name: Validate Compose files
         run: |
           docker compose -f deploy/local/docker-compose.yaml config --quiet
@@ -41,9 +41,6 @@ jobs:
   web:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    defaults:
-      run:
-        working-directory: web
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -51,11 +48,38 @@ jobs:
           node-version: 26
           cache: npm
           cache-dependency-path: web/package-lock.json
-      - run: npm ci --ignore-scripts
+      - run: make web-install
       - name: Audit dependencies
-        run: npm audit --audit-level=moderate
+        run: make web-audit
       - name: Build
-        run: npm run build
+        run: make web-build
+
+  # Without this, a Dockerfile break first surfaces during a release.
+  images:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - component: crawler
+            dockerfile: Dockerfile.crawler
+          - component: api
+            dockerfile: Dockerfile.api
+          - component: web
+            dockerfile: web/Dockerfile
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - name: Build ${{ matrix.component }} image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: false
+          platforms: linux/amd64
+          cache-from: type=gha,scope=ci-${{ matrix.component }}
+          cache-to: type=gha,mode=max,scope=ci-${{ matrix.component }}
 
   dependency-review:
     # Dependency review requires GitHub Code Security on a private repository.
