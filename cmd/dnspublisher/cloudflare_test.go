@@ -183,6 +183,26 @@ func TestSyncNormalizesSplitContent(t *testing.T) {
 	}
 }
 
+// Cloudflare quotes TXT content on the caller's behalf and returns it quoted, so an unchanged
+// record must not be seen as changed once it has made a round trip through the zone.
+func TestSyncIgnoresQuotingAddedByTheZone(t *testing.T) {
+	root := "enrtree-root:v1 e=VYEJEBXEIQO6V6O4GAM4E3PLUY l=FDXN3SN67NA5DKA4J2GOK7BVQI seq=1 sig=abc"
+	z := newFakeZone(
+		cfRecord{Type: "TXT", Name: cfDomain, Content: fmt.Sprintf("%q", root), TTL: cloudflareRootTTL},
+		cfRecord{Type: "TXT", Name: "AAA." + cfDomain, Content: `"enr:-abc"`, TTL: cloudflareEntryTTL},
+	)
+	c := fakeCloudflare(t, z)
+
+	want := map[string]string{cfDomain: root, "AAA." + cfDomain: "enr:-abc"}
+	changed, err := c.Sync(context.Background(), cfDomain, want, map[string]string{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed != 0 {
+		t.Errorf("changed %d records that differ only by the zone's own quoting", changed)
+	}
+}
+
 func TestSyncFailsWithoutWritingWhenListingFails(t *testing.T) {
 	z := &fakeZone{records: map[string]cfRecord{}, listFail: true}
 	c := fakeCloudflare(t, z)
