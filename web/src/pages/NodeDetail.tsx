@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams } from "react-router";
 import { ApiError, fetchNode } from "../api";
 import { NETWORK_COLOR, relTime } from "../theme";
 import type { Node } from "../types";
