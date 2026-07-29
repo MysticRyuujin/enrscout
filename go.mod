@@ -4,8 +4,8 @@ go 1.26.0
 
 require (
 	github.com/duckdb/duckdb-go/v2 v2.10504.0
-	github.com/ethereum/go-ethereum v1.17.4
-	github.com/golang/snappy v1.0.0
+	github.com/ethereum/go-ethereum v1.17.5
+	github.com/golang/snappy v1.0.1-0.20260716114414-9ae09f520e93
 	github.com/google/uuid v1.6.0
 	github.com/libp2p/go-libp2p v0.48.0
 	github.com/libp2p/go-libp2p-mplex v0.11.0
@@ -45,7 +45,7 @@ require (
 	github.com/dunglas/httpsfv v1.1.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/emicklei/dot v1.6.2 // indirect
-	github.com/ethereum/c-kzg-4844/v2 v2.1.6 // indirect
+	github.com/ethereum/c-kzg-4844/v2 v2.1.8 // indirect
 	github.com/ethereum/go-bigmodexpfix v0.0.0-20250911101455-f9e208c548ab // indirect
 	github.com/ferranbt/fastssz v0.1.4 // indirect
 	github.com/flynn/noise v1.1.0 // indirect
