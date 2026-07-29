@@ -9,7 +9,7 @@ ARG VITE_NETWORKS=
 ENV VITE_API_BASE=$VITE_API_BASE VITE_NETWORKS=$VITE_NETWORKS
 RUN npm run build
 
-FROM nginxinc/nginx-unprivileged:alpine@sha256:a718212f9cf21e241f14067333000a3f0930292f5354fe0db269e9a2a2596b9e
+FROM nginxinc/nginx-unprivileged:alpine@sha256:59ccf0943b0b8e8d9e6ea9039a39555730f544701a655c596f7df7d096c593f5
 COPY --from=build /web/dist /usr/share/nginx/html
 COPY web/nginx.conf /etc/nginx/conf.d/default.conf
 COPY LICENSE NOTICE /licenses/enrscout/
