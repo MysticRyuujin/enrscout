@@ -1,19 +1,23 @@
 # syntax=docker/dockerfile:1.7
-FROM golang:1.26@sha256:3aff6657219a4d9c14e27fb1d8976c49c29fddb70ba835014f477e1c70636647 AS build
+FROM --platform=$BUILDPLATFORM golang:1.26@sha256:3aff6657219a4d9c14e27fb1d8976c49c29fddb70ba835014f477e1c70636647 AS build
 ARG SOURCE_REVISION=unknown
 ARG SOURCE_URL=https://github.com/MysticRyuujin/enrscout
+ARG TARGETOS
+ARG TARGETARCH
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
-COPY cmd ./cmd
-COPY internal ./internal
-RUN --mount=type=cache,target=/go/pkg/mod \
+RUN --mount=type=bind,source=cmd,target=/src/cmd \
+    --mount=type=bind,source=internal,target=/src/internal \
+    --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 go build -mod=readonly -trimpath -buildvcs=false -ldflags="-s -w -X github.com/MysticRyuujin/enrscout/internal/buildinfo.Revision=${SOURCE_REVISION} -X github.com/MysticRyuujin/enrscout/internal/buildinfo.SourceURL=${SOURCE_URL}" -o /out/enrscout-crawler ./cmd/crawler
-RUN --mount=type=cache,target=/go/pkg/mod \
-    --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 go build -mod=readonly -trimpath -buildvcs=false -ldflags="-s -w -X github.com/MysticRyuujin/enrscout/internal/buildinfo.Revision=${SOURCE_REVISION} -X github.com/MysticRyuujin/enrscout/internal/buildinfo.SourceURL=${SOURCE_URL}" -o /out/enrscout-dnspublisher ./cmd/dnspublisher
-RUN install -d -o 65532 -g 65532 /out/identity
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -mod=readonly -trimpath -buildvcs=false \
+      -ldflags="-s -w -X github.com/MysticRyuujin/enrscout/internal/buildinfo.Revision=${SOURCE_REVISION} -X github.com/MysticRyuujin/enrscout/internal/buildinfo.SourceURL=${SOURCE_URL}" \
+      -o /out/ ./cmd/crawler ./cmd/dnspublisher && \
+    mv /out/crawler /out/enrscout-crawler && \
+    mv /out/dnspublisher /out/enrscout-dnspublisher && \
+    install -d -o 65532 -g 65532 /out/identity
 
 FROM gcr.io/distroless/static-debian12:nonroot@sha256:f5b485ea962d9bd1186b2f6b3a061191539b905b82ec395de78cbfae51f20e35
 COPY --from=build /out/enrscout-crawler /usr/local/bin/enrscout-crawler

@@ -129,8 +129,8 @@ the output JSON contains only public tree records and the signed URL.
 
 ## Container images
 
-Released images are published to GHCR for `linux/amd64`, each carrying build provenance
-and an SBOM attestation:
+Released images are published to GHCR for `linux/amd64` and `linux/arm64`, each
+carrying build provenance and an SBOM attestation:
 
 ```
 ghcr.io/mysticryuujin/enrscout-crawler:<tag>   # also ships enrscout-dnspublisher
@@ -138,8 +138,14 @@ ghcr.io/mysticryuujin/enrscout-api:<tag>
 ghcr.io/mysticryuujin/enrscout-web:<tag>
 ```
 
+Each tag points to a multi-platform image, so Docker automatically selects the native
+variant. On an Apple Silicon Mac, Docker Desktop runs the `linux/arm64` variant in its
+Linux VM; these are container images, not native macOS executables.
+
 Every image is signed keylessly by the release workflow, with the signing identity
-recorded in Sigstore's public transparency log. Verify before deploying:
+recorded in Sigstore's public transparency log. Signing is recursive — the multi-platform
+index and each per-architecture child carry their own signature, so pinning either digest
+verifies. Verify before deploying:
 
 ```bash
 cosign verify \

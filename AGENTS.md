@@ -154,6 +154,11 @@ Reviewed and deliberately not fixed; re-litigate only with new information.
   must stay visible (map attribution control + About page + NOTICE).
 - **CGO split:** the crawler builds `CGO_ENABLED=0` (pure Go, even with libp2p); the
   api needs CGO (`go-duckdb` bundles a C++ lib) → its Docker image is debian-based.
+  That also means **the api image cannot be cross-built**: `Dockerfile.api` deliberately
+  omits the `--platform=$BUILDPLATFORM` + `GOOS`/`GOARCH` plumbing that `Dockerfile.crawler`
+  and `web/Dockerfile` use, so its arm64 build has to run on the native `ubuntu-24.04-arm`
+  runner. Making it match the crawler would need an aarch64 C toolchain in the build stage;
+  without one it silently falls back to QEMU, and no workflow installs binfmt.
 - **`go.mod` says `go 1.26.0`, not a patch version** - the `golang:1.26` image ships an
   older patch and rejects a patch-pinned directive.
 - **go-ethereum's `log.SetDefault` also hijacks the global `slog` default.** Call
