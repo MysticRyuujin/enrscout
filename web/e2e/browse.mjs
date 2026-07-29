@@ -32,6 +32,12 @@ page.on("requestfailed", (r) => {
     missingAssets.push(`${r.failure()?.errorText} ${r.url().slice(BASE.length)}`);
   }
 });
+// A module-worker 404 surfaces as requestfailed; a plain script or fetch 404 does not.
+page.on("response", (r) => {
+  if (r.url().startsWith(BASE) && r.status() >= 400) {
+    missingAssets.push(`HTTP ${r.status()} ${r.url().slice(BASE.length)}`);
+  }
+});
 
 async function goto(path, network) {
   const url = network
