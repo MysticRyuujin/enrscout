@@ -127,6 +127,36 @@ below `--min-tree-nodes`, or a drop past `--max-drop-pct` against that domain's 
 last publish. Keep the signing key in a secret manager or offline signing workflow;
 the output JSON contains only public tree records and the signed URL.
 
+## Container images
+
+Released images are published to GHCR for `linux/amd64`, each carrying build provenance
+and an SBOM attestation:
+
+```
+ghcr.io/mysticryuujin/enrscout-crawler:<tag>   # also ships enrscout-dnspublisher
+ghcr.io/mysticryuujin/enrscout-api:<tag>
+ghcr.io/mysticryuujin/enrscout-web:<tag>
+```
+
+Every image is signed keylessly by the release workflow, with the signing identity
+recorded in Sigstore's public transparency log. Verify before deploying:
+
+```bash
+cosign verify \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github\.com/MysticRyuujin/enrscout/\.github/workflows/release-images\.yml@refs/tags/v' \
+  ghcr.io/mysticryuujin/enrscout-crawler:v0.0.1
+```
+
+**Requires cosign v3 or newer.** Signatures live at the OCI 1.1 referrers fallback tag
+(`sha256-<digest>`), not the pre-v3 `sha256-<digest>.sig` convention, so v1/v2-era
+tooling reports these images as *unsigned* rather than as unverifiable. That includes
+admission controllers pinned to the old layout. `cosign triangulate` is deprecated and
+still prints the pre-v3 path; it is not where the signature is.
+
+Pin by digest rather than tag for anything long-lived. Builds are not reproducible —
+BuildKit records per-run provenance, so rebuilding a tag yields a different digest.
+
 ## Operations
 
 Deployment and runtime reference lives in [docs/operations.md](docs/operations.md):
