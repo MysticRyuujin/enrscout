@@ -172,6 +172,14 @@ for (const net of NETWORKS) {
 
     const clientSort = page.getByRole("button", { name: /Client/ });
     await clientSort.click();
+    // Router navigation runs in a transition, so the header re-renders a tick after the URL.
+    await page
+      .waitForFunction(
+        () => document.querySelector('th[aria-sort="ascending"]') !== null,
+        null,
+        { timeout: 2000 },
+      )
+      .catch(() => {});
     check(
       "nodes: client header defaults ascending",
       (await clientSort.locator("xpath=..").getAttribute("aria-sort")) ===

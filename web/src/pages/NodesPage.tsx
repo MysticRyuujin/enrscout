@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router";
 import { fetchNodes } from "../api";
 import { useNetwork } from "../network";
 import { num, relTime, shortId } from "../theme";
