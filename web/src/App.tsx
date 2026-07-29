@@ -5,7 +5,7 @@ import {
   Routes,
   useLocation,
   useSearchParams,
-} from "react-router-dom";
+} from "react-router";
 import Nav from "./components/Nav";
 import { NetworkContext } from "./network";
 import { NETWORKS } from "./theme";
