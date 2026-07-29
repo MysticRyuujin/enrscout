@@ -25,6 +25,13 @@ const ctx = await browser.newContext({
 const page = await ctx.newPage();
 const errors = [];
 page.on("pageerror", (e) => errors.push(e.message));
+// A library fetching its own worker breaks the basemap without raising a page error.
+const missingAssets = [];
+page.on("requestfailed", (r) => {
+  if (r.url().startsWith(BASE)) {
+    missingAssets.push(`${r.failure()?.errorText} ${r.url().slice(BASE.length)}`);
+  }
+});
 
 async function goto(path, network) {
   const url = network
@@ -224,6 +231,12 @@ check(
   "no uncaught page errors",
   errors.length === 0,
   errors.slice(0, 3).join(" | "),
+);
+
+check(
+  "every same-origin asset was served",
+  missingAssets.length === 0,
+  missingAssets.slice(0, 3).join(" | "),
 );
 
 await browser.close();
