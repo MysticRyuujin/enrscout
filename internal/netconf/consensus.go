@@ -71,19 +71,31 @@ func decodeVersion(raw string) ([4]byte, error) {
 }
 
 func (c *clNetwork) epochAt(at time.Time) uint64 {
-	if at.Unix() <= int64(c.genesisTime) {
+	unix := at.Unix()
+	if unix <= 0 || uint64(unix) <= c.genesisTime {
 		return 0
 	}
-	secondsPerEpoch := c.secondsPerSlot * c.slotsPerEpoch
-	if secondsPerEpoch == 0 {
+	secondsPerEpoch, ok := c.epochDuration()
+	if !ok {
 		return 0
 	}
-	return uint64(at.Unix()-int64(c.genesisTime)) / secondsPerEpoch
+	return (uint64(unix) - c.genesisTime) / secondsPerEpoch
 }
 
 func (c *clNetwork) timeAtEpoch(epoch uint64) time.Time {
-	secondsPerEpoch := c.secondsPerSlot * c.slotsPerEpoch
+	secondsPerEpoch, ok := c.epochDuration()
+	maxUnix := uint64(math.MaxInt64)
+	if !ok || c.genesisTime > maxUnix || epoch > (maxUnix-c.genesisTime)/secondsPerEpoch {
+		return time.Unix(math.MaxInt64, 0).UTC()
+	}
 	return time.Unix(int64(c.genesisTime+epoch*secondsPerEpoch), 0).UTC()
+}
+
+func (c *clNetwork) epochDuration() (uint64, bool) {
+	if c.secondsPerSlot == 0 || c.slotsPerEpoch > math.MaxUint64/c.secondsPerSlot {
+		return 0, false
+	}
+	return c.secondsPerSlot * c.slotsPerEpoch, true
 }
 
 func (c *clNetwork) forkAt(epoch uint64) (clFork, error) {

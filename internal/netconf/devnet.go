@@ -78,6 +78,12 @@ func RegisterDevnet(cfg DevnetConfig) error {
 	if cfg.GenesisTime == 0 || cfg.SecondsPerSlot == 0 || cfg.SlotsPerEpoch == 0 {
 		return fmt.Errorf("CL genesis time, seconds per slot, and slots per epoch must be non-zero")
 	}
+	if cfg.GenesisTime > uint64(math.MaxInt64) {
+		return fmt.Errorf("CL genesis time exceeds the maximum Unix timestamp")
+	}
+	if cfg.SlotsPerEpoch > math.MaxUint64/cfg.SecondsPerSlot {
+		return fmt.Errorf("CL epoch duration overflows uint64")
+	}
 	forks := make([]clFork, 0, len(cfg.CLForks))
 	for _, configured := range cfg.CLForks {
 		fv := strings.TrimPrefix(strings.TrimSpace(configured.Version), "0x")
