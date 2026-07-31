@@ -1,6 +1,7 @@
 package netconf
 
 import (
+	"math"
 	"slices"
 	"testing"
 )
@@ -93,6 +94,8 @@ func TestRegisterDevnetRejectsBadConfig(t *testing.T) {
 		{"no bootnodes", func(c *DevnetConfig) { c.BootnodeRecords = nil }},
 		{"no cl forks", func(c *DevnetConfig) { c.CLForks = nil }},
 		{"no genesis config", func(c *DevnetConfig) { c.ELGenesisJSON = []byte(`{}`) }},
+		{"genesis time exceeds int64", func(c *DevnetConfig) { c.GenesisTime = uint64(math.MaxInt64) + 1 }},
+		{"epoch duration overflows", func(c *DevnetConfig) { c.SecondsPerSlot = math.MaxUint64 }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
