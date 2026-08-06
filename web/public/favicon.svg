@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <mask id="holes">
+    <rect width="32" height="32" fill="#fff" />
+    <g fill="none" stroke="#000">
+      <circle cx="16" cy="16" r="5" stroke-width="1.4" />
+      <g stroke-width="1.6">
+        <circle cx="21" cy="7.3" r="3.8" />
+        <circle cx="6" cy="16" r="3.8" />
+        <circle cx="21" cy="24.7" r="3.8" />
+      </g>
+    </g>
+    <g fill="#000">
+      <circle cx="21" cy="7.3" r="1.5" />
+      <circle cx="6" cy="16" r="1.5" />
+      <circle cx="21" cy="24.7" r="1.5" />
+    </g>
+  </mask>
+  <rect width="32" height="32" rx="7" fill="#0f141e" />
+  <g mask="url(#holes)">
+    <circle cx="16" cy="16" r="10.4" fill="none" stroke="#3987e5" stroke-width="2.2" />
+    <circle cx="16" cy="16" r="5" fill="#3987e5" />
+    <circle cx="16" cy="16" r="2.3" fill="#d55181" />
+    <circle cx="21" cy="7.3" r="3.8" fill="#3987e5" />
+    <circle cx="6" cy="16" r="3.8" fill="#199e70" />
+    <circle cx="21" cy="24.7" r="3.8" fill="#9085e9" />
+  </g>
+</svg>

@@ -73,7 +73,9 @@ a {
 }
 
 .brand-mark {
-  color: var(--accent);
+  width: 19px;
+  height: 19px;
+  vertical-align: -3px;
   margin-right: 4px;
 }
 
