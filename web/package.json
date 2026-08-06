@@ -15,7 +15,7 @@
     "@deck.gl/layers": "^9.3.7",
     "@deck.gl/mapbox": "^9.3.7",
     "@deck.gl/react": "^9.3.7",
-    "maplibre-gl": "^5.24.0",
+    "maplibre-gl": "^6.1.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-router": "^8.3.0"

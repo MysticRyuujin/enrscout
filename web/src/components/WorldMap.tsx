@@ -1,8 +1,10 @@
 import type { Layer } from "@deck.gl/core";
 import { ScatterplotLayer, TextLayer } from "@deck.gl/layers";
 import { MapboxOverlay } from "@deck.gl/mapbox";
-import maplibregl from "maplibre-gl";
+import * as maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
+// ?worker&url, not ?url: only Vite's worker pipeline bundles in the sibling chunk the worker imports.
+import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
 import { useNavigate } from "react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -197,6 +199,7 @@ export default function WorldMap({
   }, [clusters, selectedKey]);
 
   useEffect(() => {
+    maplibregl.setWorkerUrl(maplibreWorkerUrl);
     const map = new maplibregl.Map({
       container: containerRef.current!,
       style: STYLE_URL,
