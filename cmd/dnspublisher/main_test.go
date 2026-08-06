@@ -31,9 +31,13 @@ import (
 
 const testKeyHex = "b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291"
 
-func v4Row(t *testing.T, last byte, tcp int, score int32) nodeset.Row {
+func v4Row(t *testing.T, last byte, tcp int, score int32, now time.Time) nodeset.Row {
 	t.Helper()
 	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	nw, err := netconf.Get("mainnet")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,6 +46,7 @@ func v4Row(t *testing.T, last byte, tcp int, score int32) nodeset.Row {
 	if tcp > 0 {
 		r.Set(enr.TCP(uint16(tcp)))
 	}
+	r.Set(netconf.EthEntry{ForkID: nw.CurrentForkIDAt(now)})
 	if err := enode.SignV4(&r, key); err != nil {
 		t.Fatal(err)
 	}
@@ -56,16 +61,16 @@ func v4Row(t *testing.T, last byte, tcp int, score int32) nodeset.Row {
 	return nodeset.Row{
 		ID: n.ID().String(), ENR: "enr:" + base64.RawURLEncoding.EncodeToString(b),
 		IP: net.IPv4(1, 2, 3, last).String(), TCP: int32(tcp), Score: score,
-		HasV5: true, LastSeen: time.Unix(1700000000, 0).Unix(),
+		HasV5: true, LastSeen: now.Unix(),
 	}
 }
 
 func TestSelectNodesDialableOnly(t *testing.T) {
 	now := time.Unix(1700000000, 0)
 	rows := []nodeset.Row{
-		currentMainnetEL(t, v4Row(t, 1, 30303, 5), now),
-		currentMainnetEL(t, v4Row(t, 2, 0, 5), now),
-		currentMainnetEL(t, v4Row(t, 3, 30303, 0), now),
+		currentMainnetEL(t, v4Row(t, 1, 30303, 5, now), now),
+		currentMainnetEL(t, v4Row(t, 2, 0, 5, now), now),
+		currentMainnetEL(t, v4Row(t, 3, 30303, 0, now), now),
 	}
 	got := selectNodes(rows, selectOpts{minScore: 1, protocol: "any"}, now)
 	if len(got) != 1 {
@@ -75,20 +80,20 @@ func TestSelectNodesDialableOnly(t *testing.T) {
 
 func TestSelectNodesRejectsStaleExecutionFork(t *testing.T) {
 	now := time.Unix(1700000000, 0)
-	current := v4Row(t, 1, 30303, 5)
+	current := v4Row(t, 1, 30303, 5, now)
 	current.Layer = "el"
 	current.Network = "mainnet"
 	nw, _ := netconf.Get("mainnet")
 	fork := nw.CurrentForkIDAt(now).Hash
 	current.ForkHash = hex.EncodeToString(fork[:])
-	stale := v4Row(t, 2, 30303, 5)
+	stale := v4Row(t, 2, 30303, 5, now)
 	stale.Layer = "el"
 	stale.Network = "mainnet"
 	stale.ForkHash = "9f3d2254"
 
 	// Mainnet Frontier with its canonical Next: an earlier era that EIP-2124 accepts for
 	// peering, but a published tree should carry working peers, not syncing ones.
-	earlier := v4Row(t, 3, 30303, 5)
+	earlier := v4Row(t, 3, 30303, 5, now)
 	earlier.Layer = "el"
 	earlier.Network = "mainnet"
 	earlier.ForkHash, earlier.ForkNext = "fc64ec04", 1150000
@@ -104,13 +109,13 @@ func TestSelectNodesRejectsIncompatibleExecutionForkNext(t *testing.T) {
 	nw, _ := netconf.Get("mainnet")
 	currentID := nw.CurrentForkIDAt(now)
 
-	compatible := v4Row(t, 1, 30303, 5)
+	compatible := v4Row(t, 1, 30303, 5, now)
 	compatible.Layer = "el"
 	compatible.Network = "mainnet"
 	compatible.ForkHash = hex.EncodeToString(currentID.Hash[:])
 	compatible.ForkNext = currentID.Next
 
-	incompatible := v4Row(t, 2, 30303, 5)
+	incompatible := v4Row(t, 2, 30303, 5, now)
 	incompatible.Layer = "el"
 	incompatible.Network = "mainnet"
 	incompatible.ForkHash = compatible.ForkHash
@@ -147,9 +152,9 @@ func TestReachableFallbackAndFamilies(t *testing.T) {
 func TestSelectNodesProtocolAndLimit(t *testing.T) {
 	now := time.Unix(1700000000, 0)
 	rows := []nodeset.Row{
-		currentMainnetEL(t, v4Row(t, 1, 30303, 5), now),
-		currentMainnetEL(t, v4Row(t, 2, 30303, 5), now),
-		currentMainnetEL(t, v4Row(t, 3, 30303, 5), now),
+		currentMainnetEL(t, v4Row(t, 1, 30303, 5, now), now),
+		currentMainnetEL(t, v4Row(t, 2, 30303, 5, now), now),
+		currentMainnetEL(t, v4Row(t, 3, 30303, 5, now), now),
 	}
 	if got := selectNodes(rows, selectOpts{minScore: 1, protocol: "v4"}, now); len(got) != 0 {
 		t.Errorf("protocol=v4 should exclude v5-only nodes, got %d", len(got))
@@ -159,9 +164,13 @@ func TestSelectNodesProtocolAndLimit(t *testing.T) {
 	}
 }
 
-func v4RowSnap(t *testing.T, last byte) nodeset.Row {
+func v4RowSnap(t *testing.T, last byte, now time.Time) nodeset.Row {
 	t.Helper()
 	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	nw, err := netconf.Get("mainnet")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,6 +178,7 @@ func v4RowSnap(t *testing.T, last byte) nodeset.Row {
 	r.Set(enr.IPv4{1, 2, 3, last})
 	r.Set(enr.TCP(30303))
 	r.Set(enr.WithEntry("snap", uint(1)))
+	r.Set(netconf.EthEntry{ForkID: nw.CurrentForkIDAt(now)})
 	if err := enode.SignV4(&r, key); err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +193,53 @@ func v4RowSnap(t *testing.T, last byte) nodeset.Row {
 	return nodeset.Row{
 		ID: n.ID().String(), ENR: "enr:" + base64.RawURLEncoding.EncodeToString(b),
 		IP: net.IPv4(1, 2, 3, last).String(), TCP: 30303, Score: 5,
-		HasV5: true, LastSeen: time.Unix(1700000000, 0).Unix(),
+		HasV5: true, LastSeen: now.Unix(),
+	}
+}
+
+// clRow signs an ENR carrying the current mainnet eth2 digest in the 16-byte SSZ ENRForkID shape.
+func clRow(t *testing.T, last byte, now time.Time) nodeset.Row {
+	t.Helper()
+	state, err := netconf.CLForkStateAt("mainnet", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := make(netconf.Eth2Entry, 16)
+	copy(entry, state.Digest[:])
+	return clRowEntry(t, last, entry, now)
+}
+
+// clRowEntry takes the eth2 value verbatim so a caller can advertise a digest the columns disagree with.
+func clRowEntry(t *testing.T, last byte, entry netconf.Eth2Entry, now time.Time) nodeset.Row {
+	t.Helper()
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := netconf.CLForkStateAt("mainnet", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var r enr.Record
+	r.Set(enr.IPv4{1, 2, 3, last})
+	r.Set(enr.TCP(9000))
+	r.Set(entry)
+	if err := enode.SignV4(&r, key); err != nil {
+		t.Fatal(err)
+	}
+	n, err := enode.New(enode.ValidSchemes, &r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := rlp.EncodeToBytes(&r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return nodeset.Row{
+		ID: n.ID().String(), ENR: "enr:" + base64.RawURLEncoding.EncodeToString(b),
+		IP: net.IPv4(1, 2, 3, last).String(), TCP: 9000, Score: 5,
+		HasV5: true, LastSeen: now.Unix(),
+		Layer: "cl", Network: "mainnet", ForkHash: hex.EncodeToString(state.Digest[:]),
 	}
 }
 
@@ -198,7 +254,7 @@ func currentMainnetEL(t *testing.T, row nodeset.Row, now time.Time) nodeset.Row 
 
 func TestSelectNodesLayerFilter(t *testing.T) {
 	now := time.Unix(1700000000, 0)
-	el := currentMainnetEL(t, v4Row(t, 1, 30303, 5), now)
+	el := currentMainnetEL(t, v4Row(t, 1, 30303, 5, now), now)
 	if got := selectNodes([]nodeset.Row{el}, selectOpts{minScore: 1, protocol: "any", layer: "el"}, now); len(got) != 1 {
 		t.Fatalf("layer=el should keep the EL node, got %d", len(got))
 	}
@@ -212,8 +268,8 @@ func TestSelectNodesLayerFilter(t *testing.T) {
 
 func TestSelectNodesCapabilitySnap(t *testing.T) {
 	now := time.Unix(1700000000, 0)
-	plain := currentMainnetEL(t, v4Row(t, 1, 30303, 5), now)
-	snap := currentMainnetEL(t, v4RowSnap(t, 2), now)
+	plain := currentMainnetEL(t, v4Row(t, 1, 30303, 5, now), now)
+	snap := currentMainnetEL(t, v4RowSnap(t, 2, now), now)
 	rows := []nodeset.Row{plain, snap}
 
 	if got := selectNodes(rows, selectOpts{minScore: 1, protocol: "any", layer: "el", capability: "all"}, now); len(got) != 2 {
@@ -310,6 +366,11 @@ func TestSelectNodesRejectsOutOfRangePort(t *testing.T) {
 	r.Set(enr.IPv4{9, 9, 9, 9})
 	r.Set(enr.WithEntry("tcp", uint32(70000)))
 	r.Set(enr.QUIC(30303))
+	portNW, err := netconf.Get("mainnet")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Set(netconf.EthEntry{ForkID: portNW.CurrentForkIDAt(now)})
 	if err := enode.SignV4(&r, key); err != nil {
 		t.Fatal(err)
 	}
@@ -332,6 +393,59 @@ func TestSelectNodesRejectsOutOfRangePort(t *testing.T) {
 
 	if got := selectNodes([]nodeset.Row{row}, selectOpts{minScore: 1, protocol: "any", layer: "el", capability: "all"}, now); len(got) != 0 {
 		t.Fatalf("published %d records carrying an out-of-range tcp entry, want 0", len(got))
+	}
+}
+
+// A live staging record: classified EL by an authenticated Status handshake, so its row columns are
+// current while the ENR it publishes carries no eth entry at all (keys id/ip/secp256k1/tcp/udp).
+func TestSelectNodesRequiresENRForkEntry(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	const observed = "enr:-Iu4QMYOLXOWDG7Ue4PZJuzbGnPLWihjXBKsaVLvy68HyHulWyjqqLqzFlQT1mhXn-dMt8xexh_vh-PvW7zFYwDNHTkBgmlkgnY0gmlwhC4-vcmJc2VjcDI1NmsxoQOrYxy0NZSXwH_5AWxdHqp7YvhL-9aAnf0jfwlWUfJ_mIN0Y3CCdl-DdWRwgnZf"
+	n := mustParseENR(t, observed)
+	statusVerified := currentMainnetEL(t, nodeset.Row{
+		ID: n.ID().String(), ENR: observed, IP: "46.62.189.201", TCP: 30303, Score: 5,
+		HasV5: true, LastSeen: now.Unix(),
+	}, now)
+	keeper := currentMainnetEL(t, v4Row(t, 1, 30303, 5, now), now)
+
+	got := selectNodes([]nodeset.Row{statusVerified, keeper}, selectOpts{minScore: 1, protocol: "any", layer: "el"}, now)
+	if len(got) != 1 || got[0].ID().String() != keeper.ID {
+		t.Fatalf("only the record advertising its fork should be published, got %v", got)
+	}
+}
+
+func TestSelectNodesRejectsStaleENRForkEntry(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	nw, err := netconf.Get("mainnet")
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleEntry, err := rlp.EncodeToBytes(&netconf.EthEntry{ForkID: nw.CurrentForkIDAt(time.Unix(1438269973, 0))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Columns come out current (ethEntryRow applies currentMainnetEL); only the ENR self-describes stale.
+	stale := ethEntryRow(t, 4, staleEntry, now)
+	keeper := currentMainnetEL(t, v4Row(t, 1, 30303, 5, now), now)
+
+	got := selectNodes([]nodeset.Row{stale, keeper}, selectOpts{minScore: 1, protocol: "any", layer: "el"}, now)
+	if len(got) != 1 || got[0].ID().String() != keeper.ID {
+		t.Fatalf("a record self-describing a stale fork must not be published, got %v", got)
+	}
+}
+
+func TestSelectNodesCLRequiresENREth2Digest(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	good := clRow(t, 1, now)
+	absent := v4Row(t, 2, 30303, 5, now)
+	absent.Layer, absent.Network, absent.ForkHash = "cl", "mainnet", good.ForkHash
+	staleDigest := make(netconf.Eth2Entry, 16)
+	copy(staleDigest, []byte{0xde, 0xad, 0xbe, 0xef})
+	stale := clRowEntry(t, 3, staleDigest, now)
+
+	got := selectNodes([]nodeset.Row{good, absent, stale}, selectOpts{minScore: 1, protocol: "any", layer: "cl"}, now)
+	if len(got) != 1 || got[0].ID().String() != good.ID {
+		t.Fatalf("only the record advertising the current digest should be published, got %v", got)
 	}
 }
 
@@ -364,6 +478,11 @@ func v6Row(t *testing.T, last byte, ownPort bool, now time.Time) nodeset.Row {
 	if ownPort {
 		r.Set(enr.TCP6(30304))
 	}
+	mainnet, err := netconf.Get("mainnet")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Set(netconf.EthEntry{ForkID: mainnet.CurrentForkIDAt(now)})
 	if err := enode.SignV4(&r, key); err != nil {
 		t.Fatal(err)
 	}
@@ -390,7 +509,7 @@ func TestSelectNodesReservesIPv6Slots(t *testing.T) {
 	now := time.Unix(1700000000, 0)
 	rows := []nodeset.Row{}
 	for i := byte(1); i <= 40; i++ {
-		rows = append(rows, currentMainnetEL(t, v4Row(t, i, 30303, 9), now))
+		rows = append(rows, currentMainnetEL(t, v4Row(t, i, 30303, 9, now), now))
 	}
 	// Lowest score, so rank alone would never reach them inside the limit.
 	v6 := v6Row(t, 200, false, now)
@@ -419,7 +538,7 @@ func TestSelectNodesIPv6ReservationKeepsLimitAndOrder(t *testing.T) {
 	now := time.Unix(1700000000, 0)
 	var rows []nodeset.Row
 	for i := byte(1); i <= 60; i++ {
-		rows = append(rows, currentMainnetEL(t, v4Row(t, i, 30303, 9), now))
+		rows = append(rows, currentMainnetEL(t, v4Row(t, i, 30303, 9, now), now))
 	}
 	// Lowest score, so only the reservation can reach them.
 	for i := byte(100); i <= 105; i++ {
@@ -521,7 +640,7 @@ func TestParseNetworks(t *testing.T) {
 
 func TestBuildTree(t *testing.T) {
 	now := time.Unix(1700000000, 0)
-	rows := []nodeset.Row{currentMainnetEL(t, v4Row(t, 1, 30303, 5), now)}
+	rows := []nodeset.Row{currentMainnetEL(t, v4Row(t, 1, 30303, 5, now), now)}
 	key, err := crypto.GenerateKey()
 	if err != nil {
 		t.Fatal(err)
@@ -808,11 +927,11 @@ func TestRunMultiTreeSkipsStaleSnapshot(t *testing.T) {
 
 func TestSelectNodesPrefersScoreThenFreshness(t *testing.T) {
 	now := time.Unix(1700000000, 0)
-	oldHigh := currentMainnetEL(t, v4Row(t, 1, 30303, 10), now)
+	oldHigh := currentMainnetEL(t, v4Row(t, 1, 30303, 10, now), now)
 	oldHigh.LastSeen = now.Add(-time.Minute).Unix()
-	newHigh := currentMainnetEL(t, v4Row(t, 2, 30303, 10), now)
+	newHigh := currentMainnetEL(t, v4Row(t, 2, 30303, 10, now), now)
 	newHigh.LastSeen = now.Unix()
-	low := currentMainnetEL(t, v4Row(t, 3, 30303, 1), now)
+	low := currentMainnetEL(t, v4Row(t, 3, 30303, 1, now), now)
 
 	got := selectNodes([]nodeset.Row{low, oldHigh, newHigh}, selectOpts{minScore: 1, protocol: "any", limit: 1}, now)
 	if len(got) != 1 || got[0].ID().String() != newHigh.ID {
@@ -822,7 +941,7 @@ func TestSelectNodesPrefersScoreThenFreshness(t *testing.T) {
 
 func TestSelectNodesAgeUsesPublicationTime(t *testing.T) {
 	snapshotTime := time.Unix(1700000000, 0)
-	row := currentMainnetEL(t, v4Row(t, 1, 30303, 5), snapshotTime)
+	row := currentMainnetEL(t, v4Row(t, 1, 30303, 5, snapshotTime), snapshotTime)
 	row.LastSeen = snapshotTime.Add(-30 * time.Minute).Unix()
 	if got := selectNodes([]nodeset.Row{row}, selectOpts{minScore: 1, maxAge: time.Hour, protocol: "any"}, snapshotTime.Add(24*time.Hour)); len(got) != 0 {
 		t.Fatalf("selected %d nodes from a day-old snapshot", len(got))
@@ -1023,8 +1142,8 @@ func TestLoadKeyKeystoreWithSpacedPassphrase(t *testing.T) {
 func TestSignedTreeDeterministicAndValid(t *testing.T) {
 	now := time.Unix(1700000000, 0)
 	rows := []nodeset.Row{
-		currentMainnetEL(t, v4Row(t, 1, 30303, 5), now),
-		currentMainnetEL(t, v4Row(t, 2, 30303, 5), now),
+		currentMainnetEL(t, v4Row(t, 1, 30303, 5, now), now),
+		currentMainnetEL(t, v4Row(t, 2, 30303, 5, now), now),
 	}
 	nodes := selectNodes(rows, selectOpts{minScore: 1, protocol: "any"}, now)
 	if len(nodes) != 2 {
@@ -1242,13 +1361,7 @@ func TestValidateBaselineRejectsParseableButUnusableArtifacts(t *testing.T) {
 
 func TestBuildNetworkTreesCLLayerOmitsSnapTree(t *testing.T) {
 	now := time.Unix(1700000000, 0)
-	cl := v4Row(t, 9, 9000, 5)
-	cl.Layer, cl.Network = "cl", "mainnet"
-	state, err := netconf.CLForkStateAt("mainnet", now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cl.ForkHash = hex.EncodeToString(state.Digest[:])
+	cl := clRow(t, 9, now)
 
 	key, err := crypto.HexToECDSA(testKeyHex)
 	if err != nil {

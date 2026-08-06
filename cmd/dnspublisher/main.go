@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ecdsa"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -596,6 +597,28 @@ func (o selectOpts) Validate() error {
 	return nil
 }
 
+// enrForkCurrentAt evaluates the row currency rule on the ENR the tree will carry: a Status-classified
+// row can be current while its ENR advertises no fork entry or a stale one, and consumers pre-qualify
+// peers from the record alone. Same bar as discv4-crawl's `devp2p nodeset filter -eth-network`.
+func enrForkCurrentAt(n *enode.Node, layer, network string, now time.Time) bool {
+	switch layer {
+	case "el":
+		var eth netconf.EthEntry
+		if n.Record().Load(&eth) != nil {
+			return false
+		}
+		return netconf.RowForkCurrentAt(layer, network, hex.EncodeToString(eth.ForkID.Hash[:]), eth.ForkID.Next, now)
+	case "cl":
+		var eth2 netconf.Eth2Entry
+		if n.Record().Load(&eth2) != nil || len(eth2) < 4 {
+			return false
+		}
+		return netconf.RowForkCurrentAt(layer, network, hex.EncodeToString(eth2[:4]), 0, now)
+	default:
+		return false
+	}
+}
+
 // enrHasEntry reports ENR-entry presence, matching devp2p nodeset filter's snap/les selection (presence, not fingerprinted caps).
 func enrHasEntry(n *enode.Node, key string) bool {
 	var raw rlp.RawValue
@@ -673,6 +696,9 @@ func selectNodes(rows []nodeset.Row, opt selectOpts, now time.Time) []*enode.Nod
 			continue
 		}
 		if !enrWellFormed(n) {
+			continue
+		}
+		if !enrForkCurrentAt(n, r.Layer, r.Network, now) {
 			continue
 		}
 		if opt.capability == "snap" && !enrHasEntry(n, "snap") {

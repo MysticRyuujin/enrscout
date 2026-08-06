@@ -92,7 +92,13 @@ publishes the crawler advertiser endpoints on :30303-:30311.
   `Layer`/`Network`/`ForkHash` are not - because dropping them would cost coverage and fingerprints. A
   published record is held to the stricter bar, because a peer that decodes entries strictly rejects the
   whole record (ethrex does) and the tree slot is wasted. Measured against the live EF trees, this
-  excludes 0 of 3683 records.
+  excludes 0 of 3683 records. The record must also self-describe fork currency (`enrForkCurrentAt`):
+  the row currency rule evaluated on the ENR's own `eth` fork id (EL) or `eth2` digest (CL), not the
+  row columns. A Status-classified row can be current while its ENR advertises no fork entry or a
+  stale one; consumers pre-qualify peers from the record alone, and discv4-crawl's `devp2p nodeset
+  filter -eth-network` applied the same bar - every record in the EF production trees carries a
+  parseable `eth` entry. Expect the tree to shed ENR-stale nodes for a cycle at fork transitions,
+  bounded by the collapse guards.
   When `--limit` binds, IPv6 also gets a reserved share: address family is not a client-balance
   dimension, so a family holding a few percent of the pool otherwise rounds away to nothing (at
   `--limit=25` a 2.4% IPv6 share expects 0.6 nodes). `reserveIPv6` gives it its proportional share and
