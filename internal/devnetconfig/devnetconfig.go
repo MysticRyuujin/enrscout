@@ -70,6 +70,7 @@ type clConfig struct {
 	electraMaxBlobs uint64
 	genesisTime     uint64
 	secondsPerSlot  uint64
+	slotDurationMS  uint64
 	slotsPerEpoch   uint64
 }
 
@@ -182,6 +183,12 @@ func parseCLConfig(path string) (clConfig, error) {
 				return cfg, fmt.Errorf("invalid SECONDS_PER_SLOT: %w", err)
 			}
 			cfg.secondsPerSlot = n
+		case key == "SLOT_DURATION_MS":
+			n, err := strconv.ParseUint(val, 10, 64)
+			if err != nil {
+				return cfg, fmt.Errorf("invalid SLOT_DURATION_MS: %w", err)
+			}
+			cfg.slotDurationMS = n
 		case key == "SLOTS_PER_EPOCH":
 			n, err := strconv.ParseUint(val, 10, 64)
 			if err != nil {
@@ -217,6 +224,14 @@ func parseCLConfig(path string) (clConfig, error) {
 		cfg.forks = append(cfg.forks, netconf.CLForkConfig{Epoch: epoch, Version: versions[name]})
 	}
 	cfg.fuluActive = cfg.fuluEpoch != math.MaxUint64 && cfg.fuluVersion != ""
+	// Newer ethereum-package genesis bundles publish SLOT_DURATION_MS instead of
+	// SECONDS_PER_SLOT; an explicit SECONDS_PER_SLOT wins when both are present.
+	if cfg.secondsPerSlot == 0 && cfg.slotDurationMS != 0 {
+		if cfg.slotDurationMS%1000 != 0 {
+			return cfg, fmt.Errorf("SLOT_DURATION_MS %d is not a whole number of seconds", cfg.slotDurationMS)
+		}
+		cfg.secondsPerSlot = cfg.slotDurationMS / 1000
+	}
 	if cfg.genesisTime == 0 || cfg.secondsPerSlot == 0 || cfg.slotsPerEpoch == 0 {
 		return cfg, fmt.Errorf("config.yaml must provide genesis time, seconds per slot, and slots per epoch/preset")
 	}
