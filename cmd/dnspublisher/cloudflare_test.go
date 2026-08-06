@@ -132,8 +132,8 @@ func TestSyncWritesEntriesBeforeTheRoot(t *testing.T) {
 }
 
 func TestSyncRetainsThePreviousGeneration(t *testing.T) {
-	stale := cfRecord{Type: "TXT", Name: "OLD." + cfDomain, Content: "enr:-old", TTL: cloudflareEntryTTL}
-	ancient := cfRecord{Type: "TXT", Name: "ANCIENT." + cfDomain, Content: "enr:-ancient", TTL: cloudflareEntryTTL}
+	stale := cfRecord{Type: "TXT", Name: "OLD." + cfDomain, Content: "enr:-old", TTL: entryTTL}
+	ancient := cfRecord{Type: "TXT", Name: "ANCIENT." + cfDomain, Content: "enr:-ancient", TTL: entryTTL}
 	z := newFakeZone(stale, ancient)
 	c := fakeCloudflare(t, z)
 
@@ -154,8 +154,8 @@ func TestSyncRetainsThePreviousGeneration(t *testing.T) {
 }
 
 func TestSyncLeavesUnchangedRecordsAlone(t *testing.T) {
-	root := cfRecord{Type: "TXT", Name: cfDomain, Content: "enrtree-root:v1 seq=1", TTL: cloudflareRootTTL}
-	entry := cfRecord{Type: "TXT", Name: "AAA." + cfDomain, Content: "enr:-abc", TTL: cloudflareEntryTTL}
+	root := cfRecord{Type: "TXT", Name: cfDomain, Content: "enrtree-root:v1 seq=1", TTL: rootTTL}
+	entry := cfRecord{Type: "TXT", Name: "AAA." + cfDomain, Content: "enr:-abc", TTL: entryTTL}
 	z := newFakeZone(root, entry)
 	c := fakeCloudflare(t, z)
 
@@ -177,7 +177,7 @@ func TestSyncLeavesUnchangedRecordsAlone(t *testing.T) {
 func TestSyncNormalizesSplitContent(t *testing.T) {
 	long := "enr:-" + strings.Repeat("x", 300)
 	split := fmt.Sprintf("%q %q", long[:255], long[255:])
-	z := newFakeZone(cfRecord{Type: "TXT", Name: "AAA." + cfDomain, Content: split, TTL: cloudflareEntryTTL})
+	z := newFakeZone(cfRecord{Type: "TXT", Name: "AAA." + cfDomain, Content: split, TTL: entryTTL})
 	c := fakeCloudflare(t, z)
 
 	changed, err := c.Sync(context.Background(), cfDomain, map[string]string{"AAA." + cfDomain: long}, nil)
@@ -194,8 +194,8 @@ func TestSyncNormalizesSplitContent(t *testing.T) {
 func TestSyncIgnoresQuotingAddedByTheZone(t *testing.T) {
 	root := "enrtree-root:v1 e=VYEJEBXEIQO6V6O4GAM4E3PLUY l=FDXN3SN67NA5DKA4J2GOK7BVQI seq=1 sig=abc"
 	z := newFakeZone(
-		cfRecord{Type: "TXT", Name: cfDomain, Content: fmt.Sprintf("%q", root), TTL: cloudflareRootTTL},
-		cfRecord{Type: "TXT", Name: "AAA." + cfDomain, Content: `"enr:-abc"`, TTL: cloudflareEntryTTL},
+		cfRecord{Type: "TXT", Name: cfDomain, Content: fmt.Sprintf("%q", root), TTL: rootTTL},
+		cfRecord{Type: "TXT", Name: "AAA." + cfDomain, Content: `"enr:-abc"`, TTL: entryTTL},
 	)
 	c := fakeCloudflare(t, z)
 
@@ -358,7 +358,7 @@ func TestSyncIsStableAcrossCaseFoldedNames(t *testing.T) {
 
 // Pointing at a zone already serving a tree must not delete it before anything has been published.
 func TestFirstPublishNeverPrunes(t *testing.T) {
-	foreign := cfRecord{Type: "TXT", Name: "existing." + cfDomain, Content: "enr:-live", TTL: cloudflareEntryTTL}
+	foreign := cfRecord{Type: "TXT", Name: "existing." + cfDomain, Content: "enr:-live", TTL: entryTTL}
 	z := newFakeZone(foreign)
 	c := fakeCloudflare(t, z)
 

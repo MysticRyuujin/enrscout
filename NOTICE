@@ -40,6 +40,9 @@ MinIO Go client (github.com/minio/minio-go)
 Prometheus Go client (github.com/prometheus/client_golang)
     Metrics exposition and collectors. Apache License 2.0.
 
+AWS SDK for Go v2 (github.com/aws/aws-sdk-go-v2)
+    Route53 client used by the DNS tree publisher. Apache License 2.0.
+
 parquet-go (github.com/parquet-go/parquet-go)
     Snapshot serialization. Apache License 2.0.
 

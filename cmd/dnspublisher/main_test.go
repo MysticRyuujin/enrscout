@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -221,6 +222,287 @@ func TestSelectNodesCapabilitySnap(t *testing.T) {
 	got := selectNodes(rows, selectOpts{minScore: 1, protocol: "any", layer: "el", capability: "snap"}, now)
 	if len(got) != 1 || got[0].ID().String() != snap.ID {
 		t.Fatalf("capability=snap should keep only the snap-advertising node, got %v", got)
+	}
+}
+
+// ethEntryRow takes the "eth" value as raw bytes so a caller can build a malformed one.
+func ethEntryRow(t *testing.T, last byte, value []byte, now time.Time) nodeset.Row {
+	t.Helper()
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var r enr.Record
+	r.Set(enr.IPv4{1, 2, 3, last})
+	r.Set(enr.TCP(30303))
+	r.Set(enr.WithEntry("eth", rlp.RawValue(value)))
+	if err := enode.SignV4(&r, key); err != nil {
+		t.Fatal(err)
+	}
+	n, err := enode.New(enode.ValidSchemes, &r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := rlp.EncodeToBytes(&r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := nodeset.Row{
+		ID: n.ID().String(), ENR: "enr:" + base64.RawURLEncoding.EncodeToString(b),
+		IP: net.IPv4(1, 2, 3, last).String(), TCP: 30303, Score: 5,
+		HasV5: true, LastSeen: now.Unix(),
+	}
+	return currentMainnetEL(t, row, now)
+}
+
+func TestSelectNodesRejectsUndecodableEthEntry(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	nw, _ := netconf.Get("mainnet")
+	canonical, err := rlp.EncodeToBytes(&netconf.EthEntry{ForkID: nw.CurrentForkIDAt(now)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The entry value must be the fork-id list itself; this wraps it in an RLP string instead.
+	doubled, err := rlp.EncodeToBytes(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	good := ethEntryRow(t, 1, canonical, now)
+	bad := ethEntryRow(t, 2, doubled, now)
+
+	got := selectNodes([]nodeset.Row{good, bad}, selectOpts{minScore: 1, protocol: "any", layer: "el"}, now)
+	if len(got) != 1 || got[0].ID().String() != good.ID {
+		t.Fatalf("only the canonically encoded eth entry should be published, got %v", got)
+	}
+
+	if enrEntryDecodes(mustParseENR(t, bad.ENR), new(netconf.EthEntry)) {
+		t.Fatal("double-encoded eth entry should not count as decodable")
+	}
+	if !enrEntryDecodes(mustParseENR(t, good.ENR), new(netconf.EthEntry)) {
+		t.Fatal("canonical eth entry should count as decodable")
+	}
+}
+
+// A record observed in the wild: its "eth" value is the fork-id list wrapped in an RLP string, which
+// go-ethereum tolerates by ignoring the entry while other clients reject the whole record.
+func TestSelectNodesRejectsObservedDoubleEncodedRecord(t *testing.T) {
+	const observed = "enr:-Ji4QMMo4cKZYU8xSLxvVOV_Q9zcHcXiH-6ojYRtbtC1MuvVOjSQ4_DW5649TSAl4qN4Z9XmOVgn4RxTJ63pzaruSV4Cg2V0aIjHxoQjqhNRgIJpZIJ2NIJpcISfw0KIiXNlY3AyNTZrMaEC9nDXsv-k4hHhfMQexeUKSMN21XzjpwrtIe0Nk27R3GODdGNwgnZfg3VkcIJ2Xw"
+	n := mustParseENR(t, observed)
+	if enrEntryDecodes(n, new(netconf.EthEntry)) {
+		t.Fatal("the observed record's eth entry must not count as decodable")
+	}
+	if !enrHasEntry(n, "eth") {
+		t.Fatal("the entry is present, so absence is not why it fails to decode")
+	}
+}
+
+// A port above uint16 is not representable in the ENR-typed entry. go-ethereum signs and parses the
+// record anyway and reports the problem only when that entry is loaded, so such a node stays dialable
+// through another transport and would otherwise reach the tree.
+func TestSelectNodesRejectsOutOfRangePort(t *testing.T) {
+	now := time.Now()
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var r enr.Record
+	r.Set(enr.IPv4{9, 9, 9, 9})
+	r.Set(enr.WithEntry("tcp", uint32(70000)))
+	r.Set(enr.QUIC(30303))
+	if err := enode.SignV4(&r, key); err != nil {
+		t.Fatal(err)
+	}
+	n, err := enode.New(enode.ValidSchemes, &r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := rlp.EncodeToBytes(&r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := currentMainnetEL(t, nodeset.Row{
+		ID: n.ID().String(), ENR: "enr:" + base64.RawURLEncoding.EncodeToString(b),
+		IP: net.IPv4(9, 9, 9, 9).String(), QUIC: 30303, Score: 5,
+		HasV5: true, LastSeen: now.Unix(),
+	}, now)
+	if !row.Dialable() {
+		t.Fatal("fixture must be dialable, otherwise the port check is not what excludes it")
+	}
+
+	if got := selectNodes([]nodeset.Row{row}, selectOpts{minScore: 1, protocol: "any", layer: "el", capability: "all"}, now); len(got) != 0 {
+		t.Fatalf("published %d records carrying an out-of-range tcp entry, want 0", len(got))
+	}
+}
+
+func mustParseENR(t *testing.T, record string) *enode.Node {
+	t.Helper()
+	n, err := enode.Parse(enode.ValidSchemes, record)
+	if err != nil {
+		t.Fatalf("go-ethereum must still parse the record: %v", err)
+	}
+	return n
+}
+
+// v6Row sets ip6 in the ENR as well as the row column, so the record it publishes really is
+// IPv6-reachable. A column without the matching ENR entry would let the reservation pass while the
+// published tree carried no usable v6 endpoint.
+func v6Row(t *testing.T, last byte, ownPort bool, now time.Time) nodeset.Row {
+	t.Helper()
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ip6 := net.ParseIP(fmt.Sprintf("2001:db8::%d", last))
+	if ip6 == nil {
+		t.Fatalf("bad fixture address for %d", last)
+	}
+	var r enr.Record
+	r.Set(enr.IPv4{1, 2, 3, last})
+	r.Set(enr.TCP(30303))
+	r.Set(enr.IPv6(ip6.To16()))
+	if ownPort {
+		r.Set(enr.TCP6(30304))
+	}
+	if err := enode.SignV4(&r, key); err != nil {
+		t.Fatal(err)
+	}
+	n, err := enode.New(enode.ValidSchemes, &r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := rlp.EncodeToBytes(&r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := nodeset.Row{
+		ID: n.ID().String(), ENR: "enr:" + base64.RawURLEncoding.EncodeToString(b),
+		IP: net.IPv4(1, 2, 3, last).String(), TCP: 30303, Score: 5,
+		IP6: ip6.String(), HasV5: true, LastSeen: now.Unix(),
+	}
+	if ownPort {
+		row.TCP6 = 30304
+	}
+	return currentMainnetEL(t, row, now)
+}
+
+func TestSelectNodesReservesIPv6Slots(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	rows := []nodeset.Row{}
+	for i := byte(1); i <= 40; i++ {
+		rows = append(rows, currentMainnetEL(t, v4Row(t, i, 30303, 9), now))
+	}
+	// Lowest score, so rank alone would never reach them inside the limit.
+	v6 := v6Row(t, 200, false, now)
+	v6.Score = 1
+	rows = append(rows, v6)
+
+	got := selectNodes(rows, selectOpts{minScore: 1, protocol: "any", layer: "el", limit: 10, balance: balanceProportional}, now)
+	if len(got) != 10 {
+		t.Fatalf("selected %d nodes, want 10", len(got))
+	}
+	var v6Count int
+	for _, n := range got {
+		if n.ID().String() == v6.ID {
+			v6Count++
+		}
+	}
+	if v6Count != 1 {
+		t.Fatalf("the IPv6-dialable node must hold a reserved slot, got %d", v6Count)
+	}
+}
+
+// The reservation takes slots before balanceClients runs, so the two together must still fill the
+// limit exactly and pick the same nodes in the same order every time. Tree layout depends on input
+// order, so an unstable order rewrites every branch record.
+func TestSelectNodesIPv6ReservationKeepsLimitAndOrder(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	var rows []nodeset.Row
+	for i := byte(1); i <= 60; i++ {
+		rows = append(rows, currentMainnetEL(t, v4Row(t, i, 30303, 9), now))
+	}
+	// Lowest score, so only the reservation can reach them.
+	for i := byte(100); i <= 105; i++ {
+		r := v6Row(t, i, i%2 == 0, now)
+		r.Score = 2
+		rows = append(rows, r)
+	}
+
+	for _, tc := range []struct{ limit, wantV6 int }{{1, 1}, {10, 1}, {25, 2}, {50, 5}, {66, 6}} {
+		opt := selectOpts{minScore: 1, protocol: "any", layer: "el", limit: tc.limit, balance: balanceProportional}
+		first := selectNodes(rows, opt, now)
+		if len(first) != tc.limit {
+			t.Fatalf("limit %d selected %d nodes", tc.limit, len(first))
+		}
+		var v6 int
+		for _, n := range first {
+			if enrHasEntry(n, "ip6") {
+				v6++
+			}
+		}
+		if v6 != tc.wantV6 {
+			t.Fatalf("limit %d published %d IPv6 records, want %d", tc.limit, v6, tc.wantV6)
+		}
+		again := selectNodes(rows, opt, now)
+		for i := range first {
+			if first[i].ID() != again[i].ID() {
+				t.Fatalf("limit %d: selection is not stable at index %d", tc.limit, i)
+			}
+		}
+	}
+}
+
+// A reserved IPv6 node already represents its own client, so it must not also consume that client's
+// floor slot. Otherwise three slots across three clients can publish one client twice and drop a third.
+func TestSelectNodesIPv6ReservationKeepsClientFloors(t *testing.T) {
+	now := time.Now()
+	rows := balanceRows(t, map[string]int{"Geth": 2, "Besu": 1, "Reth": 1})
+	v6 := v6Row(t, 200, false, now)
+	v6.Client, v6.FPStatus, v6.ID = "Geth", "ok", "Geth-v6"
+	v6.Score = 1
+	rows = append(rows, v6)
+
+	got := selectNodes(rows, selectOpts{minScore: 1, protocol: "any", layer: "el", limit: 3, balance: balanceProportional}, now)
+	if len(got) != 3 {
+		t.Fatalf("selected %d nodes, want 3", len(got))
+	}
+	mix := clientMix(got, rows)
+	for _, client := range []string{"Geth", "Besu", "Reth"} {
+		if mix[client] == 0 {
+			t.Fatalf("client %s was dropped, mix=%v", client, mix)
+		}
+	}
+}
+
+func TestReserveIPv6PrefersExplicitTCP6(t *testing.T) {
+	inherited := ipv6Slot{dialable: true}
+	explicit := ipv6Slot{dialable: true, ownPort: true}
+	plain := ipv6Slot{}
+
+	// One slot available, and the explicit-tcp6 record is ranked last.
+	got := reserveIPv6([]ipv6Slot{inherited, plain, plain, explicit}, 1)
+	if countTrue(got) != 1 || !got[3] {
+		t.Fatalf("explicit tcp6 should take the only slot, got %v", got)
+	}
+}
+
+func TestReserveIPv6ProportionalShare(t *testing.T) {
+	pool := make([]ipv6Slot, 1108)
+	for i := range 26 {
+		pool[i] = ipv6Slot{dialable: true}
+	}
+	// 26/1108 of 25 slots rounds to 0.6, so the floor of one slot is what keeps IPv6 present.
+	if got := countTrue(reserveIPv6(pool, 25)); got != 1 {
+		t.Fatalf("reserved %d slots at limit 25, want 1", got)
+	}
+	if got := countTrue(reserveIPv6(pool, 1000)); got != 23 {
+		t.Fatalf("reserved %d slots at limit 1000, want 23", got)
+	}
+	if got := countTrue(reserveIPv6(pool, 3000)); got != 26 {
+		t.Fatalf("reserved %d slots at limit 3000, want all 26 available", got)
+	}
+	if got := countTrue(reserveIPv6(make([]ipv6Slot, 50), 10)); got != 0 {
+		t.Fatalf("no IPv6 candidates should reserve nothing, got %d", got)
 	}
 }
 
