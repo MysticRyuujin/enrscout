@@ -82,7 +82,23 @@ publishes the crawler advertiser endpoints on :30303-:30311.
   discv4-crawl key can be reused — empty passphrase by default, `--key-passphrase-file`
   otherwise; both files must be mode 0600 or stricter — which keeps the published
   `enrtree://` URLs identical across the migration).
-  It publishes only _reachable_ nodes. There is one mode: `--base-domain`, deployed as a scheduled
+  It publishes only _reachable_ nodes, and only records that are themselves well-formed: `enrWellFormed`
+  drops a row whose ENR carries a present-but-undecodable `eth`, address or port entry. Both cases are
+  real: a node was observed publishing `eth` as the fork-id list wrapped in an extra RLP string, and a
+  port above `uint16` is unrepresentable in the typed entry. go-ethereum signs and parses such a record
+  and reports the problem only when that one entry is loaded, so a node can stay dialable through
+  another transport and reach the tree. The crawler stays deliberately tolerant of these nodes -
+  classification is sticky in `nodeset.Observe`, so the ENR blob is refreshed while
+  `Layer`/`Network`/`ForkHash` are not - because dropping them would cost coverage and fingerprints. A
+  published record is held to the stricter bar, because a peer that decodes entries strictly rejects the
+  whole record (ethrex does) and the tree slot is wasted. Measured against the live EF trees, this
+  excludes 0 of 3683 records.
+  When `--limit` binds, IPv6 also gets a reserved share: address family is not a client-balance
+  dimension, so a family holding a few percent of the pool otherwise rounds away to nothing (at
+  `--limit=25` a 2.4% IPv6 share expects 0.6 nodes). `reserveIPv6` gives it its proportional share and
+  never less than one slot, preferring records with an explicit `tcp6`/`quic6` — sigp's `enr` crate
+  reads `tcp6` with no fallback to `tcp`, so those are the ones a discv5-based client can dial over v6.
+  There is one mode: `--base-domain`, deployed as a scheduled
   service via `--publish-interval`, emitting every `<all|snap>.<net>.<base>` tree per cycle. Both
   capabilities are always built — `snap` is selected by ENR-entry presence like `devp2p nodeset
   filter -snap`, so it is not a flag; the dead `les` capability is intentionally unsupported.
@@ -97,15 +113,35 @@ publishes the crawler advertiser endpoints on :30303-:30311.
   an all-tree below `--min-tree-nodes` (the floor is deliberately not applied to the snap subset,
   which is legitimately smaller), or a `--max-drop-pct` collapse vs that domain's own last publish
   (`enrscout_dns_tree_nodes` per tree, `enrscout_dns_artifact_skipped_total{reason}` on skips).
-  Metrics and logs deliberately say **artifact written**, not published: this binary writes signed
-  tree JSON and nothing pushes it to DNS yet, so a freshness alert on a "publish" timestamp would be
-  measuring the wrong thing. Rename them back when the push lands.
+  Metrics keep the two stages apart: `enrscout_dns_*artifact*` covers building and writing tree JSON,
+  `enrscout_dns_published_*` covers what reached DNS. A freshness alert on the artifact timestamp
+  would not notice a zone that stopped accepting writes.
   Sequences are per domain and strictly increasing: the generation is only second-resolution while
   manifests are nanosecond, so `treeSequence` steps past the previous artifact's sequence rather than
   reusing it. A zero-node artifact written before that guard existed yields no collapse baseline
   instead of wedging its domain.
-  **Remaining before it replaces discv4-crawl:** the actual DNS push (route53/cloudflare) and git
-  output of the tree JSON — both still gaps.
+  **Remaining before it replaces discv4-crawl:** git output of the tree JSON.
+- **The DNS push is one interface with two providers.** `recordPublisher.Sync` reconciles one domain's
+  TXT records; `cloudflare.go` and `route53.go` implement it and are mutually exclusive
+  (`--cloudflare-zone-id` or `--route53-zone-id`, never both). Both write entries before the root, so
+  a resolver never follows a new root into a subtree that does not exist yet, and both keep the
+  previous generation's records (`retain`, read from the `.published` artifact) so a client still
+  holding the old root can finish its walk. A nil `retain` means nothing is known to have been
+  published and pruning is skipped entirely — pointing a fresh process at a live zone must not delete
+  the tree it is already serving. The `.published` artifact is committed only after a push succeeds,
+  which is what keeps a failed push from moving the collapse baseline onto a tree DNS never served.
+  A failed *prune* only warns: it leaves records the current root does not reference, which must not
+  fail a publish that already landed.
+- **Route53 and Cloudflare differ in more than auth.** Cloudflare keys records by opaque ID and splits
+  long TXT content server-side, so a fixed 15s `settle` sleep is the only ordering it can offer.
+  Route53 keys by `(name, type)`, needs client-side 253-byte chunking (matching `devp2p` byte-for-byte,
+  so a zone it already published needs no rewrite), needs a DELETE to repeat the stored values and TTL
+  verbatim (hence `r53RecordSet.values` is kept as returned, never re-rendered), counts an UPSERT
+  twice against its 1000-change/32000-byte batch limits, and offers a real ordering guarantee:
+  `GetChange` polled to `INSYNC` before the root is written. Change detection unquotes what the zone
+  returns (`normalizeTXT`) instead of quoting what we want, so chunk boundaries never read as a
+  change. Credentials are static, from a mode-0600 `--route53-credentials-file`, behind a hand-written
+  `aws.CredentialsProvider`: the SDK's default chain would pull in SSO, STS, and IMDS for nothing.
 - **Health/metrics.** api serves `/livez`, `/readyz` (fails past `--max-snapshot-age`),
   `/healthz` (with `generated_at`/age), `/api/v1/meta`, and `/metrics`. crawler serves
   `/metrics` on `--metrics-addr`. Both use `internal/metricsrv` + prometheus.

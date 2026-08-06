@@ -213,6 +213,11 @@ type Stats struct {
 	DualStack      int `json:"dualstack"`
 	Hosting        int `json:"hosting"`
 	Dialable       int `json:"dialable"`
+	// IPv6 reachability, which IPv6 alone does not imply. IPv6ExplicitPort is the subset carrying
+	// their own tcp6/quic6: sigp's enr crate reads tcp6 with no fallback to tcp, so a discv5-based
+	// client can only dial these over v6.
+	IPv6Dialable     int `json:"ipv6_dialable"`
+	IPv6ExplicitPort int `json:"ipv6_explicit_port"`
 
 	ELIdentifiedStale  int `json:"el_identified_stale"`
 	CLIdentifiedStale  int `json:"cl_identified_stale"`
@@ -827,10 +832,15 @@ func (e *Engine) StatsForMembershipAt(ctx context.Context, network, membership s
 		count(*) FILTER (WHERE ip6 <> ''),
 		count(*) FILTER (WHERE ip <> '' AND ip6 <> ''),
 		count(*) FILTER (WHERE hosting),
-		count(*) FILTER (WHERE dialable)
+		count(*) FILTER (WHERE dialable),
+		-- Equivalent to the v6 half of dialable: if ip6 is set and no v6 port applies, no v4 port
+		-- applies either, so dialable is already false. Reusing the column keeps one definition.
+		count(*) FILTER (WHERE dialable AND ip6 <> ''),
+		count(*) FILTER (WHERE ip6 <> '' AND (tcp6 <> 0 OR quic6 <> 0))
 		FROM nodes%s`, clause)
 	if err := tx.QueryRowContext(ctx, scalars, args...).Scan(
-		&s.Total, &s.Execution, &s.Consensus, &s.Discv4, &s.Discv5, &s.Geolocated, &s.IPv6, &s.DualStack, &s.Hosting, &s.Dialable); err != nil {
+		&s.Total, &s.Execution, &s.Consensus, &s.Discv4, &s.Discv5, &s.Geolocated, &s.IPv6, &s.DualStack, &s.Hosting, &s.Dialable,
+		&s.IPv6Dialable, &s.IPv6ExplicitPort); err != nil {
 		return s, err
 	}
 	if err := tx.QueryRowContext(ctx, "SELECT count(*) FILTER (WHERE membership_source = 'status'), count(*) FILTER (WHERE membership_source = 'enr') FROM nodes"+clause, args...).Scan(&s.MembershipVerified, &s.MembershipClaimed); err != nil {

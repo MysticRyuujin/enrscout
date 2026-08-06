@@ -16,18 +16,11 @@ const (
 	cloudflareAPI      = "https://api.cloudflare.com/client/v4"
 	cloudflareBatchMax = 200
 	cloudflarePageSize = 100
-	// Hash-named entries are content-addressed and never change, so they cache hard. The root is
-	// replaced every cycle and bounds how long a client can hold a superseded tree.
-	cloudflareEntryTTL = 3600
-	cloudflareRootTTL  = 300
 	cloudflareTimeout  = 30 * time.Second
 	cloudflareSettle   = 15 * time.Second
 	maxCloudflareBody  = 8 << 20
 
 	maxCloudflareTokenBytes = 1 << 10
-
-	// dnsdisc clients re-check a tree root every 30 minutes by default.
-	minPublishInterval = 30 * time.Minute
 )
 
 type cloudflareDNS struct {
@@ -113,37 +106,6 @@ func (c *cloudflareDNS) do(ctx context.Context, method, path string, body any) (
 	return &env, nil
 }
 
-// normalizeTXT undoes the presentation form a zone may return for content longer than a single
-// 255-byte character-string, so an unchanged record is not seen as changed every cycle.
-func normalizeTXT(content string) string {
-	if !strings.HasPrefix(content, `"`) {
-		return content
-	}
-	var b strings.Builder
-	inQuote := false
-	escaped := false
-	for _, r := range content {
-		switch {
-		case escaped:
-			b.WriteRune(r)
-			escaped = false
-		case r == '\\':
-			escaped = true
-		case r == '"':
-			inQuote = !inQuote
-		case inQuote:
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
-}
-
-// ToTXT emits uppercase base32 labels; a zone returns them lowercased, and comparing raw names would
-// see every entry as both missing and stale.
-func dnsKey(name string) string {
-	return strings.ToLower(strings.TrimSuffix(name, "."))
-}
-
 func (c *cloudflareDNS) existing(ctx context.Context, domain string) (map[string]cfRecord, error) {
 	out := map[string]cfRecord{}
 	suffix := "." + dnsKey(domain)
@@ -185,13 +147,6 @@ func (c *cloudflareDNS) submit(ctx context.Context, batch cfBatch) error {
 	}
 	_, err := c.do(ctx, http.MethodPost, "/zones/"+c.zoneID+"/dns_records/batch", batch)
 	return err
-}
-
-func ttlFor(name, domain string) int {
-	if name == domain {
-		return cloudflareRootTTL
-	}
-	return cloudflareEntryTTL
 }
 
 // Sync reconciles the zone to want. Entries are written before the root so a resolver never follows

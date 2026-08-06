@@ -1350,8 +1350,13 @@ func rowAddressesUsable(r Row) bool {
 // Dialable reports an advertised application transport for a present address family; absent tcp6/quic6 fall back to tcp/quic per the ENR endpoint rules.
 func (r Row) Dialable() bool {
 	v4 := r.IP != "" && (r.TCP != 0 || r.QUIC != 0)
-	v6 := r.IP6 != "" && (r.TCP6 != 0 || r.TCP != 0 || r.QUIC6 != 0 || r.QUIC != 0)
-	return v4 || v6
+	return v4 || r.DialableV6()
+}
+
+// DialableV6 reports a reachable IPv6 endpoint. Per the ENR spec an absent tcp6/udp6 means tcp/udp
+// applies to v6 as well, so an inherited port still counts.
+func (r Row) DialableV6() bool {
+	return r.IP6 != "" && (r.TCP6 != 0 || r.TCP != 0 || r.QUIC6 != 0 || r.QUIC != 0)
 }
 
 // HasExecutionTCP reports whether a record advertises an RLPx-capable endpoint.

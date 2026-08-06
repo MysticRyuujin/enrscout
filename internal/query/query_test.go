@@ -1117,13 +1117,23 @@ func TestDialableColumnMatchesRowPredicate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	mainnet, err := netconf.Get("mainnet")
+	if err != nil {
+		t.Fatal(err)
+	}
+	elFork := mainnet.CurrentForkID().Hash
+	clState, err := netconf.CLForkStateAt("mainnet", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	el, cl := hex.EncodeToString(elFork[:]), hex.EncodeToString(clState.Digest[:])
 	rows := []nodeset.Row{
-		{ID: "0000000000000000000000000000000000000000000000000000000000000001", Network: "mainnet", Layer: "el", IP: "1.1.1.1", TCP: 30303},
-		{ID: "0000000000000000000000000000000000000000000000000000000000000002", Network: "mainnet", Layer: "el", IP: "1.1.1.2", UDP: 30303},
-		{ID: "0000000000000000000000000000000000000000000000000000000000000003", Network: "mainnet", Layer: "cl", IP6: "2606:4700::1", TCP: 9000},
-		{ID: "0000000000000000000000000000000000000000000000000000000000000004", Network: "mainnet", Layer: "cl", IP6: "2606:4700::2", QUIC6: 9001},
-		{ID: "0000000000000000000000000000000000000000000000000000000000000005", Network: "mainnet", Layer: "cl", IP: "1.1.1.3", QUIC: 9001},
-		{ID: "0000000000000000000000000000000000000000000000000000000000000006", Network: "mainnet", Layer: "cl", IP6: "2606:4700::3", UDP6: 9000},
+		{ID: "0000000000000000000000000000000000000000000000000000000000000001", Network: "mainnet", Layer: "el", ForkHash: el, IP: "1.1.1.1", TCP: 30303},
+		{ID: "0000000000000000000000000000000000000000000000000000000000000002", Network: "mainnet", Layer: "el", ForkHash: el, IP: "1.1.1.2", UDP: 30303},
+		{ID: "0000000000000000000000000000000000000000000000000000000000000003", Network: "mainnet", Layer: "cl", ForkHash: cl, IP6: "2606:4700::1", TCP: 9000},
+		{ID: "0000000000000000000000000000000000000000000000000000000000000004", Network: "mainnet", Layer: "cl", ForkHash: cl, IP6: "2606:4700::2", QUIC6: 9001},
+		{ID: "0000000000000000000000000000000000000000000000000000000000000005", Network: "mainnet", Layer: "cl", ForkHash: cl, IP: "1.1.1.3", QUIC: 9001},
+		{ID: "0000000000000000000000000000000000000000000000000000000000000006", Network: "mainnet", Layer: "cl", ForkHash: cl, IP6: "2606:4700::3", UDP6: 9000},
 	}
 	data, err := nodeset.ParquetFromRows(rows)
 	if err != nil {
@@ -1165,6 +1175,31 @@ func TestDialableColumnMatchesRowPredicate(t *testing.T) {
 		if want := byID[n.ID].Dialable(); n.Dialable != want {
 			t.Errorf("id %s: SQL dialable = %v, Row.Dialable = %v", n.ID, n.Dialable, want)
 		}
+	}
+
+	// The ipv6_dialable stat reuses the dialable column rather than repeating the v6 predicate, so
+	// it has to be pinned against Row.DialableV6 the same way.
+	stats, err := eng.StatsForMembershipAt(ctx, "mainnet", "", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wantV6, wantExplicit int
+	for _, r := range rows {
+		if r.DialableV6() {
+			wantV6++
+		}
+		if r.IP6 != "" && (r.TCP6 != 0 || r.QUIC6 != 0) {
+			wantExplicit++
+		}
+	}
+	if stats.IPv6Dialable != wantV6 {
+		t.Errorf("IPv6Dialable = %d, want %d", stats.IPv6Dialable, wantV6)
+	}
+	if stats.IPv6ExplicitPort != wantExplicit {
+		t.Errorf("IPv6ExplicitPort = %d, want %d", stats.IPv6ExplicitPort, wantExplicit)
+	}
+	if wantV6 == 0 || wantExplicit == 0 || wantV6 == wantExplicit {
+		t.Fatalf("fixture cannot tell the two counts apart: v6=%d explicit=%d", wantV6, wantExplicit)
 	}
 }
 

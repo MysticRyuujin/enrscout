@@ -98,8 +98,8 @@ it is not an authorization or CSRF control.
 ## DNS tree publisher
 
 `cmd/dnspublisher` reads and verifies the committed manifest and Parquet generation,
-selects fresh dialable nodes, and emits signed EIP-1459 tree artifacts. It does not
-modify DNS itself or share credentials with the crawler.
+selects fresh dialable nodes, and emits signed EIP-1459 tree artifacts. It optionally
+pushes those records into a hosted zone. It never shares credentials with the crawler.
 
 Each cycle emits an `all` and a `snap` tree per network, under
 `<all|snap>.<network>.<base-domain>`:
@@ -126,6 +126,32 @@ a stale snapshot (`--max-snapshot-age`), a tree that selected no nodes, an all-t
 below `--min-tree-nodes`, or a drop past `--max-drop-pct` against that domain's own
 last publish. Keep the signing key in a secret manager or offline signing workflow;
 the output JSON contains only public tree records and the signed URL.
+
+### Publishing to a hosted zone
+
+Without zone flags the publisher only writes artifacts. Add one provider — never both —
+to push the TXT records as well:
+
+```bash
+# Cloudflare: an API token scoped to Zone:DNS:Edit on that zone.
+  --cloudflare-zone-id=<zone> --cloudflare-token-file=/secure/path/cf-token
+
+# AWS Route53: aws_access_key_id and aws_secret_access_key for that hosted zone.
+  --route53-zone-id=<Z...> --route53-credentials-file=/secure/path/aws-credentials
+```
+
+The credentials file accepts either `KEY=VALUE` lines or a single-profile AWS shared
+credentials file, and must be mode 0600 or stricter. The Route53 identity needs
+`route53:ListResourceRecordSets` and `route53:ChangeResourceRecordSets` on the hosted
+zone, plus `route53:GetChange`. `--route53-region` (default `us-east-1`) only signs the
+request; the service endpoint is global.
+
+Publishing requires `--out`, because the `.published` artifact carries both the collapse
+baseline and the records retained for clients still resolving the previous root. It also
+floors `--publish-interval` at 30 minutes, the interval at which EIP-1459 clients
+re-check a root: one retained generation has to outlive a cached root. Entries are
+written and confirmed propagated before the root is replaced, so a resolver never
+follows a new root into a subtree that does not exist yet.
 
 ## Container images
 

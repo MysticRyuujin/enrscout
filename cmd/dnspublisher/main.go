@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -127,6 +128,9 @@ func run() error {
 		s3SSL        = flag.Bool("s3-ssl", true, "use TLS for the S3 endpoint (set false only for a trusted local endpoint)")
 		cfZone       = flag.String("cloudflare-zone-id", "", "Cloudflare zone to publish TXT records into (empty = write artifacts only)")
 		cfTokenFile  = flag.String("cloudflare-token-file", "", "file holding a Cloudflare API token scoped to Zone:DNS:Edit on that zone")
+		r53Zone      = flag.String("route53-zone-id", "", "Route53 hosted zone to publish TXT records into (empty = write artifacts only)")
+		r53CredsFile = flag.String("route53-credentials-file", "", "file holding aws_access_key_id and aws_secret_access_key for that zone")
+		r53Region    = flag.String("route53-region", "us-east-1", "AWS region used to sign Route53 requests (the service endpoint itself is global)")
 	)
 	flag.Parse()
 
@@ -164,14 +168,24 @@ func run() error {
 	if (*cfZone == "") != (*cfTokenFile == "") {
 		return errors.New("--cloudflare-zone-id and --cloudflare-token-file must be set together")
 	}
+	if (*r53Zone == "") != (*r53CredsFile == "") {
+		return errors.New("--route53-zone-id and --route53-credentials-file must be set together")
+	}
+	if *cfZone != "" && *r53Zone != "" {
+		return errors.New("--cloudflare-zone-id and --route53-zone-id are mutually exclusive: a tree is published into one zone")
+	}
+	if *r53Zone != "" && *r53Region == "" {
+		return errors.New("--route53-region must not be empty")
+	}
+	publishToDNS := *cfZone != "" || *r53Zone != ""
 	// Publishing needs the durable published-state artifact to hold its collapse baseline and the
 	// record set retained for clients still on the previous root.
-	if *cfZone != "" && *outDir == "" {
-		return errors.New("--cloudflare-zone-id requires --out: the published-state artifact carries the collapse baseline and the retained record set")
+	if publishToDNS && *outDir == "" {
+		return errors.New("publishing to DNS requires --out: the published-state artifact carries the collapse baseline and the retained record set")
 	}
 	// One generation of records is retained, so a generation survives roughly two intervals. Below the
 	// client root-recheck interval that grace is shorter than the window clients hold a stale root in.
-	if *cfZone != "" && *publishEvery > 0 && *publishEvery < minPublishInterval {
+	if publishToDNS && *publishEvery > 0 && *publishEvery < minPublishInterval {
 		return fmt.Errorf("--publish-interval must be at least %s when publishing to DNS: retained records must outlive a client's cached root", minPublishInterval)
 	}
 	nets, err := parseNetworks(*networks)
@@ -206,12 +220,23 @@ func run() error {
 		return err
 	}
 	var publisher recordPublisher
-	if *cfZone != "" {
+	switch {
+	case *cfZone != "":
 		token, err := readPrivateFile(*cfTokenFile, "cloudflare token", maxCloudflareTokenBytes)
 		if err != nil {
 			return err
 		}
 		publisher = newCloudflareDNS(*cfZone, strings.TrimSpace(string(token)))
+	case *r53Zone != "":
+		creds, err := readPrivateFile(*r53CredsFile, "route53 credentials", maxRoute53CredentialsBytes)
+		if err != nil {
+			return err
+		}
+		keyID, secret, err := parseRoute53Credentials(creds)
+		if err != nil {
+			return err
+		}
+		publisher = newRoute53DNS(*r53Zone, *r53Region, keyID, secret)
 	}
 	return runMultiTree(ctx, st, snapshot.Layout{Prefix: *prefix}, multiConfig{
 		networks: nets, baseDomain: *baseDomain, outDir: *outDir, key: key, sel: sel,
@@ -577,6 +602,33 @@ func enrHasEntry(n *enode.Node, key string) bool {
 	return n.Record().Load(enr.WithEntry(key, &raw)) == nil
 }
 
+// enrEntryDecodes reports whether an entry is absent or decodable, never present-but-broken. The crawler
+// stays tolerant of a node whose entry stops decoding (classification is sticky, `nodeset.Observe`), but a
+// consumer may reject the whole record over one bad entry - ethrex does - so publishing it wastes a slot.
+func enrEntryDecodes(n *enode.Node, entry enr.Entry) bool {
+	err := n.Record().Load(entry)
+	return err == nil || enr.IsNotFound(err)
+}
+
+// enrWellFormed checks the typed entries a peer decodes when it reads the record. A port above
+// uint16 or a wrong-length address is not representable in the ENR-typed field, and go-ethereum
+// reports it only when that one entry is loaded, so the record still signs and parses. Peers that
+// decode entries strictly drop the whole record instead.
+func enrWellFormed(n *enode.Node) bool {
+	for _, entry := range []enr.Entry{
+		new(netconf.EthEntry),
+		new(enr.IPv4), new(enr.IPv6),
+		new(enr.TCP), new(enr.TCP6),
+		new(enr.UDP), new(enr.UDP6),
+		new(enr.QUIC), new(enr.QUIC6),
+	} {
+		if !enrEntryDecodes(n, entry) {
+			return false
+		}
+	}
+	return true
+}
+
 func selectNodes(rows []nodeset.Row, opt selectOpts, now time.Time) []*enode.Node {
 	sort.Slice(rows, func(i, j int) bool {
 		if rows[i].Score != rows[j].Score {
@@ -589,6 +641,7 @@ func selectNodes(rows []nodeset.Row, opt selectOpts, now time.Time) []*enode.Nod
 	})
 	var out []*enode.Node
 	var clients []string
+	var v6 []ipv6Slot
 	for _, r := range rows {
 		if opt.layer != "" && opt.layer != "any" && r.Layer != opt.layer {
 			continue
@@ -619,19 +672,105 @@ func selectNodes(rows []nodeset.Row, opt selectOpts, now time.Time) []*enode.Nod
 		if err != nil {
 			continue
 		}
+		if !enrWellFormed(n) {
+			continue
+		}
 		if opt.capability == "snap" && !enrHasEntry(n, "snap") {
 			continue
 		}
 		out = append(out, n)
 		clients = append(clients, clientBucket(r))
+		v6 = append(v6, ipv6Slot{dialable: r.DialableV6(), ownPort: r.TCP6 != 0 || r.QUIC6 != 0})
 	}
 	if opt.limit <= 0 || len(out) <= opt.limit {
 		return out
 	}
-	if opt.balance != balanceProportional {
-		return out[:opt.limit]
+	reserved := reserveIPv6(v6, opt.limit)
+	rest, restClients := make([]*enode.Node, 0, len(out)), make([]string, 0, len(out))
+	for i, n := range out {
+		if !reserved[i] {
+			rest = append(rest, n)
+			restClients = append(restClients, clients[i])
+		}
 	}
-	return balanceClients(out, clients, opt.limit)
+	free := opt.limit - countTrue(reserved)
+	var filled []*enode.Node
+	switch {
+	case free <= 0:
+	case opt.balance != balanceProportional || len(rest) <= free:
+		filled = rest[:min(free, len(rest))]
+	default:
+		filled = balanceClients(rest, restClients, free, reservedClients(clients, reserved))
+	}
+	return mergeRanked(out, reserved, filled)
+}
+
+// ipv6Slot carries what the reservation needs about a candidate. ownPort marks an explicit tcp6/quic6:
+// sigp's enr crate reads tcp6 with no fallback to tcp, so those records are the ones a discv5-based
+// client can actually dial over v6, and they take the reserved slots first.
+type ipv6Slot struct {
+	dialable bool
+	ownPort  bool
+}
+
+// reserveIPv6 marks the candidates that hold the tree's IPv6 slots.
+//
+// Address family is not a client-balance dimension, so on a limited tree a family holding a few
+// percent of the pool rounds away to nothing: at limit=25 a 2.4% IPv6 share expects 0.6 nodes. This
+// gives IPv6 its proportional share and never less than one slot, mirroring the per-client rule.
+func reserveIPv6(v6 []ipv6Slot, limit int) []bool {
+	reserved := make([]bool, len(v6))
+	var candidates int
+	for _, s := range v6 {
+		if s.dialable {
+			candidates++
+		}
+	}
+	if candidates == 0 || limit <= 0 {
+		return reserved
+	}
+	want := int(math.Round(float64(limit) * float64(candidates) / float64(len(v6))))
+	want = min(max(want, 1), candidates, limit)
+
+	taken := 0
+	for _, ownPort := range []bool{true, false} {
+		for i, s := range v6 {
+			if taken == want {
+				return reserved
+			}
+			if s.dialable && s.ownPort == ownPort && !reserved[i] {
+				reserved[i] = true
+				taken++
+			}
+		}
+	}
+	return reserved
+}
+
+func countTrue(b []bool) int {
+	n := 0
+	for _, v := range b {
+		if v {
+			n++
+		}
+	}
+	return n
+}
+
+// mergeRanked restores candidate order, because tree layout depends on input order and a stable order
+// keeps branch records identical between cycles that select the same nodes.
+func mergeRanked(all []*enode.Node, reserved []bool, filled []*enode.Node) []*enode.Node {
+	keep := make(map[*enode.Node]bool, len(filled))
+	for _, n := range filled {
+		keep[n] = true
+	}
+	selected := make([]*enode.Node, 0, countTrue(reserved)+len(filled))
+	for i, n := range all {
+		if reserved[i] || keep[n] {
+			selected = append(selected, n)
+		}
+	}
+	return selected
 }
 
 // Row.Client can come straight from a self-declared ENR entry, and even a completed handshake carries
@@ -653,7 +792,21 @@ func clientBucket(r nodeset.Row) string {
 // outright: score correlates with client, so an unbalanced tree drops whole clients from a list peers
 // bootstrap against. Every identified client gets one slot, the rest are shared out in proportion to
 // how much of the candidate pool each client holds.
-func balanceClients(nodes []*enode.Node, clients []string, limit int) []*enode.Node {
+// reservedClients counts the client buckets already represented by reserved slots.
+func reservedClients(clients []string, reserved []bool) map[string]int {
+	held := map[string]int{}
+	for i, r := range reserved {
+		if r {
+			held[clients[i]]++
+		}
+	}
+	return held
+}
+
+// balanceClients shares limit across client buckets. held names the buckets that already hold a
+// reserved slot, so a client the IPv6 reservation already published does not also consume a floor
+// slot and crowd out a client with none.
+func balanceClients(nodes []*enode.Node, clients []string, limit int, held map[string]int) []*enode.Node {
 	pool := map[string][]int{}
 	var order []string
 	for i, c := range clients {
@@ -678,7 +831,7 @@ func balanceClients(nodes []*enode.Node, clients []string, limit int) []*enode.N
 			break
 		}
 		// "unknown" is the absence of a fingerprint, not a client worth reserving a slot for.
-		if c == unknownClient {
+		if c == unknownClient || held[c] > 0 {
 			continue
 		}
 		slots[c] = 1
