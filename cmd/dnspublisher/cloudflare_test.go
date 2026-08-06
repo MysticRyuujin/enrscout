@@ -410,6 +410,7 @@ func TestBatchesRespectTheOperationLimit(t *testing.T) {
 
 func balanceRows(t *testing.T, perClient map[string]int) []nodeset.Row {
 	t.Helper()
+	now := time.Now()
 	var rows []nodeset.Row
 	score := int32(10)
 	names := make([]string, 0, len(perClient))
@@ -420,7 +421,7 @@ func balanceRows(t *testing.T, perClient map[string]int) []nodeset.Row {
 	last := 1
 	for _, name := range names {
 		for i := 0; i < perClient[name]; i++ {
-			row := currentMainnetEL(t, v4Row(t, byte(last), 30303, score), time.Now())
+			row := currentMainnetEL(t, v4Row(t, byte(last), 30303, score, now), now)
 			row.Client = name
 			row.FPStatus = "ok"
 			row.ID = fmt.Sprintf("%s-%04d", name, i)
@@ -510,12 +511,13 @@ func TestProportionalBalanceHandlesLimitAbovePool(t *testing.T) {
 
 // Row.Client can be self-declared in an ENR, so invented names must not each reserve a slot.
 func TestInventedClientNamesCannotCrowdOutRealClients(t *testing.T) {
+	now := time.Now()
 	var rows []nodeset.Row
 	real := map[string]int{"Geth": 40, "Reth": 20, "Besu": 10}
 	rows = append(rows, balanceRows(t, real)...)
 	// One sybil per slot, each claiming a different unrecognized client, none fingerprinted.
 	for i := range 40 {
-		row := currentMainnetEL(t, v4Row(t, byte(i+60), 30303, 10), time.Now())
+		row := currentMainnetEL(t, v4Row(t, byte(i+60), 30303, 10, now), now)
 		row.Client = fmt.Sprintf("TotallyRealClient%02d", i)
 		row.FPStatus = "pending"
 		row.ID = fmt.Sprintf("sybil-%04d", i)
@@ -545,7 +547,7 @@ func TestInventedClientNamesCannotCrowdOutRealClients(t *testing.T) {
 
 // A recognized name without a verified fingerprint is still only a claim, so it must not reserve a slot.
 func TestUnverifiedFingerprintDoesNotReserveASlot(t *testing.T) {
-	claimed := currentMainnetEL(t, v4Row(t, 9, 30303, 10), time.Now())
+	claimed := currentMainnetEL(t, v4Row(t, 9, 30303, 10, time.Now()), time.Now())
 	claimed.Client = "Reth"
 	claimed.FPStatus = "pending"
 	if got := clientBucket(claimed); got != unknownClient {
