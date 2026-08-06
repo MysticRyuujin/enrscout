@@ -442,10 +442,16 @@ func TestSelectNodesCLRequiresENREth2Digest(t *testing.T) {
 	staleDigest := make(netconf.Eth2Entry, 16)
 	copy(staleDigest, []byte{0xde, 0xad, 0xbe, 0xef})
 	stale := clRowEntry(t, 3, staleDigest, now)
+	// Current digest but not the fixed 16-byte SSZ ENRForkID: strict consumers reject it whole.
+	state, err := netconf.CLForkStateAt("mainnet", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	truncated := clRowEntry(t, 4, netconf.Eth2Entry(state.Digest[:]), now)
 
-	got := selectNodes([]nodeset.Row{good, absent, stale}, selectOpts{minScore: 1, protocol: "any", layer: "cl"}, now)
+	got := selectNodes([]nodeset.Row{good, absent, stale, truncated}, selectOpts{minScore: 1, protocol: "any", layer: "cl"}, now)
 	if len(got) != 1 || got[0].ID().String() != good.ID {
-		t.Fatalf("only the record advertising the current digest should be published, got %v", got)
+		t.Fatalf("only the full current ENRForkID should be published, got %v", got)
 	}
 }
 

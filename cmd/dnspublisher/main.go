@@ -609,8 +609,9 @@ func enrForkCurrentAt(n *enode.Node, layer, network string, now time.Time) bool 
 		}
 		return netconf.RowForkCurrentAt(layer, network, hex.EncodeToString(eth.ForkID.Hash[:]), eth.ForkID.Next, now)
 	case "cl":
+		// SSZ ENRForkID is fixed 16 bytes: a truncated entry can carry a current digest yet still fail strict consumers.
 		var eth2 netconf.Eth2Entry
-		if n.Record().Load(&eth2) != nil || len(eth2) < 4 {
+		if n.Record().Load(&eth2) != nil || len(eth2) != 16 {
 			return false
 		}
 		return netconf.RowForkCurrentAt(layer, network, hex.EncodeToString(eth2[:4]), 0, now)
