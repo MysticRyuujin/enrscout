@@ -28,6 +28,7 @@ jobs:
     outputs:
       tag: ${{ steps.vars.outputs.tag }}
       sha: ${{ steps.rev.outputs.sha }}
+      is_newest: ${{ steps.newest.outputs.is_newest }}
     steps:
       - name: Resolve and validate tag
         id: vars
@@ -58,6 +59,19 @@ jobs:
             exit 1
           fi
           echo "sha=$head" >> "$GITHUB_OUTPUT"
+
+      # workflow_dispatch can rebuild an old release; latest must not move backwards.
+      - name: Check whether this tag is the newest release
+        id: newest
+        env:
+          TAG: ${{ steps.vars.outputs.tag }}
+        run: |
+          newest="$(git tag --list | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)"
+          if [[ "$TAG" == "$newest" ]]; then
+            echo "is_newest=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_newest=false" >> "$GITHUB_OUTPUT"
+          fi
 
   build:
     needs: prepare

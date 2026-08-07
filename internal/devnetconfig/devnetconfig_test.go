@@ -102,6 +102,40 @@ BLOB_SCHEDULE:
 	}
 }
 
+func TestParseCLConfigDerivesSecondsPerSlotFromSlotDurationMS(t *testing.T) {
+	tests := map[string]struct {
+		body    string
+		want    uint64
+		wantErr bool
+	}{
+		"slot duration only":       {body: "SLOT_DURATION_MS: 12000\n", want: 12},
+		"explicit seconds wins":    {body: "SLOT_DURATION_MS: 6000\nSECONDS_PER_SLOT: 12\n", want: 12},
+		"sub-second slot duration": {body: "SLOT_DURATION_MS: 6500\n", wantErr: true},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			body := "PRESET_BASE: 'mainnet'\nGENESIS_TIME: 1700000000\nGENESIS_FORK_VERSION: 0x10000038\n" + tc.body
+			if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := parseCLConfig(path)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("sub-second SLOT_DURATION_MS was accepted")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.secondsPerSlot != tc.want {
+				t.Fatalf("secondsPerSlot = %d, want %d", cfg.secondsPerSlot, tc.want)
+			}
+		})
+	}
+}
+
 func TestParseCLConfigRejectsMalformedRecognizedValues(t *testing.T) {
 	tests := map[string]string{
 		"fork epoch":            "FULU_FORK_VERSION: 0x70000038\nFULU_FORK_EPOCH: soon\n",
