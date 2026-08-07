@@ -543,7 +543,7 @@ func restore(ctx context.Context, st store.Store, layout snapshot.Layout, set *n
 			}
 		}
 		for i := range rows {
-			rows[i].Hosting = enrich.ClassifyHosting(rows[i].Org)
+			rows[i].Hosting, rows[i].HostingKnown = enrich.HostingClassification(uint(rows[i].ASN), rows[i].Org)
 		}
 		before := set.Len()
 		dropped, evicted := set.Ingest(rows)
