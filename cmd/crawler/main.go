@@ -248,7 +248,7 @@ func run() error {
 	}
 	initializeDiscoveryMetrics(specs, families)
 	mBuildInfo.WithLabelValues(buildinfo.Revision, buildinfo.SourceURL).Set(1)
-	if err := metricsrv.Start(conf.metricsAddr); err != nil {
+	if err := metricsrv.Start(conf.metricsAddr, "crawler"); err != nil {
 		return err
 	}
 	var restrict *netutil.Netlist

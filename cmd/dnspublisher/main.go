@@ -212,7 +212,7 @@ func run() error {
 		}
 	}
 	if *metricsAddr != "" {
-		if err := metricsrv.Start(*metricsAddr); err != nil {
+		if err := metricsrv.Start(*metricsAddr, "dnspublisher"); err != nil {
 			return err
 		}
 	}
