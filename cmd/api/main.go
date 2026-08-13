@@ -83,7 +83,7 @@ func run() error {
 	if err := debugsrv.Start(*pprofAddr); err != nil {
 		return err
 	}
-	if err := metricsrv.Start(*metricsAddr); err != nil {
+	if err := metricsrv.Start(*metricsAddr, "api"); err != nil {
 		return err
 	}
 
