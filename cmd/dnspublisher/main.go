@@ -132,6 +132,8 @@ func run() error {
 		r53Zone      = flag.String("route53-zone-id", "", "Route53 hosted zone to publish TXT records into (empty = write artifacts only)")
 		r53CredsFile = flag.String("route53-credentials-file", "", "file holding aws_access_key_id and aws_secret_access_key for that zone")
 		r53Region    = flag.String("route53-region", "us-east-1", "AWS region used to sign Route53 requests (the service endpoint itself is global)")
+		entryTTLFlag = flag.Duration("entry-ttl", entryTTL*time.Second, "DNS TTL for tree entries (content-addressed and immutable, so a long TTL only trades cache churn for query volume)")
+		rootTTLFlag  = flag.Duration("root-ttl", rootTTL*time.Second, "DNS TTL for the tree root (adds to how long a client can serve a superseded tree)")
 	)
 	flag.Parse()
 
@@ -189,6 +191,14 @@ func run() error {
 	if publishToDNS && *publishEvery > 0 && *publishEvery < minPublishInterval {
 		return fmt.Errorf("--publish-interval must be at least %s when publishing to DNS: retained records must outlive a client's cached root", minPublishInterval)
 	}
+	// The same invariant: a resolver caches the root for its TTL on top of the client recheck.
+	if publishToDNS && *publishEvery > 0 && *publishEvery < *rootTTLFlag {
+		return fmt.Errorf("--publish-interval must be at least --root-ttl (%s): retained records must outlive a client's cached root", *rootTTLFlag)
+	}
+	ttls, err := validateTTLs(*entryTTLFlag, *rootTTLFlag, *cfZone != "")
+	if err != nil {
+		return err
+	}
 	nets, err := parseNetworks(*networks)
 	if err != nil {
 		return err
@@ -227,7 +237,7 @@ func run() error {
 		if err != nil {
 			return err
 		}
-		publisher = newCloudflareDNS(*cfZone, strings.TrimSpace(string(token)))
+		publisher = newCloudflareDNS(*cfZone, strings.TrimSpace(string(token)), ttls)
 	case *r53Zone != "":
 		creds, err := readPrivateFile(*r53CredsFile, "route53 credentials", maxRoute53CredentialsBytes)
 		if err != nil {
@@ -237,7 +247,7 @@ func run() error {
 		if err != nil {
 			return err
 		}
-		publisher = newRoute53DNS(*r53Zone, *r53Region, keyID, secret)
+		publisher = newRoute53DNS(*r53Zone, *r53Region, keyID, secret, ttls)
 	}
 	return runMultiTree(ctx, st, snapshot.Layout{Prefix: *prefix}, multiConfig{
 		networks: nets, baseDomain: *baseDomain, outDir: *outDir, key: key, sel: sel,

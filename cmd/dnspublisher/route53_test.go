@@ -161,7 +161,7 @@ func (z *fakeRoute53) GetChange(_ context.Context, in *route53.GetChangeInput, _
 
 func fakeRoute53DNS(t *testing.T, z *fakeRoute53) *route53DNS {
 	t.Helper()
-	return &route53DNS{api: z, zoneID: "Z1", poll: time.Millisecond, syncTimeout: 2 * time.Second}
+	return &route53DNS{api: z, zoneID: "Z1", ttls: defaultTTLs, poll: time.Millisecond, syncTimeout: 2 * time.Second}
 }
 
 const r53Domain = "all.hoodi.example.org"
@@ -291,7 +291,7 @@ func TestRoute53LeavesUnchangedRecordsAlone(t *testing.T) {
 
 	z := newFakeRoute53()
 	for name, content := range want {
-		z.seedTXT(name, content, int64(ttlFor(dnsKey(name), r53Domain)))
+		z.seedTXT(name, content, int64(defaultTTLs.forName(dnsKey(name), r53Domain)))
 	}
 	c := fakeRoute53DNS(t, z)
 
@@ -392,7 +392,7 @@ func TestRoute53PagesThroughTheZone(t *testing.T) {
 	z := newFakeRoute53()
 	z.pageSize = 1
 	for name, content := range want {
-		z.seedTXT(name, content, int64(ttlFor(dnsKey(name), r53Domain)))
+		z.seedTXT(name, content, int64(defaultTTLs.forName(dnsKey(name), r53Domain)))
 	}
 	c := fakeRoute53DNS(t, z)
 

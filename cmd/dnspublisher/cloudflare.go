@@ -19,6 +19,10 @@ const (
 	cloudflareTimeout  = 30 * time.Second
 	cloudflareSettle   = 15 * time.Second
 	maxCloudflareBody  = 8 << 20
+	// Cloudflare accepts 60-86400s on zones below Enterprise; below that only the sentinel 1
+	// ("automatic"), which is not a one-second TTL.
+	cloudflareMinTTL = time.Minute
+	cloudflareMaxTTL = 24 * time.Hour
 
 	maxCloudflareTokenBytes = 1 << 10
 )
@@ -28,15 +32,17 @@ type cloudflareDNS struct {
 	baseURL string
 	zoneID  string
 	token   string
+	ttls    recordTTLs
 	settle  time.Duration
 }
 
-func newCloudflareDNS(zoneID, token string) *cloudflareDNS {
+func newCloudflareDNS(zoneID, token string, ttls recordTTLs) *cloudflareDNS {
 	return &cloudflareDNS{
 		http:    &http.Client{Timeout: cloudflareTimeout},
 		baseURL: cloudflareAPI,
 		zoneID:  zoneID,
 		token:   token,
+		ttls:    ttls,
 		settle:  cloudflareSettle,
 	}
 }
@@ -164,10 +170,10 @@ func (c *cloudflareDNS) Sync(ctx context.Context, domain string, want, retain ma
 	var entries, root, stale cfBatch
 	for name, content := range wanted {
 		current, exists := have[name]
-		if exists && current.Content == content && current.TTL == ttlFor(name, domain) {
+		if exists && current.Content == content && current.TTL == c.ttls.forName(name, domain) {
 			continue
 		}
-		record := cfRecord{Type: "TXT", Name: name, Content: content, TTL: ttlFor(name, domain)}
+		record := cfRecord{Type: "TXT", Name: name, Content: content, TTL: c.ttls.forName(name, domain)}
 		target := &entries
 		if name == dnsKey(domain) {
 			target = &root
