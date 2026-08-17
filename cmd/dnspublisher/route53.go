@@ -43,6 +43,7 @@ type route53API interface {
 type route53DNS struct {
 	api         route53API
 	zoneID      string
+	ttls        recordTTLs
 	poll        time.Duration
 	syncTimeout time.Duration
 }
@@ -58,7 +59,7 @@ func (c route53Creds) Retrieve(context.Context) (aws.Credentials, error) {
 
 // newRoute53DNS builds a client from static credentials rather than the SDK's default chain: the
 // chain would pull in SSO, STS, and instance-metadata lookups this publisher has no use for.
-func newRoute53DNS(zoneID, region, keyID, secret string) *route53DNS {
+func newRoute53DNS(zoneID, region, keyID, secret string, ttls recordTTLs) *route53DNS {
 	return &route53DNS{
 		api: route53.New(route53.Options{
 			Region:      region,
@@ -66,6 +67,7 @@ func newRoute53DNS(zoneID, region, keyID, secret string) *route53DNS {
 			HTTPClient:  &http.Client{Timeout: route53Timeout},
 		}),
 		zoneID:      zoneID,
+		ttls:        ttls,
 		poll:        route53SyncPoll,
 		syncTimeout: route53SyncTimeout,
 	}
@@ -130,7 +132,7 @@ func (c *route53DNS) Sync(ctx context.Context, domain string, want, retain map[s
 	}
 	var entries, root, stale []types.Change
 	for name, content := range wanted {
-		ttl := int64(ttlFor(name, domain))
+		ttl := int64(c.ttls.forName(name, domain))
 		current, exists := have[name]
 		if exists && normalizeTXT(strings.Join(current.values, "")) == content && current.ttl == ttl {
 			continue

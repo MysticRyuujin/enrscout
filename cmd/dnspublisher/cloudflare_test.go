@@ -94,7 +94,7 @@ func fakeCloudflare(t *testing.T, z *fakeZone) *cloudflareDNS {
 	t.Helper()
 	srv := httptest.NewServer(z.handler())
 	t.Cleanup(srv.Close)
-	c := newCloudflareDNS("zone1", "token")
+	c := newCloudflareDNS("zone1", "token", defaultTTLs)
 	c.baseURL = srv.URL
 	c.settle = 0
 	return c
