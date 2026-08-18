@@ -43,6 +43,12 @@ Prometheus Go client (github.com/prometheus/client_golang)
 AWS SDK for Go v2 (github.com/aws/aws-sdk-go-v2)
     Route53 client used by the DNS tree publisher. Apache License 2.0.
 
+go-git (github.com/go-git/go-git/v5)
+    Pure-Go git client used by the DNS tree publisher's git output. Apache License 2.0.
+    Notable transitives: go-billy (Apache-2.0), ProtonMail/go-crypto (BSD-3-Clause),
+    skeema/knownhosts (Apache-2.0), kevinburke/ssh_config (MIT), sergi/go-diff (MIT),
+    emirpasic/gods (BSD-2-Clause).
+
 parquet-go (github.com/parquet-go/parquet-go)
     Snapshot serialization. Apache License 2.0.
 

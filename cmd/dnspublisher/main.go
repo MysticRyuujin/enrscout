@@ -78,6 +78,18 @@ var (
 		Name: "enrscout_dns_artifact_skipped_total",
 		Help: "Artifact writes a sanity guard skipped, keeping the last-good tree, by reason.",
 	}, []string{"reason"})
+	mDNSZoneRecords = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "enrscout_dns_zone_records",
+		Help: "TXT record sets in the zone under each tree domain after reconciliation (current plus retained generation). Route53 hosted zones default to a 10000 record-set quota.",
+	}, []string{"domain"})
+	mDNSGitPushErrors = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "enrscout_dns_git_push_errors_total",
+		Help: "Git publishes that failed; DNS is unaffected and the next cycle retries from a fresh clone.",
+	})
+	mDNSGitPushTimestamp = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "enrscout_dns_last_git_push_timestamp_seconds",
+		Help: "Unix time of the last cycle whose trees reached the git remote. Stays zero while git publishing is unconfigured.",
+	})
 	mDNSBuildInfo = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "enrscout_dns_build_info",
 		Help: "Deployed build; the labels carry the revision, value is always 1.",
@@ -134,6 +146,13 @@ func run() error {
 		r53Region    = flag.String("route53-region", "us-east-1", "AWS region used to sign Route53 requests (the service endpoint itself is global)")
 		entryTTLFlag = flag.Duration("entry-ttl", entryTTL*time.Second, "DNS TTL for tree entries (content-addressed and immutable, so a long TTL only trades cache churn for query volume)")
 		rootTTLFlag  = flag.Duration("root-ttl", rootTTL*time.Second, "DNS TTL for the tree root (adds to how long a client can serve a superseded tree)")
+		gitRepoURL   = flag.String("git-repo-url", "", "SSH git remote to publish each tree's nodes.json and enrtree-info.json to (empty = off)")
+		gitBranch    = flag.String("git-branch", "master", "branch to clone and push")
+		gitKeyFile   = flag.String("git-ssh-key-file", "", "PEM SSH deploy key with write access to that remote")
+		gitHostsFile = flag.String("git-known-hosts-file", "", "OpenSSH known_hosts file holding the remote's host keys")
+		gitDir       = flag.String("git-dir", "", "writable directory holding the git checkout")
+		gitName      = flag.String("git-committer-name", "enrscout-dnspublisher", "git commit author name")
+		gitEmail     = flag.String("git-committer-email", "enrscout@localhost", "git commit author email")
 	)
 	flag.Parse()
 
@@ -199,6 +218,18 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	gitSet := 0
+	for _, v := range []string{*gitRepoURL, *gitKeyFile, *gitHostsFile, *gitDir} {
+		if v != "" {
+			gitSet++
+		}
+	}
+	if gitSet != 0 && gitSet != 4 {
+		return errors.New("--git-repo-url, --git-ssh-key-file, --git-known-hosts-file, and --git-dir must be set together")
+	}
+	if *gitRepoURL != "" && (*gitBranch == "" || *gitName == "" || *gitEmail == "") {
+		return errors.New("--git-branch, --git-committer-name, and --git-committer-email must not be empty")
+	}
 	nets, err := parseNetworks(*networks)
 	if err != nil {
 		return err
@@ -249,27 +280,72 @@ func run() error {
 		}
 		publisher = newRoute53DNS(*r53Zone, *r53Region, keyID, secret, ttls)
 	}
+	var gitPub *gitPublisher
+	if *gitRepoURL != "" {
+		gitPub, err = newGitPublisher(*gitRepoURL, *gitBranch, *gitDir, *gitKeyFile, *gitHostsFile, *gitName, *gitEmail)
+		if err != nil {
+			return err
+		}
+	}
 	return runMultiTree(ctx, st, snapshot.Layout{Prefix: *prefix}, multiConfig{
 		networks: nets, baseDomain: *baseDomain, outDir: *outDir, key: key, sel: sel,
 		publishEvery: *publishEvery, maxSnapshotAge: *maxSnapAge,
 		minTreeNodes: *minTreeNodes, maxDropPct: *maxDropPct, validate: *validate,
-		publisher: publisher,
+		publisher: publisher, git: gitPub,
 	})
 }
 
-func buildTree(rows []nodeset.Row, opt selectOpts, seq uint, domain, network string, key *ecdsa.PrivateKey, now time.Time) (output, error) {
+// builtTree carries what one cycle knows about a tree beyond the artifact schema - the root
+// signature and the selected nodes - for transports (git) that publish more than TXT records.
+// The on-disk artifact stays the embedded output alone.
+type builtTree struct {
+	output
+	signature string
+	nodes     []publishedNode
+}
+
+type publishedNode struct {
+	id           string
+	record       string
+	seq          uint64
+	score        int32
+	firstSeen    int64
+	lastResolved int64
+	lastCheck    int64
+}
+
+func buildTree(rows []nodeset.Row, opt selectOpts, seq uint, domain, network string, key *ecdsa.PrivateKey, now time.Time) (builtTree, error) {
 	nodes := selectNodes(rows, opt, now)
 	tree, err := dnsdisc.MakeTree(seq, nodes, nil)
 	if err != nil {
-		return output{}, fmt.Errorf("make tree %s: %w", domain, err)
+		return builtTree{}, fmt.Errorf("make tree %s: %w", domain, err)
 	}
 	url, err := tree.Sign(key, domain)
 	if err != nil {
-		return output{}, fmt.Errorf("sign tree %s: %w", domain, err)
+		return builtTree{}, fmt.Errorf("sign tree %s: %w", domain, err)
 	}
-	return output{
-		SchemaVersion: outputSchemaVersion, URL: url, Domain: domain, Network: network,
-		Capability: opt.capability, Nodes: len(nodes), Seq: uint64(seq), Records: tree.ToTXT(domain),
+	byID := make(map[string]int, len(rows))
+	for i, r := range rows {
+		byID[r.ID] = i
+	}
+	published := make([]publishedNode, 0, len(nodes))
+	for _, n := range nodes {
+		// record is the re-encoded form the tree carries, not the row's ENR verbatim, so the git
+		// output stays byte-identical to the published TXT leaves.
+		p := publishedNode{id: n.ID().String(), record: n.String(), seq: n.Seq()}
+		if i, ok := byID[p.id]; ok {
+			r := rows[i]
+			p.score, p.firstSeen, p.lastResolved, p.lastCheck = r.Score, r.FirstSeen, r.LastResolved, r.LastCheck
+		}
+		published = append(published, p)
+	}
+	return builtTree{
+		output: output{
+			SchemaVersion: outputSchemaVersion, URL: url, Domain: domain, Network: network,
+			Capability: opt.capability, Nodes: len(nodes), Seq: uint64(seq), Records: tree.ToTXT(domain),
+		},
+		signature: tree.Signature(),
+		nodes:     published,
 	}, nil
 }
 
@@ -285,6 +361,7 @@ type multiConfig struct {
 	maxDropPct     int
 	validate       bool
 	publisher      recordPublisher
+	git            *gitPublisher
 }
 
 // recordPublisher reconciles a zone's TXT records under a domain. retain names records kept even
@@ -315,6 +392,7 @@ func runMultiTree(ctx context.Context, st store.Store, layout snapshot.Layout, c
 		}
 		evaluatedAt := time.Now()
 		total, published := 0, 0
+		var cycleTrees []builtTree
 		for _, net := range cfg.networks {
 			rows, err := snapshot.LoadNetworkRows(ctx, st, layout, m, net)
 			if err != nil {
@@ -341,10 +419,11 @@ func runMultiTree(ctx context.Context, st store.Store, layout snapshot.Layout, c
 						return fmt.Errorf("validate %s: %w", out.Domain, err)
 					}
 				}
-				if err := emitTree(out, cfg.outDir); err != nil {
+				if err := emitTree(out.output, cfg.outDir); err != nil {
 					return err
 				}
 				issued[out.Domain] = out.Seq
+				cycleTrees = append(cycleTrees, out)
 				mDNSTreeNodes.WithLabelValues(out.Domain).Set(float64(out.Nodes))
 				total += out.Nodes
 				published++
@@ -355,6 +434,16 @@ func runMultiTree(ctx context.Context, st store.Store, layout snapshot.Layout, c
 				mDNSPublishSkipped.WithLabelValues("push_failed").Inc()
 				slog.Error("skip network: DNS push failed, leaving the zone and collapse baseline unchanged", "network", net, "err", err)
 				continue
+			}
+		}
+		// Git is a sibling transport of DNS: it carries every tree that passed gating this cycle,
+		// and a failure only warns - the next cycle re-clones and self-heals.
+		if cfg.git != nil && len(cycleTrees) > 0 {
+			if err := cfg.git.Publish(ctx, cycleTrees, evaluatedAt); err != nil {
+				mDNSGitPushErrors.Inc()
+				slog.Warn("git publish failed; DNS is unaffected", "err", err)
+			} else {
+				mDNSGitPushTimestamp.SetToCurrentTime()
 			}
 		}
 		if published > 0 {
@@ -410,7 +499,7 @@ func treeSequence(generatedAt time.Time, previousSeq uint64) uint {
 // publishNetwork pushes a network's trees, then commits their published state. Committing only
 // after every push succeeds is what keeps a failed push from moving the collapse baseline onto a
 // tree DNS never served.
-func publishNetwork(ctx context.Context, cfg multiConfig, network string, trees []output) error {
+func publishNetwork(ctx context.Context, cfg multiConfig, network string, trees []builtTree) error {
 	if cfg.publisher == nil {
 		return nil
 	}
@@ -430,7 +519,7 @@ func publishNetwork(ctx context.Context, cfg multiConfig, network string, trees 
 		mDNSRecordsChanged.WithLabelValues(out.Domain).Add(float64(changed))
 		// Committed per tree rather than after the whole network: once a tree is in DNS its state must
 		// be recorded, or a later failure leaves it serving records the next cycle would prune.
-		if _, err := emitArtifact(out, cfg.outDir, out.Domain+publishedSuffix); err != nil {
+		if _, err := emitArtifact(out.output, cfg.outDir, out.Domain+publishedSuffix); err != nil {
 			return fmt.Errorf("commit published state %s: %w", out.Domain, err)
 		}
 		slog.Info("published tree to DNS", "domain", out.Domain, "nodes", out.Nodes, "seq", out.Seq, "records_changed", changed)
@@ -490,8 +579,8 @@ func baselinesFor(cfg multiConfig, domain, network, capability string) (nodes in
 // issued carries the sequence this process last published per domain. Without --out there is no
 // artifact to read a floor from, yet selection still filters on evaluatedAt, so successive cycles
 // over one manifest can change a tree that would otherwise reuse its sequence.
-func buildNetworkTrees(rows []nodeset.Row, network string, generatedAt, evaluatedAt time.Time, cfg multiConfig, issued map[string]uint64) ([]output, skipDecision, error) {
-	var trees []output
+func buildNetworkTrees(rows []nodeset.Row, network string, generatedAt, evaluatedAt time.Time, cfg multiConfig, issued map[string]uint64) ([]builtTree, skipDecision, error) {
+	var trees []builtTree
 	// CL ENRs never carry the snap entry, so a CL-layer snap tree would be permanently
 	// empty and its empty-tree guard would gate the valid all tree every cycle.
 	capabilities := []string{"all"}

@@ -13,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/route53"
 	"github.com/aws/aws-sdk-go-v2/service/route53/types"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 type fakeSet struct {
@@ -263,6 +264,9 @@ func TestRoute53RetainsThePreviousGeneration(t *testing.T) {
 	}
 	if _, ok := z.stored[dnsKey("NEW."+r53Domain)]; !ok {
 		t.Error("new entry was not written")
+	}
+	if got := testutil.ToFloat64(mDNSZoneRecords.WithLabelValues(r53Domain)); got != 3 {
+		t.Errorf("zone record gauge = %v, want 3 (root + NEW + retained OLD)", got)
 	}
 }
 

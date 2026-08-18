@@ -187,6 +187,7 @@ func (c *cloudflareDNS) Sync(ctx context.Context, domain string, want, retain ma
 	}
 	// A nil retain means nothing is known to have been published, so the zone may already be serving
 	// a tree this process did not write. Pruning then would delete a live generation.
+	kept := 0
 	if retain != nil {
 		retained := make(map[string]struct{}, len(retain))
 		for name := range retain {
@@ -197,9 +198,16 @@ func (c *cloudflareDNS) Sync(ctx context.Context, domain string, want, retain ma
 				continue
 			}
 			if _, keep := retained[name]; keep {
+				kept++
 				continue
 			}
 			stale.Deletes = append(stale.Deletes, cfRecord{ID: current.ID})
+		}
+	} else {
+		for name := range have {
+			if _, keep := wanted[name]; !keep {
+				kept++
+			}
 		}
 	}
 
@@ -225,13 +233,17 @@ func (c *cloudflareDNS) Sync(ctx context.Context, domain string, want, retain ma
 	changed += root.len()
 	// A failed prune leaves records the current root simply does not reference, so it must not fail
 	// a publish that already succeeded.
+	pruned := 0
 	for _, chunk := range chunkBatch(stale) {
 		if err := c.submit(ctx, chunk); err != nil {
 			slog.Warn("stale DNS records left in place", "domain", domain, "records", len(chunk.Deletes), "err", err)
+			mDNSZoneRecords.WithLabelValues(domain).Set(float64(len(wanted) + kept + len(stale.Deletes) - pruned))
 			return changed, nil
 		}
 		changed += chunk.len()
+		pruned += len(chunk.Deletes)
 	}
+	mDNSZoneRecords.WithLabelValues(domain).Set(float64(len(wanted) + kept))
 	return changed, nil
 }
 

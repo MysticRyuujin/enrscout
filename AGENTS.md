@@ -126,7 +126,20 @@ publishes the crawler advertiser endpoints on :30303-:30311.
   manifests are nanosecond, so `treeSequence` steps past the previous artifact's sequence rather than
   reusing it. A zero-node artifact written before that guard existed yields no collapse baseline
   instead of wedging its domain.
-  **Remaining before it replaces discv4-crawl:** git output of the tree JSON.
+  **Git output** (`git.go`) completes the discv4-dns-lists contract discv4-crawl served: when
+  `--git-repo-url` is set (with `--git-ssh-key-file`, `--git-known-hosts-file`, and `--git-dir`,
+  all four together), each cycle pushes every gated tree's `nodes.json` (devp2p nodeset format,
+  clean-room reimplementation - never code from GPL `cmd/devp2p`; `lastResponse` maps to the row's
+  `LastResolved`, the last *successful* resolution) and `enrtree-info.json` into
+  `<capability>.<network>.<base-domain>/`. Unlike the legacy crawler, git is output-only (state
+  lives in S3 snapshots and `.published` artifacts), so a failed push only warns
+  (`enrscout_dns_git_push_errors_total`; freshness via `enrscout_dns_last_git_push_timestamp_seconds`)
+  and never blocks DNS. Every cycle re-clones fresh at depth 1, so a rewritten or diverged remote
+  can never wedge pushes; directories for trees not in the cycle keep the remote's content and are
+  never deleted. Host keys are pinned via the known_hosts file (full OpenSSH key lines, not
+  fingerprints); the deploy key must be mode 0600. Expect one commit per publish cycle - the
+  sequence advances each cycle, so the root signature always changes. Deploy a single writer per
+  repo branch.
 - **The DNS push is one interface with two providers.** `recordPublisher.Sync` reconciles one domain's
   TXT records; `cloudflare.go` and `route53.go` implement it and are mutually exclusive
   (`--cloudflare-zone-id` or `--route53-zone-id`, never both). Both write entries before the root, so

@@ -150,6 +150,7 @@ func (c *route53DNS) Sync(ctx context.Context, domain string, want, retain map[s
 	}
 	// A nil retain means nothing is known to have been published, so the zone may already be serving
 	// a tree this process did not write. Pruning then would delete a live generation.
+	kept := 0
 	if retain != nil {
 		retained := make(map[string]struct{}, len(retain))
 		for name := range retain {
@@ -160,9 +161,16 @@ func (c *route53DNS) Sync(ctx context.Context, domain string, want, retain map[s
 				continue
 			}
 			if _, keep := retained[name]; keep {
+				kept++
 				continue
 			}
 			stale = append(stale, txtChange(types.ChangeActionDelete, name, current.ttl, current.values...))
+		}
+	} else {
+		for name := range have {
+			if _, keep := wanted[name]; !keep {
+				kept++
+			}
 		}
 	}
 	sortChanges(entries)
@@ -189,8 +197,10 @@ func (c *route53DNS) Sync(ctx context.Context, domain string, want, retain map[s
 	changed += n
 	if err != nil {
 		slog.Warn("stale DNS records left in place", "domain", domain, "records", len(stale), "err", err)
+		mDNSZoneRecords.WithLabelValues(domain).Set(float64(len(wanted) + kept + len(stale)))
 		return changed, nil
 	}
+	mDNSZoneRecords.WithLabelValues(domain).Set(float64(len(wanted) + kept))
 	return changed, nil
 }
 
