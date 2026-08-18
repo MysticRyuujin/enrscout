@@ -78,6 +78,10 @@ var (
 		Name: "enrscout_dns_artifact_skipped_total",
 		Help: "Artifact writes a sanity guard skipped, keeping the last-good tree, by reason.",
 	}, []string{"reason"})
+	mDNSZoneRecords = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "enrscout_dns_zone_records",
+		Help: "TXT record sets in the zone under each tree domain after reconciliation (current plus retained generation). Route53 hosted zones default to a 10000 record-set quota.",
+	}, []string{"domain"})
 	mDNSGitPushErrors = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "enrscout_dns_git_push_errors_total",
 		Help: "Git publishes that failed; DNS is unaffected and the next cycle retries from a fresh clone.",
