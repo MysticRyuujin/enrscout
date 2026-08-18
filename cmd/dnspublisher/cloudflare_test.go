@@ -273,7 +273,7 @@ func TestFailedPushAdvancesTheSequenceButNotTheBaseline(t *testing.T) {
 	built := treeOutput(cfDomain, 600, 6)
 	seedArtifact(t, outDir, cfDomain, built)
 
-	if err := publishNetwork(context.Background(), cfg, "hoodi", []output{built}); err == nil {
+	if err := publishNetwork(context.Background(), cfg, "hoodi", []builtTree{{output: built}}); err == nil {
 		t.Fatal("publishNetwork reported success despite the push failing")
 	}
 	nodes, seq, err := baselinesFor(cfg, cfDomain, "hoodi", "all")
@@ -296,7 +296,7 @@ func TestSuccessfulPushCommitsThePublishedBaseline(t *testing.T) {
 	built := treeOutput(cfDomain, 900, 6)
 	seedArtifact(t, outDir, cfDomain, built)
 
-	if err := publishNetwork(context.Background(), cfg, "hoodi", []output{built}); err != nil {
+	if err := publishNetwork(context.Background(), cfg, "hoodi", []builtTree{{output: built}}); err != nil {
 		t.Fatal(err)
 	}
 	nodes, _, err := baselinesFor(cfg, cfDomain, "hoodi", "all")

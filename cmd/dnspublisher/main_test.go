@@ -661,6 +661,21 @@ func TestBuildTree(t *testing.T) {
 	if _, _, err := dnsdisc.ParseURL(out.URL); err != nil {
 		t.Fatalf("signed tree url invalid: %v", err)
 	}
+	if len(out.nodes) != 1 {
+		t.Fatalf("builtTree carries %d published nodes, want 1", len(out.nodes))
+	}
+	p := out.nodes[0]
+	if p.id != rows[0].ID || p.score != rows[0].Score || p.firstSeen != rows[0].FirstSeen ||
+		p.lastResolved != rows[0].LastResolved || p.lastCheck != rows[0].LastCheck {
+		t.Errorf("published node did not resolve back to its row: %+v vs %+v", p, rows[0])
+	}
+	if !strings.HasPrefix(p.record, "enr:") {
+		t.Errorf("published record %q is not an enr: string", p.record)
+	}
+	root := out.Records[dnsKey(out.Domain)]
+	if out.signature == "" || !strings.Contains(root, "sig="+out.signature) {
+		t.Errorf("tree signature %q not carried by the root record %q", out.signature, root)
+	}
 }
 
 func mainnetELNode(t *testing.T, last byte, withSnap bool) *enode.Node {

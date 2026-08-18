@@ -153,6 +153,26 @@ re-check a root: one retained generation has to outlive a cached root. Entries a
 written and confirmed propagated before the root is replaced, so a resolver never
 follows a new root into a subtree that does not exist yet.
 
+### Publishing to a git repository
+
+The publisher can also push each tree's node list to a git repo, continuing the
+[ethereum/discv4-dns-lists](https://github.com/ethereum/discv4-dns-lists) format: per tree
+directory, `nodes.json` (devp2p nodeset format) and `enrtree-info.json` (signed root metadata).
+Set all four flags together:
+
+```bash
+  --git-repo-url=git@github.com:org/repo.git \
+  --git-branch=master \
+  --git-ssh-key-file=/secure/path/deploy-key \
+  --git-known-hosts-file=/etc/enrscout/git-known-hosts \
+  --git-dir=/var/lib/enrscout/dns/git
+```
+
+The deploy key must be mode 0600 or stricter. The known_hosts file pins the remote's host keys
+(full OpenSSH key lines). Each cycle clones fresh at depth 1 and pushes one commit with the trees
+that passed gating; a push failure only warns and never blocks DNS publishing. Directories for
+trees not built in a cycle keep the remote's previous content.
+
 ## Container images
 
 Released images are published to GHCR for `linux/amd64` and `linux/arm64`, each
