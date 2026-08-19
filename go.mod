@@ -18,7 +18,7 @@ require (
 	github.com/minio/minio-go/v7 v7.2.1
 	github.com/multiformats/go-multiaddr v0.16.1
 	github.com/oschwald/geoip2-golang v1.13.0
-	github.com/parquet-go/parquet-go v0.30.1
+	github.com/parquet-go/parquet-go v0.32.0
 	github.com/prometheus/client_golang v1.24.1
 	github.com/prometheus/client_model v0.6.2
 	golang.org/x/crypto v0.54.0
