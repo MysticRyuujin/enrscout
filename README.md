@@ -6,6 +6,9 @@ across **IPv4 and IPv6**, enriches them (network/fork classification, client
 fingerprint, geo, hosting), and publishes a current snapshot that powers a
 map-centric web explorer.
 
+The official public deployment is at
+**[enrscout.ethnodeops.xyz](https://enrscout.ethnodeops.xyz/)**.
+
 DHT-served fallback records remain retryable in crawler memory but do not enter
 public snapshots until direct discovery resolution or an authenticated transport
 fingerprint verifies the identity. This keeps transient or injected discovery leads
