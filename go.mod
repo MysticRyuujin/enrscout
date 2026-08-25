@@ -6,7 +6,7 @@ toolchain go1.26.6
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.43.7
-	github.com/aws/aws-sdk-go-v2/service/route53 v1.65.8
+	github.com/aws/aws-sdk-go-v2/service/route53 v1.65.9
 	github.com/duckdb/duckdb-go/v2 v2.10505.0
 	github.com/ethereum/go-ethereum v1.17.5
 	github.com/go-git/go-billy/v5 v5.9.1
@@ -37,8 +37,8 @@ require (
 	github.com/VictoriaMetrics/fastcache v1.13.0 // indirect
 	github.com/andybalholm/brotli v1.2.0 // indirect
 	github.com/apache/arrow-go/v18 v18.5.1 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.37 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.37 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.38 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.38 // indirect
 	github.com/aws/smithy-go v1.27.8 // indirect
 	github.com/benbjohnson/clock v1.3.5 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
