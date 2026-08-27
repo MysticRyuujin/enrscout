@@ -55,6 +55,11 @@ func TestValidateNodeQuery(t *testing.T) {
 		{"fork": {"ancient"}},
 		{"ip": {strings.Repeat("1", 65)}},
 		{"q": {strings.Repeat("x", 1025)}},
+		{"cgc_min": {strings.Repeat("1", 11)}},
+		{"cgc_max": {strings.Repeat("1", 11)}},
+		{"cgc_min": {"bogus"}},
+		{"cgc_max": {"-1"}},
+		{"cgc_min": {"9999999999"}},
 	} {
 		if err := validateNodeQuery(q, known); err == nil {
 			t.Errorf("invalid query accepted: %v", q)
@@ -173,13 +178,13 @@ func TestStatsLRUIsBounded(t *testing.T) {
 func TestCompactMapUsesTupleAndIDPrefix(t *testing.T) {
 	got := compactMap([]query.Point{{
 		ID: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", Lon: 12.5, Lat: -7.25,
-		Client: "Geth", Country: "US", City: "Chicago", Subdivision: "IL", Layer: "el", Hosting: true, IPv6: false, Verified: true, AccuracyKM: 20,
+		Client: "Geth", Country: "US", City: "Chicago", Subdivision: "IL", Layer: "el", Hosting: true, IPv6: false, Verified: true, AccuracyKM: 20, CGC: 128,
 	}})
-	points, ok := got["points"].([][12]any)
+	points, ok := got["points"].([][13]any)
 	if !ok || len(points) != 1 {
 		t.Fatalf("points = %#v", got["points"])
 	}
-	want := [12]any{"0123456789abcdef", 12.5, -7.25, "Geth", "US", "Chicago", "el", 1, 0, 1, 20, "IL"}
+	want := [13]any{"0123456789abcdef", 12.5, -7.25, "Geth", "US", "Chicago", "el", 1, 0, 1, 20, "IL", 128}
 	if points[0] != want {
 		t.Fatalf("point = %#v, want %#v", points[0], want)
 	}

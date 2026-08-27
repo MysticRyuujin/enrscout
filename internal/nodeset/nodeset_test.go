@@ -1306,7 +1306,8 @@ func TestRowsFromParquetDefaultsMissingAdditiveColumns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read legacy parquet: %v", err)
 	}
-	if len(rows) != 1 || rows[0].ID != "legacy" || rows[0].City != "Fond du Lac" || rows[0].Subdivision != "" {
+	if len(rows) != 1 || rows[0].ID != "legacy" || rows[0].City != "Fond du Lac" || rows[0].Subdivision != "" ||
+		rows[0].CGC != 0 || rows[0].CGCKnown {
 		t.Fatalf("legacy rows = %+v", rows)
 	}
 }
@@ -1372,6 +1373,32 @@ func TestExtractCLForkNextFromSpecENRForkID(t *testing.T) {
 	}
 	if e.forkNext != 2048 {
 		t.Errorf("forkNext = %d, want 2048 (next_fork_epoch at bytes [8:16] of the 16-byte ENRForkID)", e.forkNext)
+	}
+}
+
+func TestExtractCGC(t *testing.T) {
+	clRecord := func(cgc []byte) extracted {
+		var r enr.Record
+		r.Set(enr.IPv4{5, 6, 7, 9})
+		eth2 := make([]byte, 16)
+		copy(eth2[:4], []byte{0xd2, 0xf1, 0x99, 0x7f})
+		r.Set(netconf.Eth2Entry(eth2))
+		if cgc != nil {
+			r.Set(netconf.CGCEntry(cgc))
+		}
+		var id enode.ID
+		id[0] = 43
+		return extract(enode.SignNull(&r, id))
+	}
+
+	if e := clRecord(nil); e.cgc != 0 || e.cgcKnown {
+		t.Errorf("absent cgc = (%d, %v), want (0, false)", e.cgc, e.cgcKnown)
+	}
+	if e := clRecord([]byte{0x80}); e.cgc != 128 || !e.cgcKnown {
+		t.Errorf("supernode cgc = (%d, %v), want (128, true)", e.cgc, e.cgcKnown)
+	}
+	if e := clRecord([]byte{1, 2, 3, 4, 5}); e.cgc != 0 || e.cgcKnown {
+		t.Errorf("oversized cgc = (%d, %v), want (0, false)", e.cgc, e.cgcKnown)
 	}
 }
 

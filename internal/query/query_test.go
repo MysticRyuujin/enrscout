@@ -85,6 +85,18 @@ func TestFilterWhere(t *testing.T) {
 	if !strings.Contains(clause, "lower(client) = lower(?)") || len(args) != 1 || args[0] != "Geth" {
 		t.Errorf("exact client filter = %q / %v", clause, args)
 	}
+
+	clause, args, err = Filter{CGCMin: "8", CGCMax: "128"}.where(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(clause, "coalesce(cgc_known, false) AND coalesce(cgc, 0) >= ?") ||
+		!strings.Contains(clause, "coalesce(cgc_known, false) AND coalesce(cgc, 0) <= ?") {
+		t.Errorf("missing cgc conditions in %q", clause)
+	}
+	if len(args) != 2 || args[0] != uint32(8) || args[1] != uint32(128) {
+		t.Errorf("unexpected cgc bound args: %v", args)
+	}
 }
 
 func TestFilterEscapesLikeMetacharacters(t *testing.T) {
@@ -110,6 +122,7 @@ func TestSortExpression(t *testing.T) {
 		{"client", "", "lower(client) ASC, lower(client_version) ASC, id ASC"},
 		{"first_seen", "asc", "first_seen ASC, id ASC"},
 		{"last_seen", "desc", "last_seen DESC, score DESC, id DESC"},
+		{"cgc", "", "coalesce(cgc, 0) DESC, score DESC, id DESC"},
 	}
 	for _, tt := range tests {
 		if got := sortExpression(tt.name, tt.order); got != tt.want {
@@ -129,11 +142,11 @@ func TestNodeProjectionAndScanContract(t *testing.T) {
 	}
 	defer eng.Close()
 	_, err = eng.db.Exec(`INSERT INTO nodes (
-		id,enode,enr,seq,ip,ip6,tcp,udp,tcp6,udp6,quic,quic6,network,fork_hash,fork_next,layer,
+		id,enode,enr,seq,ip,ip6,tcp,udp,tcp6,udp6,quic,quic6,network,fork_hash,fork_next,layer,cgc,cgc_known,
 		has_v4,has_v5,score,first_seen,last_seen,last_check,client,client_version,os,lang,capabilities,
 		country,city,subdivision,lat,lon,asn,org,hosting,fp_status,fp_at,geolocated,membership_source,dialable)
 		VALUES ('id-a','enode-a','enr-a',11,'1.1.1.1','2606:4700:4700::1111',21,22,23,24,25,26,
-		'mainnet','aabbccdd',31,'el',true,false,41,51,52,53,'ClientA','VersionB','OSA','LangB','CapsC',
+		'mainnet','aabbccdd',31,'el',128,true,true,false,41,51,52,53,'ClientA','VersionB','OSA','LangB','CapsC',
 		'US','CityB','WI',61.5,62.5,63,'OrgC',true,'failed',71,true,'enr',false)`)
 	if err != nil {
 		t.Fatal(err)
@@ -153,8 +166,18 @@ func TestNodeProjectionAndScanContract(t *testing.T) {
 		n.ForkNext != 31 || !n.HasV4 || n.HasV5 || n.FirstSeen != 51 || n.LastSeen != 52 || n.LastCheck != 53 ||
 		n.Client != "ClientA" || n.ClientVersion != "VersionB" || n.OS != "OSA" || n.Lang != "LangB" ||
 		n.Country != "US" || n.City != "CityB" || n.Subdivision != "WI" || n.Lat != 61.5 || n.Lon != 62.5 || n.ASN != 63 ||
-		n.Org != "OrgC" || !n.Hosting || n.FPStatus != "failed" || n.FingerprintAt != 71 || n.Dialable || n.ForkCompatible {
+		n.Org != "OrgC" || !n.Hosting || n.FPStatus != "failed" || n.FingerprintAt != 71 || n.Dialable || n.ForkCompatible ||
+		n.CGC != 128 || !n.CGCKnown {
 		t.Fatalf("projection/scan fields were misassigned: %+v", n)
+	}
+
+	supernodes, err := eng.Nodes(context.Background(), Filter{CGCMin: "128", ForkStatus: "all", Limit: 10})
+	if err != nil || supernodes.Total != 1 {
+		t.Fatalf("cgc_min filter = %+v, %v", supernodes, err)
+	}
+	none, err := eng.Nodes(context.Background(), Filter{CGCMax: "8", ForkStatus: "all", Limit: 10})
+	if err != nil || none.Total != 0 {
+		t.Fatalf("cgc_max filter = %+v, %v", none, err)
 	}
 
 	res, err := eng.Nodes(context.Background(), Filter{Client: "ienta", Country: "u", IP: "1.1", ForkStatus: "all", Limit: 10})
@@ -227,6 +250,14 @@ func TestMigrateStagingSchemaAddsSubdivision(t *testing.T) {
 	}
 	if subdivision != "" {
 		t.Fatalf("subdivision = %q, want empty default", subdivision)
+	}
+	var cgc uint32
+	var cgcKnown bool
+	if err := eng.db.QueryRow("SELECT cgc, cgc_known FROM nodes_staging WHERE id = 'legacy'").Scan(&cgc, &cgcKnown); err != nil {
+		t.Fatal(err)
+	}
+	if cgc != 0 || cgcKnown {
+		t.Fatalf("cgc defaults = (%d, %v), want (0, false)", cgc, cgcKnown)
 	}
 }
 
@@ -615,10 +646,13 @@ func TestEngineRejectsUnimplementedFilterValues(t *testing.T) {
 		{"dialable", Filter{Dialable: "bogus"}},
 		{"fork status", Filter{ForkStatus: "bogus"}},
 		{"membership", Filter{Membership: "bogus"}},
+		{"cgc_min", Filter{CGCMin: "bogus"}},
+		{"cgc_min negative", Filter{CGCMin: "-1"}},
+		{"cgc_max", Filter{CGCMax: "99999999999"}},
 	}
 	// A new enum in filterEnums without a case here would ship unguarded.
-	if len(cases) != len(filterEnums) {
-		t.Fatalf("filterEnums has %d entries, test covers %d", len(filterEnums), len(cases))
+	if len(cases) != len(filterEnums)+3 {
+		t.Fatalf("filterEnums has %d entries, test covers %d non-cgc cases", len(filterEnums), len(cases)-3)
 	}
 	for _, tc := range cases {
 		tc.f.Network = "mainnet"

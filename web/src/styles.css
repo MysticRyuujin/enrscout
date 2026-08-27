@@ -295,6 +295,13 @@ a {
   white-space: nowrap;
 }
 
+.supernode-tag {
+  color: #f0c75e;
+  font-weight: 600;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .tiles {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -305,6 +312,7 @@ a {
 .tile-hint {
   color: var(--accent);
   font-size: 12px;
+  line-height: 16px;
   margin-top: 2px;
   font-weight: 600;
 }
@@ -356,6 +364,7 @@ a {
 
 .tile-state {
   font-size: 11px;
+  line-height: 16px;
   font-weight: 600;
   margin-top: 2px;
   color: var(--accent);
@@ -795,12 +804,18 @@ a.bar-name:hover {
 }
 
 .filters .f-search {
-  flex: 1;
-  min-width: 220px;
+  flex: 2 1 140px;
+  min-width: 140px;
 }
 
 .filters .f-ip {
-  width: 180px;
+  flex: 1 1 110px;
+  min-width: 110px;
+}
+
+.filters .f-in {
+  flex: 1 1 110px;
+  min-width: 110px;
 }
 
 .filters input:focus,

@@ -180,6 +180,29 @@ export default function NodeDetail() {
           />
           <Row label="Fork hash" value={node.fork_hash} mono />
           <Row label="Fork next" value={node.fork_next || "0"} />
+          {node.layer === "cl" && (
+            <Row
+              label="Custody groups"
+              value={
+                node.cgc_known ? (
+                  <span title="Custody group count (cgc) advertised in the node's ENR: how many of the 128 PeerDAS data-column groups it stores and serves. 128 means every column.">
+                    {node.cgc >= 128 ? (
+                      <>
+                        {node.cgc}
+                        <span className="supernode-tag"> ✨ supernode</span>
+                      </>
+                    ) : (
+                      <>
+                        {node.cgc} <span className="dim">of 128</span>
+                      </>
+                    )}
+                  </span>
+                ) : (
+                  "-"
+                )
+              }
+            />
+          )}
         </div>
 
         <div className="card">

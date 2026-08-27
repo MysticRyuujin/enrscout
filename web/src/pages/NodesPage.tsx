@@ -9,7 +9,38 @@ const PAGE = 50;
 const FILTER_DEBOUNCE_MS = 250;
 
 type PatchFilter = (key: string, value: string) => void;
-type NodeSort = "last_seen" | "client";
+type NodeSort = "last_seen" | "client" | "cgc";
+
+// Accepted custody expressions: "128" (exact), "4-8" (range), "8+" / ">=8"
+// (at least), "<=8" (at most), and strict ">8" / "<8", exact in the integer
+// domain (>8 = min 9, <8 = max 7). Returns null when the text parses as none
+// of these; "" clears both bounds.
+export function parseCustody(
+  raw: string,
+): { min: string; max: string } | null {
+  const s = raw.trim().replace(/\s+/g, "");
+  if (!s) return { min: "", max: "" };
+  let m = s.match(/^(\d{1,4})$/);
+  if (m) return { min: m[1], max: m[1] };
+  m = s.match(/^(\d{1,4})\+$/) ?? s.match(/^>=(\d{1,4})$/);
+  if (m) return { min: m[1], max: "" };
+  m = s.match(/^>(\d{1,4})$/);
+  if (m) return { min: String(Number(m[1]) + 1), max: "" };
+  m = s.match(/^<=(\d{1,4})$/);
+  if (m) return { min: "", max: m[1] };
+  m = s.match(/^<(\d{1,4})$/);
+  if (m) return Number(m[1]) > 0 ? { min: "", max: String(Number(m[1]) - 1) } : null;
+  m = s.match(/^(\d{1,4})-(\d{1,4})$/);
+  if (m && Number(m[1]) <= Number(m[2])) return { min: m[1], max: m[2] };
+  return null;
+}
+
+function custodyText(min: string, max: string): string {
+  if (min && max) return min === max ? min : `${min}-${max}`;
+  if (min) return `${min}+`;
+  if (max) return `<=${max}`;
+  return "";
+}
 
 function useDebouncedFilter(
   key: string,
@@ -72,8 +103,14 @@ export default function NodesPage({ layer }: { layer: "el" | "cl" }) {
   const ipstack = sp.get("ipstack") ?? "";
   const hosting = sp.get("hosting") ?? "";
   const dialable = sp.get("dialable") ?? "";
+  const cgcMin = layer === "cl" ? (sp.get("cgc_min") ?? "") : "";
+  const cgcMax = layer === "cl" ? (sp.get("cgc_max") ?? "") : "";
   const ip = sp.get("ip") ?? "";
-  const sort: NodeSort = sp.get("sort") === "client" ? "client" : "last_seen";
+  const sortParam = sp.get("sort");
+  const sort: NodeSort =
+    sortParam === "client" || (sortParam === "cgc" && layer === "cl")
+      ? sortParam
+      : "last_seen";
   const orderParam = sp.get("order");
   const defaultOrder = sort === "client" ? "asc" : "desc";
   const order =
@@ -86,6 +123,8 @@ export default function NodesPage({ layer }: { layer: "el" | "cl" }) {
   const [ipDraft, setIPDraft] = useState(ip);
   const [clientDraft, setClientDraft] = useState(client);
   const [countryDraft, setCountryDraft] = useState(country);
+  const custody = custodyText(cgcMin, cgcMax);
+  const [custodyDraft, setCustodyDraft] = useState(custody);
   const filterKey = [
     network,
     q,
@@ -97,6 +136,8 @@ export default function NodesPage({ layer }: { layer: "el" | "cl" }) {
     ipstack,
     hosting,
     dialable,
+    cgcMin,
+    cgcMax,
     sort,
     order,
   ].join("\u0000");
@@ -143,6 +184,8 @@ export default function NodesPage({ layer }: { layer: "el" | "cl" }) {
       ipstack,
       hosting,
       dialable,
+      cgcMin,
+      cgcMax,
       sort,
       order,
     ],
@@ -152,11 +195,39 @@ export default function NodesPage({ layer }: { layer: "el" | "cl" }) {
   useEffect(() => setIPDraft(ip), [ip]);
   useEffect(() => setClientDraft(client), [client]);
   useEffect(() => setCountryDraft(country), [country]);
+  useEffect(() => setCustodyDraft(custody), [custody]);
 
   useDebouncedFilter("q", qDraft, q, patch);
   useDebouncedFilter("ip", ipDraft, ip, patch);
   useDebouncedFilter("client", clientDraft, client, patch);
   useDebouncedFilter("country", countryDraft, country, patch);
+
+  // One atomic update: two patch() calls race inside a React batch and the
+  // second overwrites the first key from a stale base.
+  const patchCustodyNow = useCallback((raw: string) => {
+    const parsed = parseCustody(raw);
+    if (!parsed) return;
+    setSpRef.current(
+      (current) => {
+        const next = new URLSearchParams(current);
+        if (parsed.min) next.set("cgc_min", parsed.min);
+        else next.delete("cgc_min");
+        if (parsed.max) next.set("cgc_max", parsed.max);
+        else next.delete("cgc_max");
+        return next;
+      },
+      { replace: true },
+    );
+  }, []);
+  useEffect(() => {
+    const parsed = parseCustody(custodyDraft);
+    if (!parsed || custodyText(parsed.min, parsed.max) === custody) return;
+    const timer = window.setTimeout(
+      () => patchCustodyNow(custodyDraft),
+      custodyDraft.trim() ? FILTER_DEBOUNCE_MS : 0,
+    );
+    return () => window.clearTimeout(timer);
+  }, [custodyDraft, custody, patchCustodyNow]);
 
   useEffect(() => {
     if (requestedFilterKey.current !== filterKey) {
@@ -178,6 +249,8 @@ export default function NodesPage({ layer }: { layer: "el" | "cl" }) {
       ipstack,
       hosting,
       dialable,
+      cgc_min: cgcMin,
+      cgc_max: cgcMax,
       sort,
       order,
       limit: PAGE,
@@ -203,6 +276,8 @@ export default function NodesPage({ layer }: { layer: "el" | "cl" }) {
     ipstack,
     hosting,
     dialable,
+    cgcMin,
+    cgcMax,
     sort,
     order,
     page,
@@ -216,6 +291,14 @@ export default function NodesPage({ layer }: { layer: "el" | "cl" }) {
 
   const total = res?.total ?? 0;
   const pages = Math.ceil(total / PAGE);
+  const elTabParams = new URLSearchParams(sp);
+  elTabParams.delete("cgc_min");
+  elTabParams.delete("cgc_max");
+  if (elTabParams.get("sort") === "cgc") {
+    elTabParams.delete("sort");
+    elTabParams.delete("order");
+  }
+  const elTabSearch = elTabParams.toString();
 
   return (
     <div className="page nodes">
@@ -230,7 +313,7 @@ export default function NodesPage({ layer }: { layer: "el" | "cl" }) {
       <div className="tabs">
         <Link
           className={layer === "el" ? "tab active" : "tab"}
-          to={{ pathname: "/nodes/execution", search: sp.toString() }}
+          to={{ pathname: "/nodes/execution", search: elTabSearch }}
         >
           Execution
         </Link>
@@ -272,7 +355,7 @@ export default function NodesPage({ layer }: { layer: "el" | "cl" }) {
         <input
           className="f-in"
           value={countryDraft}
-          placeholder="country code (US, DE…)"
+          placeholder="country (US, DE…)"
           maxLength={2}
           onChange={(e) => setCountryDraft(e.target.value)}
           onBlur={() => patch("country", countryDraft.trim())}
@@ -313,6 +396,18 @@ export default function NodesPage({ layer }: { layer: "el" | "cl" }) {
           <option value="yes">dialable (TCP/QUIC)</option>
           <option value="no">discovery-only</option>
         </select>
+        {layer === "cl" && (
+          <input
+            className="f-in"
+            value={custodyDraft}
+            placeholder="custody (8+, 4-8, 128)"
+            title="Custody group count (cgc). Accepts an exact value (128 = supernode), a range (4-8), a minimum (8+ or >=8), a maximum (<=8), or strict bounds (>8, <8)."
+            aria-invalid={parseCustody(custodyDraft) === null}
+            onChange={(e) => setCustodyDraft(e.target.value)}
+            onBlur={() => patchCustodyNow(custodyDraft)}
+            onKeyDown={(e) => e.key === "Enter" && patchCustodyNow(custodyDraft)}
+          />
+        )}
       </div>
 
       {err && <div className="error">API unreachable: {err}</div>}
@@ -332,6 +427,15 @@ export default function NodesPage({ layer }: { layer: "el" | "cl" }) {
               <th>Version</th>
               <th>OS</th>
               <th>Lang</th>
+              {layer === "cl" && (
+                <SortableHeader
+                  label="Custody"
+                  value="cgc"
+                  sort={sort}
+                  order={order}
+                  onSort={changeSort}
+                />
+              )}
               <th>Country</th>
               <th>IP</th>
               <th>Proto</th>
@@ -369,6 +473,19 @@ export default function NodesPage({ layer }: { layer: "el" | "cl" }) {
                 <td className="dim">{n.client_version || "-"}</td>
                 <td className="dim">{n.os || "-"}</td>
                 <td className="dim">{n.lang || "-"}</td>
+                {layer === "cl" && (
+                  <td>
+                    {n.cgc_known ? (
+                      n.cgc >= 128 ? (
+                        <span className="supernode-tag">{n.cgc} ✨</span>
+                      ) : (
+                        n.cgc
+                      )
+                    ) : (
+                      "-"
+                    )}
+                  </td>
+                )}
                 <td>{n.country || "-"}</td>
                 <td className="mono dim">{n.ip || n.ip6 || "-"}</td>
                 <td className="dim">
@@ -390,7 +507,7 @@ export default function NodesPage({ layer }: { layer: "el" | "cl" }) {
             ))}
             {res && res.nodes.length === 0 && (
               <tr>
-                <td colSpan={10} className="empty">
+                <td colSpan={layer === "cl" ? 11 : 10} className="empty">
                   No identities match these filters.
                 </td>
               </tr>

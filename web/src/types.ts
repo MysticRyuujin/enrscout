@@ -56,6 +56,8 @@ export interface Node {
   fork_next: string;
   fork_compatible: boolean;
   layer: string;
+  cgc: number;
+  cgc_known: boolean;
   has_v4: boolean;
   has_v5: boolean;
   score: number;
@@ -120,6 +122,7 @@ export type MapPoint = [
   verified: 0 | 1,
   accuracyKM: number,
   subdivision?: string,
+  cgc?: number,
 ];
 
 export const pointClient = (p: MapPoint) => p[3];
@@ -129,6 +132,7 @@ export const pointIPv6 = (p: MapPoint) => p[8] === 1;
 export const pointVerified = (p: MapPoint) => p[9] === 1;
 export const pointAccuracyKM = (p: MapPoint) => p[10] ?? 0;
 export const pointSubdivision = (p: MapPoint) => p[11] ?? "";
+export const pointCGC = (p: MapPoint) => p[12] ?? 0;
 
 export interface CompactMap {
   points: MapPoint[];
@@ -149,6 +153,8 @@ export interface NodeQuery {
   fork?: string;
   ip?: string;
   q?: string;
+  cgc_min?: string;
+  cgc_max?: string;
   sort?: string;
   order?: "asc" | "desc";
   limit?: number;
