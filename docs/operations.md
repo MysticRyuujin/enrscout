@@ -26,7 +26,7 @@ Successful fingerprints are retained stale-while-revalidate: daily refresh failu
 do not erase the last verified client, and only another successful probe replaces it.
 Unverified leads age out after 24 hours by default, while verified identities use the
 separate seven-day `--verified-node-max-idle` lifetime.
-The API's bounded 0–10 `score` is discovery history, not fingerprint confidence: a
+The API's bounded 0-10 `score` is discovery history, not fingerprint confidence: a
 successful repeated resolution raises it, while a resolution failure reduces it.
 Metrics expose bounded layer, direction, outcome,
 disconnect-reason, status, queue, and attempt-count dimensions; use
@@ -64,7 +64,7 @@ the devnet matrix.
 - Isolate crawler egress from private control planes; keep pprof and `/probe` private.
 - Use prefix-scoped object permissions, durable versioned storage, and one writer per
   manifest prefix.
-- Deploy snapshot readers before the crawler writer when increasing the schema version.
+- When increasing the schema version, deploy snapshot readers before the crawler writer.
   Supported older generations are upgraded at read time; routine additive changes do
   not require deleting the manifest or Parquet history.
 - Route dual-stack discovery UDP and the passive RLPx TCP port, then alert on readiness,

@@ -200,8 +200,8 @@ At steady state,
 `fp_direction`, `membership_source`, and `fork_source`; client charts alone do not
 show which path succeeded.
 
-A record that never gains a layer — no `eth`/`eth2` entry and no TCP port, which a
-discovery-only devnet seed can produce — is kept in the set for retry but deliberately
+A record with no `eth`/`eth2` entry and no TCP port never gains a layer; a
+discovery-only devnet seed can produce one. It is kept in the set for retry but deliberately
 excluded from snapshots, because publishing it would break the manifest's
 `total = execution + consensus` invariant. Expect `enrscout_crawler_nodeset_size` to exceed
 the published per-network row count when such a record is present.
@@ -306,7 +306,7 @@ forks do not reach. Both bootnodoor and ENRScout's devnet config parse
 **Client support.** Fulu requires EL Osaka support. When a client cannot run the
 schedule, Kurtosis rolls back the whole batch; read the failing service's logs,
 drop that participant and redeploy rather than weakening the schedule. Dropping
-clients is the right trade when the daemons are what is under test — record which
+clients is the right trade when the daemons are what is under test; record which
 ones and why.
 
 ### Computing the transition times
@@ -349,7 +349,7 @@ bootnodoor, per transition:
   `/cl-enr` at each stage: the `eth` fork hash changes at EL transitions, `Next`
   points at the following scheduled fork and becomes 0 after the last, and the
   `eth2` digest changes at each CL transition. Compare byte-for-byte against a
-  client's live ENR — this is how encoding bugs surface, since a self-consistent
+  client's live ENR: this is how encoding bugs surface, since a self-consistent
   encoder and decoder agree with themselves.
 - **Refresh lag.** bootnodoor detects activation on an unaligned one-minute
   ticker, so expect up to ~70s of stale advertisement after each activation.
@@ -364,7 +364,7 @@ ENRScout, per transition:
 
 - **Coverage must not drop.** `by_client_el`/`by_client_cl` should hold across
   every boundary, and `nodeset_class_size{class="verified"}` should stay equal
-  to `nodeset_size` — nodes get reclassified, not dropped.
+  to `nodeset_size`; nodes get reclassified, not dropped.
 - **Stale counts spike and recover, on both layers.** A transition legitimately drives
   the headline `consensus` or `execution` count down for about one snapshot interval
   while peers re-publish; recovery inside ~60s is normal. A permanent collapse is a bug
@@ -428,7 +428,7 @@ client starts. The local checkout now sends the EL ENR only to clients that acce
 
 Nethermind 1.39.1 aborts at startup when `--Discovery.Bootnodes` contains an ENR:
 `System.ArgumentException: PublicKey should be 64 bytes long`. The previously documented
-`--Discovery.DiscoveryVersion=V5` plus ENR workaround therefore no longer applies -
+`--Discovery.DiscoveryVersion=V5` plus ENR workaround therefore no longer applies;
 forcing V5 while supplying an enode leaves it at zero peers instead. A master build
 (v1.40.0) is expected to restore ENR bootnode parsing; until then Nethermind is
 enode-only here and does not join the EL discv5 table.
@@ -487,7 +487,7 @@ counters that counted cross-layer records as fork rejections.
 
 It also retired a long-standing misdiagnosis. The `invalid_fork_id` rejections
 seen in earlier runs were not fork incompatibility: with rejections split by
-cause, every one was `rejected_layer` — a record carrying no `eth`/`eth2` at all.
+cause, every one was `rejected_layer`, a record carrying no `eth`/`eth2` at all.
 bootnodoor's fork arithmetic matched what every upgraded client advertised.
 
 ### Full-series validation run on 2026-07-28
@@ -496,12 +496,12 @@ Both series (steady-state and the Electra/Fulu/BPO1 fork schedule) ran against
 a bootnodoor image built from its `develop` working tree, full seven-pair
 matrix, no drops. This supersedes several earlier notes:
 
-- **Organic EL coverage is 5/7, not 4/7** — erigon now joins the EL table on
+- **Organic EL coverage is 5/7, not 4/7.** erigon now joins the EL table on
   its own (bootnodoor PR #41's refresh is on `develop`). Nethermind and
   nimbus-eth1 were identified outbound via `/probe` as before.
 - **Nethermind's ENR-bootnode abort no longer reproduces.** With the per-client
-  bootnode form it parses the enode (`isEnode:true`) and simply sits at
-  `Peers: 0`; same outcome, different symptom.
+  bootnode form it parses the enode (`isEnode:true`) and sits at
+  `Peers: 0` without erroring; same outcome, different symptom.
 - **Fulu costs no participants.** All seven pairs, including nimbus-eth1,
   survive the fork schedule; the 07-27 nimbus-eth1 drop was unnecessary.
 - **"Coverage held in all samples" needs qualifying**: `by_client_cl` is
