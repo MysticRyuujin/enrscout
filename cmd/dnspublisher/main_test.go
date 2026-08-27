@@ -78,6 +78,16 @@ func TestSelectNodesDialableOnly(t *testing.T) {
 	}
 }
 
+func TestSelectNodesRejectsRowWithoutENR(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	verified := currentMainnetEL(t, v4Row(t, 4, 30303, 5, now), now)
+	verified.ENR = ""
+	verified.MembershipSource = "status"
+	if got := selectNodes([]nodeset.Row{verified}, selectOpts{minScore: 1, protocol: "any"}, now); len(got) != 0 {
+		t.Fatalf("selected %d Status-verified rows without a signed ENR, want 0", len(got))
+	}
+}
+
 func TestSelectNodesRejectsStaleExecutionFork(t *testing.T) {
 	now := time.Unix(1700000000, 0)
 	current := v4Row(t, 1, 30303, 5, now)

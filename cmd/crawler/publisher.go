@@ -142,6 +142,7 @@ func (p *publisher) pruneStale(now time.Time) {
 func (p *publisher) recordSetMetrics() {
 	mNodesetSize.Set(float64(p.set.Len()))
 	mUnclassifiedNodes.Set(float64(p.set.CountUnclassified()))
+	mCandidateNodes.Set(float64(p.set.CountELCandidates()))
 	for i, count := range p.set.ClassCounts() {
 		mNodesetClassSize.WithLabelValues(nodeset.ClassName(i)).Set(float64(count))
 	}
@@ -156,7 +157,7 @@ func (p *publisher) build(now time.Time) (*snapshot.Manifest, []generation, map[
 		Networks:      make(map[string]snapshot.NetworkSnapshot, len(p.networks)),
 	}
 	byNet := p.set.SnapshotNetworks(p.networks)
-	updateFingerprintStateMetrics(byNet)
+	updateFingerprintStateMetrics(byNet, p.set.CandidateFingerprintStates())
 	gens := make([]generation, 0, len(p.networks))
 	for _, network := range p.networks {
 		rows := byNet[network]

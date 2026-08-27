@@ -32,6 +32,11 @@ const (
 	// daily revalidation keeps versions reasonably fresh without repeatedly
 	// tripping peer limits and per-IP connection filters.
 	fpRefreshAge = 24 * time.Hour
+	// A scanner sweep produces its authenticated connections within seconds; a
+	// real peer reconnects on peer-churn timescales. Requiring this gap between
+	// credited Status sightings keeps connect-twice-in-a-row from satisfying the
+	// second-sighting bar for unsigned inbound-only identities.
+	statusReverifyGap = 30 * time.Minute
 )
 
 // Fingerprinting is deliberately much less aggressive than discovery. Peers may
@@ -109,6 +114,11 @@ type Node struct {
 	fpAt      time.Time
 	fpNext    time.Time
 	pinned    bool
+	// statusCreditAt anchors evidence credit for repeated authenticated Status
+	// sightings. It is deliberately not MembershipVerifiedAt: that field slides
+	// forward on every Status, which would deny the second-sighting credit to
+	// exactly the most active peers. Not persisted; a restart re-anchors.
+	statusCreditAt time.Time
 }
 
 // FingerprintRetry describes the next retry after a completed probe failure.
@@ -129,11 +139,29 @@ type Observation struct {
 	Applied  bool
 	Changed  bool
 	New      bool
-	// Reject: "no_address" | "address_policy" | "mixed_address" | "capacity" (bounded metric label values).
+	// Reject: "no_address" | "address_policy" | "mixed_address" | "capacity" | "candidate_cap" (bounded metric label values).
 	Reject string
 	// Evicted lower-priority nodes that made room for this one, by class name.
 	Evicted      int
 	EvictedClass string
+}
+
+func (n *Node) isELCandidate() bool { return n.Layer == "el" && n.Network == "" }
+
+func (s *Set) trackCandidateLocked(was, is bool) {
+	switch {
+	case is && !was:
+		s.candidates++
+	case was && !is:
+		s.candidates--
+	}
+}
+
+func (s *Set) deleteLocked(id enode.ID) {
+	if n := s.m[id]; n != nil {
+		s.trackCandidateLocked(n.isELCandidate(), false)
+		delete(s.m, id)
+	}
 }
 
 // Capacity classes, highest priority first.
@@ -190,7 +218,7 @@ func (s *Set) evictForLocked(candClass int) (int, string) {
 		victims = victims[:batch]
 	}
 	for _, v := range victims {
-		delete(s.m, v.ID)
+		s.deleteLocked(v.ID)
 	}
 	return len(victims), capacityClassNames[worst]
 }
@@ -211,6 +239,10 @@ type Set struct {
 	mu  sync.RWMutex
 	m   map[enode.ID]*Node
 	max int
+	// candidates counts retained unclassified execution candidates
+	// (Layer=="el" && Network=="") exactly, so admission caps hold at any
+	// resolve rate. Every Layer/Network transition and deletion maintains it.
+	candidates int
 }
 
 func NewWithLimit(max int) *Set {
@@ -274,6 +306,9 @@ func (s *Set) ObserveAuthenticatedEL(n *enode.Node, via, network, forkHash strin
 		cur.ForkNext = forkNext
 		cur.ForkSource = "status"
 		cur.ForkObservedAt = now
+		if cur.statusCreditAt.IsZero() {
+			cur.statusCreditAt = now
+		}
 		if cur.Seq == 0 {
 			cur.ENR = ""
 		}
@@ -299,11 +334,81 @@ func (s *Set) ObserveAuthenticatedCL(n *enode.Node, network, forkHash string, no
 		cur.ForkNext = 0
 		cur.ForkSource = "status"
 		cur.ForkObservedAt = now
+		if cur.statusCreditAt.IsZero() {
+			cur.statusCreditAt = now
+		}
 		if cur.Seq == 0 {
 			cur.ENR = ""
 		}
 	}
 	return observed
+}
+
+// ObserveCandidateEL retains a TCP-capable execution endpoint whose ENR could not
+// be resolved, so the normal fingerprint schedule drives its Status probes instead
+// of the one-attempt-per-window legacy gate. The record is unsigned and unverified:
+// it earns no discovery provenance (HasV4/HasV5), no LastResolved, no stored ENR,
+// and no eviction rights, so it cannot publish or displace signed records. limit
+// caps retained candidates; callers disable the feature by not calling this at all.
+func (s *Set) ObserveCandidateEL(n *enode.Node, now time.Time, limit int) Observation {
+	if reject := addressReject(n); reject != "" {
+		return Observation{Reject: reject}
+	}
+	e := extract(n)
+	if e.ip == "" && e.ip6 == "" {
+		return Observation{Reject: "no_address"}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	id := n.ID()
+	if cur, ok := s.m[id]; ok {
+		cur.LastSeen = now
+		cur.LastCheck = now
+		if cur.fpDone && !cur.fpRefreshDue && (cur.fpAt.IsZero() || now.Sub(cur.fpAt) >= fpRefreshAge) {
+			// Promoted seq-0 rows are re-observed only through this path, which
+			// bypasses observe's refresh arming; without this they never revalidate.
+			cur.fpRefreshDue = true
+		}
+		if !cur.isELCandidate() {
+			// A promoted unsigned row is published, so an unsigned sighting must not
+			// rewrite its endpoint. Report the change instead: the caller dial-verifies
+			// the fresh sighting through the legacy path and only an authenticated
+			// Status records the move, matching the pre-retention behavior.
+			changed := false
+			if cur.Seq == 0 && cur.ENR == "" {
+				changed, _ = fingerprintRefreshReasons(cur, e, now)
+			}
+			return Observation{Accepted: true, Changed: changed}
+		}
+		// Endpoint updates from an unsigned sighting steer only the next scheduled
+		// dial; retry state stays put so endpoint rotation cannot re-arm the 1m rung,
+		// and a signed record is never overwritten by an unsigned one.
+		if cur.Seq == 0 && cur.ENR == "" {
+			if recordChanged, _ := fingerprintRefreshReasons(cur, e, now); recordChanged && cur.fpInFlight {
+				cur.fpRefresh = true
+			}
+			cur.Enode = e.enode
+			cur.IP, cur.IP6, cur.TCP, cur.UDP = e.ip, e.ip6, e.tcp, e.udp
+			cur.TCP6, cur.UDP6, cur.QUIC, cur.QUIC6 = e.tcp6, e.udp6, e.quic, e.quic6
+		}
+		return Observation{Accepted: true, Applied: true}
+	}
+	if s.max > 0 && len(s.m) >= s.max {
+		return Observation{Reject: "capacity"}
+	}
+	if limit > 0 && s.candidates >= limit {
+		return Observation{Reject: "candidate_cap"}
+	}
+	cur := &Node{ID: id, FirstSeen: now, LastSeen: now, LastCheck: now, Score: scoreInit, Layer: "el"}
+	cur.Enode, cur.Seq = e.enode, e.seq
+	cur.IP, cur.IP6, cur.TCP, cur.UDP = e.ip, e.ip6, e.tcp, e.udp
+	cur.TCP6, cur.UDP6, cur.QUIC, cur.QUIC6 = e.tcp6, e.udp6, e.quic, e.quic6
+	if !cur.fingerprintable() {
+		return Observation{Reject: "no_address"}
+	}
+	s.m[id] = cur
+	s.candidates++
+	return Observation{Accepted: true, Applied: true, New: true}
 }
 
 func (s *Set) observe(n *enode.Node, via string, now time.Time, forceNetwork, forceLayer string, failedResolution, pin bool) Observation {
@@ -316,7 +421,7 @@ func (s *Set) observe(n *enode.Node, via string, now time.Time, forceNetwork, fo
 	s.mu.Lock()
 	if cur := s.m[n.ID()]; cur != nil && n.Seq() < cur.Seq {
 		if touchObservationLocked(cur, via, now, true, failedResolution, pin) {
-			delete(s.m, n.ID())
+			s.deleteLocked(n.ID())
 		}
 		s.mu.Unlock()
 		return Observation{Accepted: true}
@@ -340,6 +445,7 @@ func (s *Set) observe(n *enode.Node, via string, now time.Time, forceNetwork, fo
 
 	id := n.ID()
 	cur, ok := s.m[id]
+	wasCandidate := ok && cur.isELCandidate()
 	var evicted int
 	var evictedClass string
 	if !ok {
@@ -367,7 +473,7 @@ func (s *Set) observe(n *enode.Node, via string, now time.Time, forceNetwork, fo
 		s.m[id] = cur
 	}
 	if touchObservationLocked(cur, via, now, ok, failedResolution, pin) {
-		delete(s.m, id)
+		s.deleteLocked(id)
 		return Observation{Accepted: true, Evicted: evicted, EvictedClass: evictedClass}
 	}
 	// Signed ENR sequence numbers are monotonic. A stale DHT-cached record is
@@ -424,7 +530,78 @@ func (s *Set) observe(n *enode.Node, via string, now time.Time, forceNetwork, fo
 	if cur.Client == "" && e.client != "" {
 		cur.Client, cur.ClientVersion = e.client, e.version
 	}
+	s.trackCandidateLocked(wasCandidate, cur.isELCandidate())
 	return Observation{Accepted: true, Applied: true, Changed: changed, New: !ok, Evicted: evicted, EvictedClass: evictedClass}
+}
+
+// SetExecutionCandidateLayer marks a retained layerless record with an
+// RLPx-capable endpoint as an execution candidate, so the normal fingerprint
+// schedule can attempt Status classification (a valid signed ENR can still omit
+// the eth fork entry; Nimbus EL is one example). limit is the same candidate cap
+// ObserveCandidateEL enforces; a conversion counts against it like an admission.
+func (s *Set) SetExecutionCandidateLayer(id enode.ID, limit int) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := s.m[id]
+	if n == nil || n.Layer != "" {
+		return false
+	}
+	if limit > 0 && s.candidates >= limit && n.Network == "" {
+		return false
+	}
+	n.Layer = "el"
+	if !n.fingerprintable() {
+		n.Layer = ""
+		return false
+	}
+	s.trackCandidateLocked(false, n.isELCandidate())
+	return true
+}
+
+// SetCandidateClient retains a Hello-proven client identity on an unclassified
+// execution candidate without marking it verified: a fpDone candidate would occupy
+// the never-evicted verified class forever and stop retrying the Status exchange.
+func (s *Set) SetCandidateClient(id enode.ID, client, version, os, lang, caps, direction string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := s.m[id]
+	if n == nil || n.Network != "" {
+		return false
+	}
+	n.Client, n.ClientVersion, n.OS, n.Lang, n.Capabilities = client, version, os, lang, caps
+	n.FPDirection = direction
+	return true
+}
+
+func (s *Set) CountELCandidates() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.candidates
+}
+
+type FingerprintState struct {
+	Status   string
+	Attempts int32
+}
+
+// CandidateFingerprintStates reports the fingerprint state of every unclassified
+// execution candidate. State gauges cannot use SnapshotNetworks for these rows:
+// its network filter excludes every Network=="" record.
+func (s *Set) CandidateFingerprintStates() []FingerprintState {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]FingerprintState, 0, s.candidates)
+	for _, n := range s.m {
+		if !n.isELCandidate() {
+			continue
+		}
+		attempts := n.fpAttempts
+		if n.fpInFlight && attempts > 0 {
+			attempts--
+		}
+		out = append(out, FingerprintState{Status: n.fpStatus(), Attempts: int32(attempts)})
+	}
+	return out
 }
 
 func (s *Set) CountUnclassified() int {
@@ -514,6 +691,7 @@ type fingerprintCandidate struct {
 	due        time.Time
 	score      int
 	id         enode.ID
+	unpromoted bool
 }
 
 func fingerprintCandidateBetter(a, b fingerprintCandidate) bool {
@@ -548,14 +726,19 @@ func (h *fingerprintCandidateHeap) Pop() any {
 // FingerprintCandidates returns retained records whose retry delay has elapsed.
 // Candidates are ordered by earliest effective due time, then highest score, then
 // ID so a hard limit cannot starve a fixed map-iteration subset under load.
+// unpromotedLimit caps the unclassified execution candidates per batch (0 = none).
+// The two populations are selected into separate bounded heaps: a due-candidate
+// backlog larger than the batch would otherwise fill the whole selection and
+// starve the primary fingerprint path for as long as the backlog persists.
 // ClaimFingerprintAt must still be called before enqueueing: another discovery
 // worker may reserve the same node after this read-only scan.
-func (s *Set) FingerprintCandidates(now time.Time, limit int) []*enode.Node {
+func (s *Set) FingerprintCandidates(now time.Time, limit, unpromotedLimit int) []*enode.Node {
 	if limit <= 0 {
 		return nil
 	}
 	s.mu.RLock()
 	selected := make(fingerprintCandidateHeap, 0, min(limit, len(s.m)))
+	unpromoted := make(fingerprintCandidateHeap, 0, min(max(unpromotedLimit, 0), len(s.m)))
 	for _, n := range s.m {
 		if !n.fingerprintDue(now) {
 			continue
@@ -564,18 +747,28 @@ func (s *Set) FingerprintCandidates(now time.Time, limit int) []*enode.Node {
 		if due.IsZero() {
 			due = n.FirstSeen
 		}
-		candidate := fingerprintCandidate{enr: n.ENR, enode: n.Enode, due: due, score: n.Score, id: n.ID}
-		if len(selected) < limit {
-			heap.Push(&selected, candidate)
-		} else if fingerprintCandidateBetter(candidate, selected[0]) {
-			selected[0] = candidate
-			heap.Fix(&selected, 0)
+		candidate := fingerprintCandidate{enr: n.ENR, enode: n.Enode, due: due, score: n.Score, id: n.ID, unpromoted: n.isELCandidate()}
+		h, capacity := &selected, limit
+		if candidate.unpromoted {
+			h, capacity = &unpromoted, unpromotedLimit
+		}
+		if capacity <= 0 {
+			continue
+		}
+		if len(*h) < capacity {
+			heap.Push(h, candidate)
+		} else if fingerprintCandidateBetter(candidate, (*h)[0]) {
+			(*h)[0] = candidate
+			heap.Fix(h, 0)
 		}
 	}
 	s.mu.RUnlock()
 
-	raw := []fingerprintCandidate(selected)
+	raw := append([]fingerprintCandidate(selected), unpromoted...)
 	sort.Slice(raw, func(i, j int) bool { return fingerprintCandidateBetter(raw[i], raw[j]) })
+	if len(raw) > limit {
+		raw = raw[:limit]
+	}
 
 	out := make([]*enode.Node, 0, len(raw))
 	for _, c := range raw {
@@ -719,8 +912,10 @@ func (s *Set) SetExecutionStatusAt(id enode.ID, network string, fork forkid.ID, 
 	if n == nil || n.Layer != "el" || network == "" {
 		return false
 	}
+	creditStatusSightingLocked(n, network, now)
 	// Authenticated live Status is authoritative over discovery metadata, which
 	// may outlive an operator repurposing the same node key on another network.
+	s.trackCandidateLocked(n.isELCandidate(), false)
 	n.Network = network
 	n.ForkHash = hex.EncodeToString(fork.Hash[:])
 	n.ForkNext = fork.Next
@@ -730,6 +925,24 @@ func (s *Set) SetExecutionStatusAt(id enode.ID, network string, fork forkid.ID, 
 	n.ForkObservedAt = now
 	n.LastResolved = now
 	return true
+}
+
+// creditStatusSightingLocked counts a repeated authenticated Status for the same
+// network as an evidence sighting, so an inbound-only unsigned identity can meet
+// snapshotEligible's second-sighting bar. Credit anchors to the previous credited
+// sighting rather than sliding with each Status, and requires statusReverifyGap
+// between credits so a scanner's back-to-back connects earn one sighting, not two.
+func creditStatusSightingLocked(n *Node, network string, now time.Time) {
+	if n.MembershipSource == "status" && n.Network == network &&
+		!n.statusCreditAt.IsZero() && now.Sub(n.statusCreditAt) >= statusReverifyGap {
+		if n.Score < scoreCap {
+			n.Score++
+		}
+		n.statusCreditAt = now
+	}
+	if n.statusCreditAt.IsZero() || n.Network != network {
+		n.statusCreditAt = now
+	}
 }
 
 // SetConsensusStatus mirrors SetExecutionStatus for consensus Status results.
@@ -744,6 +957,7 @@ func (s *Set) SetConsensusStatusAt(id enode.ID, network, forkHash string, now ti
 	if n == nil || n.Layer != "cl" || network == "" {
 		return false
 	}
+	creditStatusSightingLocked(n, network, now)
 	n.Network = network
 	if forkHash != "" {
 		n.ForkHash = forkHash
@@ -903,7 +1117,7 @@ func (s *Set) Penalize(id enode.ID, now time.Time) {
 		return
 	}
 	if penalizeLocked(cur) {
-		delete(s.m, id)
+		s.deleteLocked(id)
 	}
 }
 
@@ -920,7 +1134,7 @@ func (s *Set) PruneStaleWithVerified(cutoff, verifiedCutoff time.Time) int {
 			stale = !verifiedCutoff.IsZero() && (n.LastResolved.IsZero() || n.LastResolved.Before(verifiedCutoff))
 		}
 		if !n.pinned && stale {
-			delete(s.m, id)
+			s.deleteLocked(id)
 			removed++
 		}
 	}
@@ -1238,6 +1452,8 @@ func (s *Set) Ingest(rows []Row) (dropped, evicted int) {
 			}
 			evicted += n
 		}
+		prev := s.m[id]
+		s.trackCandidateLocked(prev != nil && prev.isELCandidate(), candidate.isELCandidate())
 		s.m[id] = candidate
 	}
 	return dropped, evicted

@@ -101,6 +101,11 @@ export default function NodeDetail() {
     (fpHint[node.fp_status] ?? node.fp_status)
   );
 
+  const lastContacted = Math.max(
+    node.last_resolved || 0,
+    node.membership_verified_at || 0,
+    node.fingerprint_at || 0,
+  );
   const loc = [node.city, node.subdivision, node.country]
     .filter(Boolean)
     .join(", ");
@@ -209,10 +214,14 @@ export default function NodeDetail() {
             }
           />
           <Row label="First seen" value={relTime(node.first_seen)} />
-          <Row label="Last seen" value={relTime(node.last_seen)} />
+          <Row label="Last discovered" value={relTime(node.last_seen)} />
           <Row
             label="Last resolved"
             value={node.last_resolved ? relTime(node.last_resolved) : "-"}
+          />
+          <Row
+            label="Last contacted"
+            value={lastContacted ? relTime(lastContacted) : "-"}
           />
           <Row label="Pinned" value={node.pinned ? "Yes" : "No"} />
         </div>

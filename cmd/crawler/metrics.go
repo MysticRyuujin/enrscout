@@ -8,6 +8,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
+	"github.com/MysticRyuujin/enrscout/internal/clientname"
 	"github.com/MysticRyuujin/enrscout/internal/distinct"
 	"github.com/MysticRyuujin/enrscout/internal/enrich"
 	"github.com/MysticRyuujin/enrscout/internal/nodeset"
@@ -106,6 +107,18 @@ var (
 		Name: "enrscout_crawler_legacy_el_deferrals_total",
 		Help: "Legacy EL outbound probes deferred and left to inbound identification, by bounded reason.",
 	}, []string{"reason"})
+	mCandidateAdmissions = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "enrscout_crawler_el_candidate_admissions_total",
+		Help: "Unresolved execution candidates offered to bounded nodeset retention, by outcome (admitted or the bounded rejection reason).",
+	}, []string{"outcome"})
+	mCandidateNodes = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "enrscout_crawler_el_candidates",
+		Help: "Retained unclassified execution candidates awaiting Status classification.",
+	})
+	mCandidateClients = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "enrscout_crawler_el_candidate_clients_total",
+		Help: "Hello-proven client families observed on unclassified execution candidates, by bounded client and outcome (hello_only|promoted).",
+	}, []string{"client", "outcome"})
 	mInvalidRecords = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "enrscout_crawler_invalid_records_total",
 		Help: "Observations rejected before retention, by bounded reason.",
@@ -274,7 +287,7 @@ func observeFingerprintFailure(layer, direction, network, phase string, err erro
 	return reason
 }
 
-func updateFingerprintStateMetrics(byNetwork map[string][]nodeset.Row) {
+func updateFingerprintStateMetrics(byNetwork map[string][]nodeset.Row, candidates []nodeset.FingerprintState) {
 	mFingerprintNodes.Reset()
 	mFingerprintAttemptNodes.Reset()
 	for _, rows := range byNetwork {
@@ -286,6 +299,21 @@ func updateFingerprintStateMetrics(byNetwork map[string][]nodeset.Row) {
 			mFingerprintAttemptNodes.WithLabelValues(row.Layer, fingerprintAttemptBucket(row.FPAttempts)).Inc()
 		}
 	}
+	for _, c := range candidates {
+		mFingerprintNodes.WithLabelValues("el_candidate", c.Status).Inc()
+		mFingerprintAttemptNodes.WithLabelValues("el_candidate", fingerprintAttemptBucket(c.Attempts)).Inc()
+	}
+}
+
+// candidateClientBucket keeps the candidate client label bounded: a peer-chosen
+// name earns its own series only when this repository recognizes the family,
+// mirroring dnspublisher's clientBucket.
+func candidateClientBucket(name string) string {
+	canonical := clientname.Canonical("el", name)
+	if !clientname.Recognized(canonical) {
+		return "unknown"
+	}
+	return canonical
 }
 
 func updateDistinctMetrics(state *distinct.State, now time.Time) {

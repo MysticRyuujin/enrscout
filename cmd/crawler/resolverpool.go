@@ -184,6 +184,15 @@ func (p *resolverPool) resolve(d discovered) {
 		} else if cached, ok := cr.pending.Take(n.ID(), layerEL, time.Now()); ok && cached.Network != "" {
 			cr.applyLegacyFingerprint(n, d.via, "inbound", cached)
 			return
+		} else if cr.retainCandidate(n, time.Now()) {
+			// Retained candidates ride the normal fingerprint schedule; the 5s
+			// retry loop owns their dialing, so a re-sighting enqueues nothing.
+			// Take above consumed any cached Hello-only inbound result, so its
+			// client identity must be carried onto the candidate here or lost.
+			if ok && cached.Client != "" {
+				set.SetCandidateClient(n.ID(), cached.Client, cached.Version, cached.OS, cached.Lang, cached.Caps, "inbound")
+			}
+			return
 		} else if disposition := cr.enqueueLegacyFingerprint(n, d.via); disposition == legacyFingerprintUnavailable {
 			mResolveFailures.Inc()
 			set.Penalize(n.ID(), time.Now())
@@ -233,9 +242,16 @@ func (p *resolverPool) resolve(d discovered) {
 	}
 	// A valid, freshly resolved ENR can still omit the eth fork-ID
 	// entry (Nimbus EL is one example). TCP alone is not enough to
-	// classify it, but it is enough to attempt the existing bounded
-	// RLPx Status path; only authenticated Status can publish it.
+	// classify it, but it is enough to attempt the RLPx Status path;
+	// only authenticated Status can publish it.
 	if layer == "" && nodeset.HasExecutionTCP(rn) {
+		if conf.maxLegacyCandidates > 0 {
+			set.SetExecutionCandidateLayer(rn.ID(), conf.maxLegacyCandidates)
+			if set.LayerOf(rn.ID()) == "el" {
+				cr.enqueueFingerprint(rn, observedAt)
+				return
+			}
+		}
 		cr.enqueueLegacyFingerprint(rn, via)
 		return
 	}
