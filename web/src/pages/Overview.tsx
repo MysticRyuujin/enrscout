@@ -16,6 +16,7 @@ import {
   topN,
 } from "../theme";
 import {
+  pointCGC,
   pointClient,
   pointHosting,
   pointIPv6,
@@ -33,6 +34,7 @@ const MAP_PREDICATES: Record<string, (p: MapPoint) => boolean> = {
   ipv6: pointIPv6,
   cloud: pointHosting,
   verified: pointVerified,
+  supernode: (p) => pointCGC(p) >= 128,
 };
 
 function identifiedCoverage(
@@ -108,8 +110,33 @@ export default function Overview() {
       const next: TileFilter =
         cur === null ? "only" : cur === "only" ? "hide" : null;
       const out = { ...f, [key]: next };
-      if (next && key === "el") out.cl = null;
+      if (next && key === "el") {
+        out.cl = null;
+        out.supernode = null;
+      }
       if (next && key === "cl") out.el = null;
+      return out;
+    });
+
+  // Easter egg: the consensus tile has a fourth stop, supernodes (cgc >= 128).
+  const cycleConsensusFilter = () =>
+    setMapFilters((f) => {
+      const out: Record<string, TileFilter> = {
+        ...f,
+        el: null,
+        supernode: null,
+      };
+      if (f.supernode) {
+        out.cl = "hide";
+      } else if (f.cl === "only") {
+        out.cl = "only";
+        out.supernode = "only";
+      } else if (f.cl === "hide") {
+        out.cl = null;
+        out.el = f.el ?? null;
+      } else {
+        out.cl = "only";
+      }
       return out;
     });
 
@@ -363,7 +390,10 @@ export default function Overview() {
               label: "consensus identities",
               value: stats.consensus,
               filter: mapFilters.cl ?? null,
-              onFilter: () => cycleFilter("cl"),
+              onFilter: cycleConsensusFilter,
+              stateLabelOverride: mapFilters.supernode
+                ? "✨ supernodes"
+                : undefined,
             },
             { label: "discv5", value: stats.discv5 },
             { label: "discv4", value: stats.discv4 },

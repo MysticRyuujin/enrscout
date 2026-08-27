@@ -75,6 +75,29 @@ func TestAncientForkDoesNotClassify(t *testing.T) {
 	}
 }
 
+func TestCGCEntryUint32(t *testing.T) {
+	cases := []struct {
+		name  string
+		bytes []byte
+		want  uint32
+		ok    bool
+	}{
+		{"empty is zero", nil, 0, true},
+		{"minimal", []byte{0x08}, 8, true},
+		{"supernode", []byte{0x80}, 128, true},
+		{"multi byte", []byte{0x01, 0x00}, 256, true},
+		{"fixed width with leading zeros", []byte{0, 0, 0, 0, 0, 0, 0, 0x80}, 128, true},
+		{"four bytes", []byte{0xff, 0xff, 0xff, 0xff}, 0xffffffff, true},
+		{"wider than 32 bits", []byte{0x01, 0, 0, 0, 0}, 0, false},
+	}
+	for _, tc := range cases {
+		got, ok := CGCEntry(tc.bytes).Uint32()
+		if got != tc.want || ok != tc.ok {
+			t.Errorf("%s: got (%d, %v), want (%d, %v)", tc.name, got, ok, tc.want, tc.ok)
+		}
+	}
+}
+
 func TestMembershipIgnoresForkNext(t *testing.T) {
 	n, _ := Get("mainnet")
 	at := time.Now()

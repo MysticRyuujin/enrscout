@@ -506,7 +506,10 @@ func shutdown(resolvers *resolverPool, loops *backgroundLoops, pool *fingerprint
 // A manifest read error is fatal: continuing with prev=nil would disable the
 // collapse guard and let the first publish overwrite the manifest with a near-empty set.
 func restore(ctx context.Context, st store.Store, layout snapshot.Layout, set *nodeset.Set, geo *enrich.Geo, networks []string) (*snapshot.Manifest, error) {
-	const subdivisionSchemaVersion = 2
+	const (
+		subdivisionSchemaVersion = 2
+		cgcSchemaVersion         = 3
+	)
 	m, err := snapshot.Read(ctx, st, layout)
 	if errors.Is(err, snapshot.ErrNoManifest) {
 		return nil, nil
@@ -539,6 +542,21 @@ func restore(ctx context.Context, st store.Store, layout snapshot.Layout, set *n
 				}
 				if result := geo.Lookup(ip); result.Geolocated {
 					rows[i].Subdivision = result.Subdivision
+				}
+			}
+		}
+		if m.SchemaVersion < cgcSchemaVersion {
+			for i := range rows {
+				if rows[i].Layer != "cl" || rows[i].ENR == "" {
+					continue
+				}
+				n, err := enode.Parse(enode.ValidSchemes, rows[i].ENR)
+				if err != nil {
+					continue
+				}
+				var cgc netconf.CGCEntry
+				if n.Load(&cgc) == nil {
+					rows[i].CGC, rows[i].CGCKnown = cgc.Uint32()
 				}
 			}
 		}

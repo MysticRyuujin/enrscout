@@ -9,6 +9,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -22,6 +23,7 @@ import (
 )
 
 const columns = `id, enode, enr, seq, ip, ip6, tcp, udp, tcp6, udp6, quic, quic6, network, fork_hash, fork_next, layer,
+	coalesce(cgc, 0), coalesce(cgc_known, false),
 	has_v4, has_v5, score, first_seen, last_seen, last_check,
 	coalesce(last_resolved, 0),
 	client, client_version, os, lang, capabilities, country, city, coalesce(subdivision, ''), lat, lon, asn, org, hosting, coalesce(hosting_known, false), fp_status, coalesce(fp_at, 0),
@@ -53,6 +55,8 @@ var sortColumns = map[string]sortSpec{
 	"client":     {columns: []string{"lower(client)", "lower(client_version)", "id"}, defaultOrder: "asc"},
 	// Useful to multi-network API consumers, though the single-network web UI omits it.
 	"network": {columns: []string{"network", "score", "id"}, defaultOrder: "asc"},
+	// Rows without a decodable cgc sort as zero.
+	"cgc": {columns: []string{"coalesce(cgc, 0)", "score", "id"}, defaultOrder: "desc"},
 }
 
 func ValidSort(value string) bool {
@@ -89,7 +93,20 @@ func (f Filter) validate() error {
 			return fmt.Errorf("invalid %s %q", e.name, value)
 		}
 	}
+	for name, value := range map[string]string{"cgc_min": f.CGCMin, "cgc_max": f.CGCMax} {
+		if value == "" {
+			continue
+		}
+		if _, err := parseCGC(value); err != nil {
+			return fmt.Errorf("invalid %s %q", name, value)
+		}
+	}
 	return nil
+}
+
+func parseCGC(s string) (uint32, error) {
+	v, err := strconv.ParseUint(s, 10, 32)
+	return uint32(v), err
 }
 
 func sortExpression(name, order string) string {
@@ -126,6 +143,8 @@ type Node struct {
 	ForkNext       uint64 `json:"fork_next,string"`
 	ForkCompatible bool   `json:"fork_compatible"`
 	Layer          string `json:"layer"`
+	CGC            uint32 `json:"cgc"`
+	CGCKnown       bool   `json:"cgc_known"`
 	HasV4          bool   `json:"has_v4"`
 	HasV5          bool   `json:"has_v5"`
 	Score          int    `json:"score"`
@@ -176,6 +195,8 @@ type Filter struct {
 	Membership  string
 	IP          string
 	Q           string
+	CGCMin      string
+	CGCMax      string
 	Sort        string
 	Order       string
 	Limit       int
@@ -257,6 +278,7 @@ type Point struct {
 	IPv6        bool    `json:"ipv6"`
 	Verified    bool    `json:"verified"`
 	AccuracyKM  uint16  `json:"accuracy_km"`
+	CGC         uint32  `json:"cgc"`
 }
 
 type Engine struct {
@@ -318,6 +340,7 @@ const emptyTableDDL = `CREATE TABLE IF NOT EXISTS nodes (
 	ip VARCHAR, ip6 VARCHAR, tcp INTEGER, udp INTEGER,
 	tcp6 INTEGER, udp6 INTEGER, quic INTEGER, quic6 INTEGER,
 	network VARCHAR, fork_hash VARCHAR, fork_next UBIGINT, layer VARCHAR,
+	cgc UINTEGER, cgc_known BOOLEAN,
 	has_v4 BOOLEAN, has_v5 BOOLEAN, score INTEGER,
 	first_seen BIGINT, last_seen BIGINT, last_check BIGINT,
 	last_resolved BIGINT,
@@ -333,6 +356,12 @@ const emptyTableDDL = `CREATE TABLE IF NOT EXISTS nodes (
 func migrateStagingSchema(ctx context.Context, db *sql.DB) error {
 	if _, err := db.ExecContext(ctx, "ALTER TABLE nodes_staging ADD COLUMN IF NOT EXISTS subdivision VARCHAR DEFAULT ''"); err != nil {
 		return fmt.Errorf("add subdivision snapshot column: %w", err)
+	}
+	if _, err := db.ExecContext(ctx, "ALTER TABLE nodes_staging ADD COLUMN IF NOT EXISTS cgc UINTEGER DEFAULT 0"); err != nil {
+		return fmt.Errorf("add cgc snapshot column: %w", err)
+	}
+	if _, err := db.ExecContext(ctx, "ALTER TABLE nodes_staging ADD COLUMN IF NOT EXISTS cgc_known BOOLEAN DEFAULT false"); err != nil {
+		return fmt.Errorf("add cgc_known snapshot column: %w", err)
 	}
 	return nil
 }
@@ -629,6 +658,18 @@ func (f Filter) where(networks []string) (string, []any, error) {
 		pattern := "%" + literal + "%"
 		conds = append(conds, "(lower(id) LIKE lower(?) ESCAPE '$' OR lower(ip) LIKE lower(?) ESCAPE '$' OR lower(ip6) LIKE lower(?) ESCAPE '$' OR lower(enode) LIKE lower(?) ESCAPE '$' OR lower(enr) LIKE lower(?) ESCAPE '$')")
 		args = append(args, pattern, pattern, pattern, pattern, pattern)
+	}
+	if f.CGCMin != "" {
+		if v, err := parseCGC(f.CGCMin); err == nil {
+			conds = append(conds, "coalesce(cgc_known, false) AND coalesce(cgc, 0) >= ?")
+			args = append(args, v)
+		}
+	}
+	if f.CGCMax != "" {
+		if v, err := parseCGC(f.CGCMax); err == nil {
+			conds = append(conds, "coalesce(cgc_known, false) AND coalesce(cgc, 0) <= ?")
+			args = append(args, v)
+		}
 	}
 	if len(conds) == 0 {
 		return "", args, nil
@@ -1008,7 +1049,7 @@ func (e *Engine) MapPointsForMembershipAt(ctx context.Context, network, membersh
 	// Unverified ENR-declared client names render as unknown, matching the identified-only methodology.
 	chartCond, chartCutoff := chartFingerprintConditionAt(at)
 	args = append([]any{chartCutoff}, args...)
-	base := "SELECT id, lat, lon, CASE WHEN " + chartCond + " THEN client ELSE '' END AS client, network, country, city, coalesce(subdivision, ''), layer, hosting, (ip6 <> '') AS ipv6, (membership_source = 'status') AS verified, coalesce(geo_accuracy_radius_km, 0) AS accuracy_km FROM nodes"
+	base := "SELECT id, lat, lon, CASE WHEN " + chartCond + " THEN client ELSE '' END AS client, network, country, city, coalesce(subdivision, ''), layer, hosting, (ip6 <> '') AS ipv6, (membership_source = 'status') AS verified, coalesce(geo_accuracy_radius_km, 0) AS accuracy_km, CASE WHEN coalesce(cgc_known, false) THEN coalesce(cgc, 0) ELSE 0 END AS cgc FROM nodes"
 	geo := "geolocated"
 	if clause == "" {
 		clause = " WHERE " + geo
@@ -1033,7 +1074,7 @@ func (e *Engine) MapPointsForMembershipAt(ctx context.Context, network, membersh
 	pts := make([]Point, 0, min(total, MaxMapPoints))
 	for rows.Next() {
 		var p Point
-		if err := rows.Scan(&p.ID, &p.Lat, &p.Lon, &p.Client, &p.Network, &p.Country, &p.City, &p.Subdivision, &p.Layer, &p.Hosting, &p.IPv6, &p.Verified, &p.AccuracyKM); err != nil {
+		if err := rows.Scan(&p.ID, &p.Lat, &p.Lon, &p.Client, &p.Network, &p.Country, &p.City, &p.Subdivision, &p.Layer, &p.Hosting, &p.IPv6, &p.Verified, &p.AccuracyKM, &p.CGC); err != nil {
 			return nil, 0, err
 		}
 		pts = append(pts, p)
@@ -1083,6 +1124,7 @@ func scanNodes(rows *sql.Rows, at time.Time) ([]Node, error) {
 		var n Node
 		if err := rows.Scan(
 			&n.ID, &n.Enode, &n.ENR, &n.Seq, &n.IP, &n.IP6, &n.TCP, &n.UDP, &n.TCP6, &n.UDP6, &n.QUIC, &n.QUIC6, &n.Network, &n.ForkHash, &n.ForkNext, &n.Layer,
+			&n.CGC, &n.CGCKnown,
 			&n.HasV4, &n.HasV5, &n.Score, &n.FirstSeen, &n.LastSeen, &n.LastCheck,
 			&n.LastResolved, &n.Client, &n.ClientVersion, &n.OS, &n.Lang, &n.Capabilities, &n.Country, &n.City, &n.Subdivision, &n.Lat, &n.Lon, &n.ASN, &n.Org, &n.Hosting, &n.HostingKnown, &n.FPStatus, &n.FingerprintAt,
 			&n.Geolocated, &n.GeoAccuracyRadiusKM, &n.MembershipSource, &n.MembershipVerifiedAt, &n.ForkSource, &n.ForkObservedAt,

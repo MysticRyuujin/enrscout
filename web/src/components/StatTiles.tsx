@@ -10,6 +10,7 @@ export interface Tile {
   onFilter?: () => void;
   title?: string;
   stateLabels?: { only: string; hide: string };
+  stateLabelOverride?: string;
 }
 
 export default function StatTiles({ tiles }: { tiles: Tile[] }) {
@@ -26,20 +27,26 @@ export default function StatTiles({ tiles }: { tiles: Tile[] }) {
           >
             <span className="tile-num">{num(t.value)}</span>
             <span className="tile-lbl">{t.label}</span>
-            {t.filter && (
+            {t.filter ? (
               <span className="tile-state">
-                {t.filter === "only"
-                  ? (t.stateLabels?.only ?? "map: only these")
-                  : (t.stateLabels?.hide ?? "map: hidden")}
+                {t.stateLabelOverride ??
+                  (t.filter === "only"
+                    ? (t.stateLabels?.only ?? "map: only these")
+                    : (t.stateLabels?.hide ?? "map: hidden"))}
+              </span>
+            ) : (
+              <span className="tile-hint" aria-hidden={!t.hint}>
+                {t.hint ?? "\u00A0"}
               </span>
             )}
-            {t.hint && !t.filter && <span className="tile-hint">{t.hint}</span>}
           </button>
         ) : (
           <div className="tile" key={t.label}>
             <span className="tile-num">{num(t.value)}</span>
             <span className="tile-lbl">{t.label}</span>
-            {t.hint && <span className="tile-hint">{t.hint}</span>}
+            <span className="tile-hint" aria-hidden={!t.hint}>
+              {t.hint ?? "\u00A0"}
+            </span>
           </div>
         ),
       )}

@@ -50,6 +50,21 @@ type CGCEntry []byte
 
 func (CGCEntry) ENRKey() string { return "cgc" }
 
+// Uint32 decodes the Fulu custody group count: big-endian, zero as an empty
+// byte string. Leading zeros are tolerated (some clients write fixed-width);
+// a value wider than 32 bits is undecodable, never truncated.
+func (e CGCEntry) Uint32() (uint32, bool) {
+	b := bytes.TrimLeft(e, "\x00")
+	if len(b) > 4 {
+		return 0, false
+	}
+	var v uint32
+	for _, c := range b {
+		v = v<<8 | uint32(c)
+	}
+	return v, true
+}
+
 type NFDEntry []byte
 
 func (NFDEntry) ENRKey() string { return "nfd" }

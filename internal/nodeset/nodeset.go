@@ -71,6 +71,8 @@ type Node struct {
 	ForkHash     string
 	ForkNext     uint64
 	Layer        string
+	CGC          uint32
+	CGCKnown     bool
 	HasV4        bool
 	HasV5        bool
 	Score        int
@@ -508,6 +510,7 @@ func (s *Set) observe(n *enode.Node, via string, now time.Time, forceNetwork, fo
 	cur.Enode, cur.ENR, cur.Seq = e.enode, e.enr, e.seq
 	cur.IP, cur.IP6, cur.TCP, cur.UDP = e.ip, e.ip6, e.tcp, e.udp
 	cur.TCP6, cur.UDP6, cur.QUIC, cur.QUIC6 = e.tcp6, e.udp6, e.quic, e.quic6
+	cur.CGC, cur.CGCKnown = e.cgc, e.cgcKnown
 	// A later, less-informative observation must not downgrade an established classification.
 	if e.forkHash != "" && (cur.ForkHash != e.forkHash || cur.ForkNext != e.forkNext || cur.ForkSource == "") {
 		cur.ForkHash, cur.ForkNext = e.forkHash, e.forkNext
@@ -1151,6 +1154,8 @@ type extracted struct {
 	network, forkHash string
 	forkNext          uint64
 	layer             string
+	cgc               uint32
+	cgcKnown          bool
 	client, version   string
 }
 
@@ -1225,6 +1230,10 @@ func extract(n *enode.Node) extracted {
 	case loadedEth2 || loadedAtt:
 		e.layer = "cl"
 		e.enode = ""
+		var cgc netconf.CGCEntry
+		if n.Load(&cgc) == nil {
+			e.cgc, e.cgcKnown = cgc.Uint32()
+		}
 		if loadedEth2 && len(eth2) >= 4 {
 			var d [4]byte
 			copy(d[:], eth2[:4])
@@ -1272,6 +1281,8 @@ type Row struct {
 	ForkHash             string  `parquet:"fork_hash"`
 	ForkNext             uint64  `parquet:"fork_next"`
 	Layer                string  `parquet:"layer"`
+	CGC                  uint32  `parquet:"cgc"`
+	CGCKnown             bool    `parquet:"cgc_known"`
 	HasV4                bool    `parquet:"has_v4"`
 	HasV5                bool    `parquet:"has_v5"`
 	Score                int32   `parquet:"score"`
@@ -1360,6 +1371,7 @@ func (n *Node) row() Row {
 		IP: n.IP, IP6: n.IP6, TCP: int32(n.TCP), UDP: int32(n.UDP),
 		TCP6: int32(n.TCP6), UDP6: int32(n.UDP6), QUIC: int32(n.QUIC), QUIC6: int32(n.QUIC6),
 		Network: n.Network, ForkHash: n.ForkHash, ForkNext: n.ForkNext, Layer: n.Layer,
+		CGC: n.CGC, CGCKnown: n.CGCKnown,
 		HasV4: n.HasV4, HasV5: n.HasV5, Score: int32(n.Score),
 		FirstSeen: n.FirstSeen.Unix(), LastSeen: n.LastSeen.Unix(), LastCheck: n.LastCheck.Unix(), LastResolved: unixOrZero(n.LastResolved),
 		Client: n.Client, Version: n.ClientVersion, OS: n.OS, Lang: n.Lang, Caps: n.Capabilities,
@@ -1431,6 +1443,7 @@ func (s *Set) Ingest(rows []Row) (dropped, evicted int) {
 			IP: r.IP, IP6: r.IP6, TCP: int(r.TCP), UDP: int(r.UDP),
 			TCP6: int(r.TCP6), UDP6: int(r.UDP6), QUIC: int(r.QUIC), QUIC6: int(r.QUIC6),
 			Network: r.Network, ForkHash: r.ForkHash, ForkNext: r.ForkNext, Layer: r.Layer,
+			CGC: r.CGC, CGCKnown: r.CGCKnown,
 			HasV4: r.HasV4, HasV5: r.HasV5, Score: int(r.Score),
 			FirstSeen: time.Unix(r.FirstSeen, 0), LastSeen: time.Unix(r.LastSeen, 0), LastCheck: time.Unix(r.LastCheck, 0), LastResolved: timeOrZero(r.LastResolved),
 			Client: r.Client, ClientVersion: r.Version, OS: r.OS, Lang: r.Lang, Capabilities: r.Caps,

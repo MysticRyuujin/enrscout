@@ -169,6 +169,7 @@ export default function WorldMap({
         first[9],
         first[10],
         first[11],
+        first[12],
       ];
       return {
         key,

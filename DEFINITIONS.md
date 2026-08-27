@@ -112,6 +112,21 @@ multicast, link-local, or private) are never recorded, so they cannot be publish
 `dialable` is about _advertised_ capability, not a live connection check. ENRScout
 does not currently publish a separate transport-reachability result.
 
+## Custody group count (cgc)
+
+- **cgc**: the custody group count a consensus node advertises in its ENR (Fulu /
+  PeerDAS, EIP-7594): how many of the 128 custody groups it stores and serves samples
+  from. On mainnet parameters, custody groups map one-to-one to the 128 data columns.
+  The honest minimum is 4; nodes with attached validators custody more.
+- **Supernode**: a node that advertises `cgc >= 128` and therefore custodies every
+  data column.
+
+The value is self-declared in the signed record and is not verified by sampling. It is
+surfaced as the `cgc` field (with `cgc_known` marking a decodable entry) and the
+`cgc_min`/`cgc_max` filters; execution-layer nodes and pre-Fulu consensus clients have
+no `cgc` entry and never match those filters. An entry wider than 32 bits is recorded
+as undecodable rather than truncated.
+
 ## Coverage
 
 There is no crawl "cycle" with a completion condition: discovery consumes continuous

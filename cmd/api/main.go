@@ -263,7 +263,8 @@ func routes(eng *query.Engine, cors string, maxAge time.Duration, networks []str
 			Layer: q.Get("layer"), Protocol: q.Get("protocol"), IPStack: q.Get("ipstack"), Hosting: q.Get("hosting"),
 			Dialable: q.Get("dialable"), ForkStatus: forkStatus,
 			Membership: q.Get("membership"),
-			IP:         q.Get("ip"), Q: q.Get("q"), Sort: q.Get("sort"), Order: q.Get("order"),
+			IP:         q.Get("ip"), Q: q.Get("q"), CGCMin: q.Get("cgc_min"), CGCMax: q.Get("cgc_max"),
+			Sort: q.Get("sort"), Order: q.Get("order"),
 			Limit: limit, Offset: offset,
 		}
 		res, err := eng.Nodes(r.Context(), f)
@@ -659,7 +660,7 @@ func geoJSON(pts []query.Point) map[string]any {
 			"geometry": map[string]any{"type": "Point", "coordinates": []float64{p.Lon, p.Lat}},
 			"properties": map[string]any{
 				"id": p.ID, "client": p.Client, "network": p.Network, "country": p.Country, "city": p.City, "subdivision": p.Subdivision,
-				"layer": p.Layer, "hosting": p.Hosting, "ipv6": p.IPv6, "verified": p.Verified, "accuracy_km": p.AccuracyKM,
+				"layer": p.Layer, "hosting": p.Hosting, "ipv6": p.IPv6, "verified": p.Verified, "accuracy_km": p.AccuracyKM, "cgc": p.CGC,
 			},
 		})
 	}
@@ -667,13 +668,13 @@ func geoJSON(pts []query.Point) map[string]any {
 }
 
 func compactMap(pts []query.Point) map[string]any {
-	points := make([][12]any, 0, len(pts))
+	points := make([][13]any, 0, len(pts))
 	for _, p := range pts {
 		id := p.ID
 		if len(id) > 16 {
 			id = id[:16]
 		}
-		points = append(points, [12]any{id, p.Lon, p.Lat, p.Client, p.Country, p.City, p.Layer, boolInt(p.Hosting), boolInt(p.IPv6), boolInt(p.Verified), int(p.AccuracyKM), p.Subdivision})
+		points = append(points, [13]any{id, p.Lon, p.Lat, p.Client, p.Country, p.City, p.Layer, boolInt(p.Hosting), boolInt(p.IPv6), boolInt(p.Verified), int(p.AccuracyKM), p.Subdivision, int(p.CGC)})
 	}
 	return map[string]any{"points": points}
 }
@@ -727,7 +728,7 @@ func parseIntParam(s string, def, min, max int) (int, error) {
 	return n, nil
 }
 
-var nodeQueryLimits = map[string]int{"client": 128, "country": 16, "ip": 64, "q": 1024}
+var nodeQueryLimits = map[string]int{"client": 128, "country": 16, "ip": 64, "q": 1024, "cgc_min": 10, "cgc_max": 10}
 
 var nodeQueryAllowed = map[string]map[string]bool{
 	"layer":      {"": true, "el": true, "cl": true},
@@ -751,6 +752,13 @@ func validateNodeQuery(q map[string][]string, known map[string]bool) error {
 	for name, values := range nodeQueryAllowed {
 		if value := first(q[name]); !values[value] {
 			return fmt.Errorf("invalid %s parameter", name)
+		}
+	}
+	for _, name := range []string{"cgc_min", "cgc_max"} {
+		if value := first(q[name]); value != "" {
+			if _, err := strconv.ParseUint(value, 10, 32); err != nil {
+				return fmt.Errorf("invalid %s parameter", name)
+			}
 		}
 	}
 	if !query.ValidSort(first(q["sort"])) {
