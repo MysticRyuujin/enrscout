@@ -33,7 +33,7 @@ publishes the crawler advertiser endpoints on :30303-:30311.
   self-maintain and answer FINDNODE without `RandomNodes` consumption). A global
   `--resolve-rate` token bucket (default 100/s) backpressures the walk readers.
   Advertisers deliberately accept inbound RLPx/libp2p connections and complete
-  Status - that inbound traffic is the primary EL identification path.
+  Status; that inbound traffic is the primary EL identification path.
 - **Capacity is class-prioritized, not FCFS.** At `--max-nodes` the set evicts from
   the lowest class present (fallback → unclassified → classified) before rejecting a
   higher-class candidate; verified/pinned nodes are never evicted
@@ -47,8 +47,8 @@ publishes the crawler advertiser endpoints on :30303-:30311.
 - **Currency is exact, and symmetric across layers.** EL requires the current fork-id hash
   (`netconf.IsCanonicalForkCompatibleAt`) and CL the current digest (`IsCurrentCLForkAt`).
   EIP-2124's acceptance of an earlier era carrying its own canonical `Next` is a
-  connection-admission rule for peers that may still be syncing - the advertised id tracks a
-  node's synced head, not its capability - so it is deliberately not honoured for a
+  connection-admission rule for peers that may still be syncing: the advertised id tracks a
+  node's synced head, not its capability. It is therefore deliberately not honoured for a
   current-fork view. Membership stays separate and hash-only (`Matches`/`gatherHashes`): a
   resyncing mainnet node is still mainnet, just not current. Expect `execution_stale` and
   `consensus_stale` to spike for about one snapshot interval at each transition.
@@ -76,37 +76,37 @@ publishes the crawler advertiser endpoints on :30303-:30311.
   exists for partial-S3 backends, but is only precheck/write/read-back plus a same-host
   identity-directory lock; never aim multiple hosts at a prefix in that mode.
 - **`cmd/dnspublisher`** builds EIP-1459 trees from a validated snapshot using
-  go-ethereum's LGPL `p2p/dnsdisc` (`MakeTree`/`Sign`/`ToTXT`) - output is byte-compatible
+  go-ethereum's LGPL `p2p/dnsdisc` (`MakeTree`/`Sign`/`ToTXT`); output is byte-compatible
   with `devp2p dns` / discv4-crawl. It never gets crawler or signing creds inline; the key
   comes from `--key-file` (hex, or a `devp2p`-format Web3 keystore JSON so the exact
-  discv4-crawl key can be reused — empty passphrase by default, `--key-passphrase-file`
-  otherwise; both files must be mode 0600 or stricter — which keeps the published
-  `enrtree://` URLs identical across the migration).
+  discv4-crawl key can be reused, which keeps the published `enrtree://` URLs identical
+  across the migration; empty passphrase by default, `--key-passphrase-file` otherwise;
+  both files must be mode 0600 or stricter).
   It publishes only _reachable_ nodes, and only records that are themselves well-formed: `enrWellFormed`
   drops a row whose ENR carries a present-but-undecodable `eth`, address or port entry. Both cases are
   real: a node was observed publishing `eth` as the fork-id list wrapped in an extra RLP string, and a
   port above `uint16` is unrepresentable in the typed entry. go-ethereum signs and parses such a record
   and reports the problem only when that one entry is loaded, so a node can stay dialable through
-  another transport and reach the tree. The crawler stays deliberately tolerant of these nodes -
-  classification is sticky in `nodeset.Observe`, so the ENR blob is refreshed while
-  `Layer`/`Network`/`ForkHash` are not - because dropping them would cost coverage and fingerprints. A
+  another transport and reach the tree. The crawler stays deliberately tolerant of these nodes,
+  because dropping them would cost coverage and fingerprints: classification is sticky in
+  `nodeset.Observe`, so the ENR blob is refreshed while `Layer`/`Network`/`ForkHash` are not. A
   published record is held to the stricter bar, because a peer that decodes entries strictly rejects the
   whole record (ethrex does) and the tree slot is wasted. Measured against the live EF trees, this
   excludes 0 of 3683 records. The record must also self-describe fork currency (`enrForkCurrentAt`):
   the row currency rule evaluated on the ENR's own `eth` fork id (EL) or `eth2` digest (CL), not the
   row columns. A Status-classified row can be current while its ENR advertises no fork entry or a
   stale one; consumers pre-qualify peers from the record alone, and discv4-crawl's `devp2p nodeset
-  filter -eth-network` applied the same bar - every record in the EF production trees carries a
+  filter -eth-network` applied the same bar: every record in the EF production trees carries a
   parseable `eth` entry. Expect the tree to shed ENR-stale nodes for a cycle at fork transitions,
   bounded by the collapse guards.
   When `--limit` binds, IPv6 also gets a reserved share: address family is not a client-balance
   dimension, so a family holding a few percent of the pool otherwise rounds away to nothing (at
   `--limit=25` a 2.4% IPv6 share expects 0.6 nodes). `reserveIPv6` gives it its proportional share and
-  never less than one slot, preferring records with an explicit `tcp6`/`quic6` — sigp's `enr` crate
+  never less than one slot, preferring records with an explicit `tcp6`/`quic6`: sigp's `enr` crate
   reads `tcp6` with no fallback to `tcp`, so those are the ones a discv5-based client can dial over v6.
   There is one mode: `--base-domain`, deployed as a scheduled
   service via `--publish-interval`, emitting every `<all|snap>.<net>.<base>` tree per cycle. Both
-  capabilities are always built — `snap` is selected by ENR-entry presence like `devp2p nodeset
+  capabilities are always built: `snap` is selected by ENR-entry presence like `devp2p nodeset
   filter -snap`, so it is not a flag; the dead `les` capability is intentionally unsupported.
   `--layer` (default `el`, excluding un-peerable beacon nodes) narrows the population, and every
   selection option is validated by `selectOpts.Validate` before any tree is built. Publishing is
@@ -129,7 +129,7 @@ publishes the crawler advertiser endpoints on :30303-:30311.
   **Git output** (`git.go`) completes the discv4-dns-lists contract discv4-crawl served: when
   `--git-repo-url` is set (with `--git-ssh-key-file`, `--git-known-hosts-file`, and `--git-dir`,
   all four together), each cycle pushes every gated tree's `nodes.json` (devp2p nodeset format,
-  clean-room reimplementation - never code from GPL `cmd/devp2p`; `lastResponse` maps to the row's
+  clean-room reimplementation, never code from GPL `cmd/devp2p`; `lastResponse` maps to the row's
   `LastResolved`, the last *successful* resolution) and `enrtree-info.json` into
   `<capability>.<network>.<base-domain>/`. Unlike the legacy crawler, git is output-only (state
   lives in S3 snapshots and `.published` artifacts), so a failed push only warns
@@ -137,7 +137,7 @@ publishes the crawler advertiser endpoints on :30303-:30311.
   and never blocks DNS. Every cycle re-clones fresh at depth 1, so a rewritten or diverged remote
   can never wedge pushes; directories for trees not in the cycle keep the remote's content and are
   never deleted. Host keys are pinned via the known_hosts file (full OpenSSH key lines, not
-  fingerprints); the deploy key must be mode 0600. Expect one commit per publish cycle - the
+  fingerprints); the deploy key must be mode 0600. Expect one commit per publish cycle: the
   sequence advances each cycle, so the root signature always changes. Deploy a single writer per
   repo branch.
 - **The DNS push is one interface with two providers.** `recordPublisher.Sync` reconciles one domain's
@@ -146,7 +146,7 @@ publishes the crawler advertiser endpoints on :30303-:30311.
   a resolver never follows a new root into a subtree that does not exist yet, and both keep the
   previous generation's records (`retain`, read from the `.published` artifact) so a client still
   holding the old root can finish its walk. A nil `retain` means nothing is known to have been
-  published and pruning is skipped entirely — pointing a fresh process at a live zone must not delete
+  published and pruning is skipped entirely: pointing a fresh process at a live zone must not delete
   the tree it is already serving. The `.published` artifact is committed only after a push succeeds,
   which is what keeps a failed push from moving the collapse baseline onto a tree DNS never served.
   A failed *prune* only warns: it leaves records the current root does not reference, which must not
@@ -184,7 +184,7 @@ Reviewed and deliberately not fixed; re-litigate only with new information.
 - **The final publish quiesces every nodeset writer, and each new one must opt in.** `shutdown`
   (`cmd/crawler/main.go`) closes producers outermost-first before publishing: discovery, the
   periodic loops, the outbound probe queues, `/probe`, then the advertisers. Three of those waits
-  exist only because their owners were given close-and-wait — `enrich.InboundListener.Close`,
+  exist only because their owners were given close-and-wait: `enrich.InboundListener.Close`,
   `enrich.CLFingerprinter.Close` and `probesrv.Server.Shutdown` each retire their event source
   first, then wait for the handlers it spawned. That ordering is the whole trick: the source is
   the only producer of handler `Add`s, so retiring it is what makes the `Wait` safe rather than a
@@ -196,7 +196,7 @@ Reviewed and deliberately not fixed; re-litigate only with new information.
 - **Fork-id classification uses a recent ~2-year window, NOT history back to genesis**
   (`netconf.gatherHashes`). Genesis-sharing forks (PulseChain) reuse mainnet's ancient
   Frontier hash `fc64ec04`; an all-history sweep misclassifies them as mainnet.
-  Guarded by `TestAncientForkDoesNotClassify` - don't widen the window back to genesis.
+  Guarded by `TestAncientForkDoesNotClassify`; don't widen the window back to genesis.
 - **Fork upgrades are pre-activation work.** Upgrade geth before every EL fork and
   update `internal/netconf/consensus.go` before every CL fork/BPO. The CI head-bound
   assertion tells you when `ForkHeadBlock` must advance. A missed update collapses
@@ -232,8 +232,8 @@ Reviewed and deliberately not fixed; re-litigate only with new information.
 - **`nodeset.Observe` drops invalid records** - a node with no globally-routable IP
   (unspecified/loopback/multicast/link-local/private) is never recorded, so it can never
   be published. Ports are `uint16`-typed ENR entries, so out-of-range ports fail decode.
-- **`--s3-ssl` defaults to TRUE.** Pointing any binary at a plaintext endpoint (e.g. local
-  MinIO) requires `--s3-ssl=false` explicitly - the local compose passes it. Snapshots are
+- **`--s3-ssl` defaults to TRUE.** Pointing any binary at a plaintext endpoint (such as
+  local MinIO) requires `--s3-ssl=false` explicitly; the local compose passes it. Snapshots are
   integrity-checked on read (schema version, byte length, SHA-256, generation-key prefix in
   `snapshot.VerifyGeneration`); a generation that fails is rejected and the API keeps its
   previously committed table. `store.Get`

@@ -797,10 +797,10 @@ func TestFingerprintCandidatesIncludeDueDormantRetry(t *testing.T) {
 		t.Fatal("initial claim failed")
 	}
 	retry := s.FingerprintFailed(id, now)
-	if got := s.FingerprintCandidates(retry.RetryAt.Add(-time.Nanosecond), 10); len(got) != 0 {
+	if got := s.FingerprintCandidates(retry.RetryAt.Add(-time.Nanosecond), 10, 10); len(got) != 0 {
 		t.Fatalf("candidate returned before backoff: %d", len(got))
 	}
-	got := s.FingerprintCandidates(retry.RetryAt, 10)
+	got := s.FingerprintCandidates(retry.RetryAt, 10, 10)
 	if len(got) != 1 || got[0].ID() != id {
 		t.Fatalf("due candidates = %v, want %s", got, id)
 	}
@@ -841,7 +841,7 @@ func TestFingerprintCandidatesOrdersByPriorityWhenLimited(t *testing.T) {
 	}
 	// Both are due immediately (never fingerprinted). With limit=1 the higher-score
 	// node must win even though map iteration order is nondeterministic.
-	got := s.FingerprintCandidates(now.Add(time.Minute), 1)
+	got := s.FingerprintCandidates(now.Add(time.Minute), 1, 1)
 	if len(got) != 1 || got[0].ID() != high.ID() {
 		t.Fatalf("limited candidates = %v, want highest-score %s", got, high.ID())
 	}
@@ -879,7 +879,7 @@ func TestFingerprintCandidatesPrioritizesOldestEffectiveDueTime(t *testing.T) {
 	for range scoreCap {
 		s.Observe(newer, "v5", now)
 	}
-	got := s.FingerprintCandidates(now, 1)
+	got := s.FingerprintCandidates(now, 1, 1)
 	if len(got) != 1 || got[0].ID() != older.ID() {
 		t.Fatalf("limited candidates = %v, want oldest-due %s", got, older.ID())
 	}
@@ -1539,5 +1539,452 @@ func TestUnclaimFingerprintAfterInboundCompletionLeavesNodeClaimable(t *testing.
 	s.Observe(elNodeSeq(t, 0x53, 3, 30305), "v5", now.Add(3*time.Second))
 	if !s.ClaimFingerprintAt(n.ID(), now.Add(4*time.Second)) {
 		t.Fatal("node stayed unclaimable after the claim owner unclaimed it")
+	}
+}
+
+func candidateNode(t *testing.T, tag byte) *enode.Node {
+	t.Helper()
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return enode.NewV4(&key.PublicKey, []byte{8, 8, 8, tag}, 30303, 30303)
+}
+
+func TestObserveCandidateELAdmitsUnresolvedTCPRecord(t *testing.T) {
+	s := NewWithLimit(0)
+	n := candidateNode(t, 1)
+	now := time.Unix(1700000000, 0)
+	observed := s.ObserveCandidateEL(n, now, 10)
+	if !observed.Applied || !observed.New {
+		t.Fatalf("candidate observation = %+v", observed)
+	}
+	row := s.rows("")[0]
+	if row.Layer != "el" || row.Network != "" || row.ENR != "" || row.HasV4 || row.HasV5 || row.LastResolved != 0 || row.Score != int32(scoreInit) {
+		t.Fatalf("candidate row = %+v", row)
+	}
+	if got := s.CountELCandidates(); got != 1 {
+		t.Fatalf("candidate count = %d, want 1", got)
+	}
+	if got := len(s.SnapshotNetworks([]string{"mainnet"})["mainnet"]); got != 0 {
+		t.Fatalf("snapshot contains %d unpromoted candidates, want 0", got)
+	}
+	if !s.ClaimFingerprintAt(n.ID(), now) {
+		t.Fatal("candidate was not immediately fingerprintable")
+	}
+}
+
+func TestCandidateFollowsFingerprintRetrySchedule(t *testing.T) {
+	s := NewWithLimit(0)
+	n := candidateNode(t, 2)
+	id := n.ID()
+	now := time.Unix(1700000000, 0)
+	if observed := s.ObserveCandidateEL(n, now, 10); !observed.Applied {
+		t.Fatalf("candidate observation = %+v", observed)
+	}
+	for i, want := range fpRetrySchedule {
+		if !s.ClaimFingerprintAt(id, now) {
+			t.Fatalf("claim attempt %d should succeed", i+1)
+		}
+		retry := s.FingerprintFailed(id, now)
+		delay := retry.RetryAt.Sub(now)
+		if delay < want*9/10 || delay > want*11/10 {
+			t.Fatalf("attempt %d retry delay = %s, want ~%s", i+1, delay, want)
+		}
+		if s.ClaimFingerprintAt(id, retry.RetryAt.Add(-time.Nanosecond)) {
+			t.Fatalf("claim attempt %d ignored backoff", i+2)
+		}
+		now = retry.RetryAt
+	}
+	if s.Len() != 1 {
+		t.Fatal("candidate was dropped by repeated fingerprint failures")
+	}
+}
+
+func TestCandidateReobservationDoesNotResetBackoff(t *testing.T) {
+	s := NewWithLimit(0)
+	n := candidateNode(t, 3)
+	id := n.ID()
+	now := time.Unix(1700000000, 0)
+	s.ObserveCandidateEL(n, now, 10)
+	if !s.ClaimFingerprintAt(id, now) {
+		t.Fatal("initial claim failed")
+	}
+	retry := s.FingerprintFailed(id, now)
+	if observed := s.ObserveCandidateEL(n, now.Add(time.Second), 10); !observed.Accepted || observed.New {
+		t.Fatalf("candidate re-observation = %+v", observed)
+	}
+	if s.ClaimFingerprintAt(id, retry.RetryAt.Add(-time.Nanosecond)) {
+		t.Fatal("re-observation reset fingerprint backoff")
+	}
+	row := s.rows("")[0]
+	if row.Score != int32(scoreInit) || row.ENR != "" {
+		t.Fatalf("re-observed candidate row = %+v", row)
+	}
+}
+
+func TestCandidateEndpointChangeKeepsRetrySchedule(t *testing.T) {
+	s := NewWithLimit(0)
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := enode.NewV4(&key.PublicKey, []byte{8, 8, 8, 4}, 30303, 30303)
+	moved := enode.NewV4(&key.PublicKey, []byte{8, 8, 9, 9}, 30311, 30311)
+	now := time.Unix(1700000000, 0)
+	s.ObserveCandidateEL(n, now, 10)
+	if !s.ClaimFingerprintAt(n.ID(), now) {
+		t.Fatal("initial claim failed")
+	}
+	retry := s.FingerprintFailed(n.ID(), now)
+	s.ObserveCandidateEL(moved, now.Add(time.Second), 10)
+	if s.ClaimFingerprintAt(n.ID(), retry.RetryAt.Add(-time.Nanosecond)) {
+		t.Fatal("endpoint rotation re-armed the retry schedule")
+	}
+	row := s.rows("")[0]
+	if row.IP != "8.8.9.9" || row.TCP != 30311 {
+		t.Fatalf("stored endpoint = %s:%d, want the newest sighting", row.IP, row.TCP)
+	}
+}
+
+func TestCandidatePromotionByAuthenticatedStatusPublishes(t *testing.T) {
+	s := NewWithLimit(0)
+	n := candidateNode(t, 5)
+	id := n.ID()
+	now := time.Unix(1700000000, 0)
+	s.ObserveCandidateEL(n, now, 10)
+	if !s.ClaimFingerprintAt(id, now) {
+		t.Fatal("claim failed")
+	}
+	if _, applied := s.SetClaimedFingerprintAt(id, "Nethermind", "v1.39.3", "linux/x86_64", "dotnet10", "eth/71", "outbound", now); !applied {
+		t.Fatal("claimed fingerprint was not applied")
+	}
+	if observed := s.ObserveAuthenticatedEL(n, "dial", "mainnet", "07c9462e", 0, now); !observed.Applied {
+		t.Fatalf("authenticated observation = %+v", observed)
+	}
+	rows := s.SnapshotNetworks([]string{"mainnet"})["mainnet"]
+	if len(rows) != 1 {
+		t.Fatalf("snapshot rows = %d, want promoted candidate published after one dial-verified Status", len(rows))
+	}
+	row := rows[0]
+	if row.MembershipSource != "status" || row.ENR != "" || row.HasV4 || row.Client != "Nethermind" {
+		t.Fatalf("promoted row = %+v", row)
+	}
+	if got := s.CountELCandidates(); got != 0 {
+		t.Fatalf("candidate count after promotion = %d, want 0", got)
+	}
+}
+
+func TestStatusCreditRequiresGapAndSameNetwork(t *testing.T) {
+	s := NewWithLimit(0)
+	n := candidateNode(t, 6)
+	id := n.ID()
+	now := time.Unix(1700000000, 0)
+	if observed := s.ObserveAuthenticatedEL(n, "inbound", "mainnet", "07c9462e", 0, now); !observed.Applied {
+		t.Fatalf("first inbound observation = %+v", observed)
+	}
+	s.SetFingerprint(id, "Geth", "v1.17.4", "linux/x86_64", "go1.24", "eth/71", "inbound")
+	fork := forkid.ID{Hash: [4]byte{0x07, 0xc9, 0x46, 0x2e}}
+	if !s.SetExecutionStatusAt(id, "mainnet", fork, now.Add(time.Minute)) {
+		t.Fatal("status inside the gap rejected")
+	}
+	if got := len(s.SnapshotNetworks([]string{"mainnet"})["mainnet"]); got != 0 {
+		t.Fatalf("snapshot rows after back-to-back statuses = %d, want 0", got)
+	}
+	if !s.SetExecutionStatusAt(id, "mainnet", fork, now.Add(statusReverifyGap+time.Minute)) {
+		t.Fatal("status past the gap rejected")
+	}
+	if got := len(s.SnapshotNetworks([]string{"mainnet"})["mainnet"]); got != 1 {
+		t.Fatalf("snapshot rows after gap-separated statuses = %d, want 1", got)
+	}
+}
+
+func TestStatusCreditIsNonSliding(t *testing.T) {
+	s := NewWithLimit(0)
+	n := candidateNode(t, 7)
+	id := n.ID()
+	now := time.Unix(1700000000, 0)
+	s.ObserveAuthenticatedEL(n, "inbound", "mainnet", "07c9462e", 0, now)
+	fork := forkid.ID{Hash: [4]byte{0x07, 0xc9, 0x46, 0x2e}}
+	s.SetExecutionStatusAt(id, "mainnet", fork, now.Add(29*time.Minute))
+	if got := len(s.SnapshotNetworks([]string{"mainnet"})["mainnet"]); got != 0 {
+		t.Fatalf("snapshot rows before the gap elapsed = %d, want 0", got)
+	}
+	// A node reconnecting every 29 minutes must still accumulate evidence: the
+	// anchor stays at the first sighting rather than sliding with each Status.
+	s.SetExecutionStatusAt(id, "mainnet", fork, now.Add(58*time.Minute))
+	if got := len(s.SnapshotNetworks([]string{"mainnet"})["mainnet"]); got != 1 {
+		t.Fatalf("snapshot rows for a frequently reconnecting node = %d, want 1", got)
+	}
+}
+
+func TestStatusCreditForAnotherNetworkStartsOver(t *testing.T) {
+	s := NewWithLimit(0)
+	n := candidateNode(t, 8)
+	id := n.ID()
+	now := time.Unix(1700000000, 0)
+	s.ObserveAuthenticatedEL(n, "inbound", "mainnet", "07c9462e", 0, now)
+	fork := forkid.ID{Hash: [4]byte{0x07, 0xc9, 0x46, 0x2e}}
+	if !s.SetExecutionStatusAt(id, "sepolia", fork, now.Add(statusReverifyGap+time.Minute)) {
+		t.Fatal("reclassifying status rejected")
+	}
+	if got := len(s.SnapshotNetworks([]string{"sepolia"})["sepolia"]); got != 0 {
+		t.Fatalf("snapshot rows after a network switch = %d, want 0 until re-confirmed", got)
+	}
+	if !s.SetExecutionStatusAt(id, "sepolia", fork, now.Add(2*(statusReverifyGap+time.Minute))) {
+		t.Fatal("confirming status rejected")
+	}
+	if got := len(s.SnapshotNetworks([]string{"sepolia"})["sepolia"]); got != 1 {
+		t.Fatalf("snapshot rows after re-confirmation = %d, want 1", got)
+	}
+}
+
+func TestCandidateCapAndCapacityRejectWithoutEviction(t *testing.T) {
+	s := NewWithLimit(0)
+	now := time.Unix(1700000000, 0)
+	if observed := s.ObserveCandidateEL(candidateNode(t, 9), now, 1); !observed.Applied {
+		t.Fatalf("first candidate = %+v", observed)
+	}
+	if observed := s.ObserveCandidateEL(candidateNode(t, 10), now, 1); observed.Accepted || observed.Reject != "candidate_cap" {
+		t.Fatalf("candidate beyond cap = %+v", observed)
+	}
+
+	full := NewWithLimit(1)
+	if observed := full.ObserveFallbackResult(elNode(t, 11), "v5", now); !observed.Applied {
+		t.Fatalf("fallback fill = %+v", observed)
+	}
+	if observed := full.ObserveCandidateEL(candidateNode(t, 12), now, 10); observed.Accepted || observed.Reject != "capacity" {
+		t.Fatalf("candidate at capacity = %+v", observed)
+	}
+	if full.Len() != 1 {
+		t.Fatalf("candidate admission evicted a retained record: len = %d", full.Len())
+	}
+}
+
+func TestSetCandidateClientDoesNotMarkVerified(t *testing.T) {
+	s := NewWithLimit(0)
+	n := candidateNode(t, 13)
+	now := time.Unix(1700000000, 0)
+	s.ObserveCandidateEL(n, now, 10)
+	if !s.SetCandidateClient(n.ID(), "Nethermind", "v1.39.3", "linux/x86_64", "dotnet10", "eth/71", "outbound") {
+		t.Fatal("candidate client rejected")
+	}
+	row := s.rows("")[0]
+	if row.Client != "Nethermind" || row.FPStatus == "ok" || row.FPStatus == "stale" || row.LastResolved != 0 {
+		t.Fatalf("candidate row after hello-only client = %+v", row)
+	}
+	counts := s.ClassCounts()
+	if counts[0] != 0 {
+		t.Fatalf("hello-only candidate entered the verified class: %v", counts)
+	}
+	if !s.ClaimFingerprintAt(n.ID(), now) {
+		t.Fatal("hello-only client stopped Status retries")
+	}
+}
+
+func layerlessNode(t *testing.T, tag byte, withTCP bool) *enode.Node {
+	t.Helper()
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var r enr.Record
+	r.Set(enr.IPv4{8, 8, 8, tag})
+	if withTCP {
+		r.Set(enr.TCP(30303))
+	}
+	if err := enode.SignV4(&r, key); err != nil {
+		t.Fatal(err)
+	}
+	n, err := enode.New(enode.ValidSchemes, &r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+func TestSetExecutionCandidateLayerRequiresRLPxEndpoint(t *testing.T) {
+	s := NewWithLimit(0)
+	now := time.Unix(1700000000, 0)
+	dialable := layerlessNode(t, 0x61, true)
+	s.Observe(dialable, "v5", now)
+	if !s.SetExecutionCandidateLayer(dialable.ID(), 10) {
+		t.Fatal("layerless RLPx-capable record rejected")
+	}
+	if got := s.LayerOf(dialable.ID()); got != "el" {
+		t.Fatalf("layer = %q, want el", got)
+	}
+	if got := s.CountELCandidates(); got != 1 {
+		t.Fatalf("candidate count = %d, want 1", got)
+	}
+	if s.SetExecutionCandidateLayer(dialable.ID(), 10) {
+		t.Fatal("second conversion should report no change")
+	}
+
+	discoveryOnly := layerlessNode(t, 0x62, false)
+	s.Observe(discoveryOnly, "v5", now)
+	if s.SetExecutionCandidateLayer(discoveryOnly.ID(), 10) {
+		t.Fatal("discovery-only record accepted as execution candidate")
+	}
+	if got := s.LayerOf(discoveryOnly.ID()); got != "" {
+		t.Fatalf("discovery-only layer = %q, want unchanged", got)
+	}
+}
+
+func TestFingerprintCandidatesLimitsUnpromotedShare(t *testing.T) {
+	s := NewWithLimit(0)
+	now := time.Unix(1700000000, 0)
+	nw, err := netconf.Get("mainnet")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var r enr.Record
+	r.Set(enr.IPv4{8, 8, 8, 22})
+	r.Set(enr.TCP(30303))
+	r.Set(netconf.EthEntry{ForkID: nw.CurrentForkID()})
+	if err := enode.SignV4(&r, key); err != nil {
+		t.Fatal(err)
+	}
+	classified, err := enode.New(enode.ValidSchemes, &r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.ObserveCandidateEL(candidateNode(t, 20), now, 10)
+	s.ObserveCandidateEL(candidateNode(t, 21), now, 10)
+	s.Observe(classified, "v5", now)
+	got := s.FingerprintCandidates(now.Add(time.Minute), 10, 1)
+	if len(got) != 2 {
+		t.Fatalf("returned %d candidates, want 1 unpromoted + 1 classified", len(got))
+	}
+	if s.FingerprintCandidates(now.Add(time.Minute), 10, 0) == nil {
+		t.Fatal("zero unpromoted quota must still return classified nodes")
+	}
+	if got := s.FingerprintCandidates(now.Add(time.Minute), 10, 0); len(got) != 1 {
+		t.Fatalf("returned %d nodes with zero quota, want 1 classified", len(got))
+	}
+}
+
+func TestPromotedSeqZeroTouchArmsRefresh(t *testing.T) {
+	s := NewWithLimit(0)
+	n := candidateNode(t, 23)
+	id := n.ID()
+	now := time.Unix(1700000000, 0)
+	s.ObserveCandidateEL(n, now, 10)
+	if !s.ClaimFingerprintAt(id, now) {
+		t.Fatal("claim failed")
+	}
+	if _, applied := s.SetClaimedFingerprintAt(id, "Nethermind", "v1.39.3", "linux/x86_64", "dotnet10", "eth/71", "outbound", now); !applied {
+		t.Fatal("claimed fingerprint was not applied")
+	}
+	s.ObserveAuthenticatedEL(n, "dial", "mainnet", "07c9462e", 0, now)
+	if s.ClaimFingerprintAt(id, now.Add(time.Minute)) {
+		t.Fatal("fresh verified node should not be due")
+	}
+	later := now.Add(fpRefreshAge + time.Minute)
+	if observed := s.ObserveCandidateEL(n, later, 10); !observed.Accepted {
+		t.Fatalf("touch of promoted node = %+v", observed)
+	}
+	if !s.ClaimFingerprintAt(id, later) {
+		t.Fatal("promoted seq-0 node was never re-armed for refresh")
+	}
+}
+
+func TestFingerprintCandidatesQuotaCannotDisplaceClassified(t *testing.T) {
+	s := NewWithLimit(0)
+	now := time.Unix(1700000000, 0)
+	for tag := byte(30); tag < 33; tag++ {
+		s.ObserveCandidateEL(candidateNode(t, tag), now, 10)
+	}
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	nw, err := netconf.Get("mainnet")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var r enr.Record
+	r.Set(enr.IPv4{8, 8, 8, 33})
+	r.Set(enr.TCP(30303))
+	r.Set(netconf.EthEntry{ForkID: nw.CurrentForkID()})
+	if err := enode.SignV4(&r, key); err != nil {
+		t.Fatal(err)
+	}
+	classified, err := enode.New(enode.ValidSchemes, &r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The classified node arrives after the candidate backlog, so its effective
+	// due time sorts last. A shared selection heap would fill with candidates and
+	// starve it for as long as the backlog stays due.
+	s.Observe(classified, "v5", now.Add(time.Minute))
+	got := s.FingerprintCandidates(now.Add(time.Hour), 2, 1)
+	found := false
+	for _, n := range got {
+		if n.ID() == classified.ID() {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("due candidate backlog displaced the classified node from the batch: %v", got)
+	}
+}
+
+func TestSetExecutionCandidateLayerRespectsCap(t *testing.T) {
+	s := NewWithLimit(0)
+	now := time.Unix(1700000000, 0)
+	if observed := s.ObserveCandidateEL(candidateNode(t, 34), now, 1); !observed.Applied {
+		t.Fatalf("candidate fill = %+v", observed)
+	}
+	forkless := layerlessNode(t, 35, true)
+	s.Observe(forkless, "v5", now)
+	if s.SetExecutionCandidateLayer(forkless.ID(), 1) {
+		t.Fatal("conversion exceeded the candidate cap")
+	}
+	if got := s.LayerOf(forkless.ID()); got != "" {
+		t.Fatalf("refused conversion still set layer %q", got)
+	}
+	if !s.SetExecutionCandidateLayer(forkless.ID(), 2) {
+		t.Fatal("conversion under the cap rejected")
+	}
+}
+
+func TestPromotedCandidateEndpointChangeIsReportedNotRecorded(t *testing.T) {
+	s := NewWithLimit(0)
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := enode.NewV4(&key.PublicKey, []byte{8, 8, 8, 40}, 30303, 30303)
+	moved := enode.NewV4(&key.PublicKey, []byte{8, 8, 9, 40}, 30311, 30311)
+	now := time.Unix(1700000000, 0)
+	s.ObserveCandidateEL(n, now, 10)
+	if observed := s.ObserveAuthenticatedEL(n, "dial", "mainnet", "07c9462e", 0, now); !observed.Applied {
+		t.Fatalf("promotion = %+v", observed)
+	}
+
+	same := s.ObserveCandidateEL(n, now.Add(time.Minute), 10)
+	if !same.Accepted || same.Changed || same.Applied {
+		t.Fatalf("same-endpoint re-sight = %+v", same)
+	}
+	observed := s.ObserveCandidateEL(moved, now.Add(2*time.Minute), 10)
+	if !observed.Accepted || !observed.Changed || observed.Applied {
+		t.Fatalf("moved-endpoint re-sight = %+v", observed)
+	}
+	row := s.rows("mainnet")[0]
+	if row.IP != "8.8.8.40" || row.TCP != 30303 {
+		t.Fatalf("unsigned sighting rewrote a published endpoint: %s:%d", row.IP, row.TCP)
+	}
+
+	if observed := s.ObserveAuthenticatedEL(moved, "v4", "mainnet", "07c9462e", 0, now.Add(3*time.Minute)); !observed.Applied {
+		t.Fatalf("authenticated move = %+v", observed)
+	}
+	row = s.rows("mainnet")[0]
+	if row.IP != "8.8.9.40" || row.TCP != 30311 {
+		t.Fatalf("authenticated Status did not record the moved endpoint: %s:%d", row.IP, row.TCP)
 	}
 }

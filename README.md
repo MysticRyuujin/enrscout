@@ -1,7 +1,7 @@
 # ENRScout
 
 An open Ethereum network explorer and crawler. ENRScout continuously discovers
-Ethereum nodes over the devp2p discovery protocols - **discv5 (primary) and discv4** -
+Ethereum nodes over the devp2p discovery protocols, **discv5 (primary) and discv4**,
 across **IPv4 and IPv6**, enriches them (network/fork classification, client
 fingerprint, geo, hosting), and publishes a current snapshot that powers a
 map-centric web explorer.
@@ -17,7 +17,7 @@ from distorting network and client-coverage totals.
 Networks: **Mainnet, Hoodi, Sepolia**. See [Definitions](DEFINITIONS.md) for the
 precise meanings of active, identified, dialable, and coverage. ENRScout observes
 from a single crawler vantage point: its figures are an observed, non-random identity
-sample - not a census, machine count, operator count, validator count, or
+sample, not a census, machine count, operator count, validator count, or
 stake-weighted client-diversity estimate. Coverage gaps can reduce the sample, while
 Sybil identities, key rotation, and multiple identities per machine can increase it.
 
@@ -42,8 +42,8 @@ Sybil identities, key rotation, and multiple identities per machine can increase
   they are deduped by node id (`has_v4`/`has_v5` OR'd together). Per-network EL and
   CL identities advertise compatible fork records and feed the same crawl pipeline.
 - Each identity is **classified** by network: EL by EIP-2124 fork id, CL by fork
-  digest. Records that don't match one of the tracked networks (other chains -
-  Polygon, Berachain, PulseChain, devnets - sharing the DHT) may remain temporarily
+  digest. Records that don't match one of the tracked networks (other chains sharing
+  the DHT, such as Polygon, Berachain, PulseChain, and devnets) may remain temporarily
   in bounded crawler memory for retries, but are excluded from published snapshots.
 - The crawler is **never on the request path**. It writes per-network Parquet
   generations to S3-compatible storage and atomically advances a checksum-protected
@@ -132,7 +132,7 @@ the output JSON contains only public tree records and the signed URL.
 
 ### Publishing to a hosted zone
 
-Without zone flags the publisher only writes artifacts. Add one provider — never both —
+Without zone flags the publisher only writes artifacts. Add one provider, never both,
 to push the TXT records as well:
 
 ```bash
@@ -192,7 +192,7 @@ variant. On an Apple Silicon Mac, Docker Desktop runs the `linux/arm64` variant 
 Linux VM; these are container images, not native macOS executables.
 
 Every image is signed keylessly by the release workflow, with the signing identity
-recorded in Sigstore's public transparency log. Signing is recursive — the multi-platform
+recorded in Sigstore's public transparency log. Signing is recursive: the multi-platform
 index and each per-architecture child carry their own signature, so pinning either digest
 verifies. Verify before deploying:
 
@@ -209,16 +209,16 @@ tooling reports these images as *unsigned* rather than as unverifiable. That inc
 admission controllers pinned to the old layout. `cosign triangulate` is deprecated and
 still prints the pre-v3 path; it is not where the signature is.
 
-Pin by digest rather than tag for anything long-lived. Builds are not reproducible —
+Pin by digest rather than tag for anything long-lived. Builds are not reproducible:
 BuildKit records per-run provenance, so rebuilding a tag yields a different digest.
 
 ## Operations
 
 Deployment and runtime reference lives in [docs/operations.md](docs/operations.md):
 
-- [Crawler flags](docs/operations.md#crawler-flags-common) — common tuning flags and ports.
-- [Production checklist](docs/operations.md#production-checklist) — TLS, egress isolation, storage, schema-upgrade order.
-- [Fork-upgrade runbook](docs/operations.md#fork-upgrade-runbook) — pre-activation steps before each EL/CL fork.
+- [Crawler flags](docs/operations.md#crawler-flags-common): common tuning flags and ports.
+- [Production checklist](docs/operations.md#production-checklist): TLS, egress isolation, storage, schema-upgrade order.
+- [Fork-upgrade runbook](docs/operations.md#fork-upgrade-runbook): pre-activation steps before each EL/CL fork.
 
 See [SECURITY.md](SECURITY.md) for the trust-boundary model and
 [docs/measurement-operations.md](docs/measurement-operations.md) for measurement methodology.

@@ -13,54 +13,55 @@ import (
 // so run() receives settled values rather than forty-odd flag pointers whose rules are enforced
 // somewhere else entirely.
 type config struct {
-	devnetDir       string
-	devnetOnly      bool
-	devnetForce     bool
-	allowPrivate    bool
-	advertiserNets  string
-	advertiserBase  int
-	elIdentities    int
-	walkerELIds     int
-	resolveRate     float64
-	identityDir     string
-	ipStack         string
-	advertiseIP4    string
-	advertiseIP6    string
-	nodeDB          string
-	netrestrict     string
-	workers         int
-	maxNodes        int
-	snapInterval    time.Duration
-	nodeMaxIdle     time.Duration
-	verifiedMaxIdle time.Duration
-	prefix          string
-	maxCollapse     int
-	forcePublish    bool
-	minCurrentNodes int
-	keepGens        int
-	keepAggregates  time.Duration
-	crawlerID       string
-	out             string
-	s3Endpoint      string
-	s3Bucket        string
-	s3Region        string
-	s3SSL           bool
-	s3Create        bool
-	s3Conditional   string
-	pprofAddr       string
-	metricsAddr     string
-	probeAddr       string
-	probeNoAuth     bool
-	geoCity         string
-	geoASN          string
-	fingerprint     bool
-	fpWorkers       int
-	fpMaxInflight   int
-	fpTimeout       time.Duration
-	targetDialRate  float64
-	targetDialBurst int
-	level           slog.Level
-	probeTokenValue string
+	devnetDir           string
+	devnetOnly          bool
+	devnetForce         bool
+	allowPrivate        bool
+	advertiserNets      string
+	advertiserBase      int
+	elIdentities        int
+	walkerELIds         int
+	resolveRate         float64
+	identityDir         string
+	ipStack             string
+	advertiseIP4        string
+	advertiseIP6        string
+	nodeDB              string
+	netrestrict         string
+	workers             int
+	maxNodes            int
+	maxLegacyCandidates int
+	snapInterval        time.Duration
+	nodeMaxIdle         time.Duration
+	verifiedMaxIdle     time.Duration
+	prefix              string
+	maxCollapse         int
+	forcePublish        bool
+	minCurrentNodes     int
+	keepGens            int
+	keepAggregates      time.Duration
+	crawlerID           string
+	out                 string
+	s3Endpoint          string
+	s3Bucket            string
+	s3Region            string
+	s3SSL               bool
+	s3Create            bool
+	s3Conditional       string
+	pprofAddr           string
+	metricsAddr         string
+	probeAddr           string
+	probeNoAuth         bool
+	geoCity             string
+	geoASN              string
+	fingerprint         bool
+	fpWorkers           int
+	fpMaxInflight       int
+	fpTimeout           time.Duration
+	targetDialRate      float64
+	targetDialBurst     int
+	level               slog.Level
+	probeTokenValue     string
 }
 
 func parseFlags() (*config, error) {
@@ -84,6 +85,7 @@ func parseFlags() (*config, error) {
 	flag.StringVar(&c.netrestrict, "netrestrict", "", "comma-separated CIDRs; when set, discovery only accepts nodes within these networks")
 	flag.IntVar(&c.workers, "workers", 16, "concurrent ENR-resolution workers")
 	flag.IntVar(&c.maxNodes, "max-nodes", 200000, "maximum retained nodes (0 disables the safety limit)")
+	flag.IntVar(&c.maxLegacyCandidates, "max-legacy-candidates", 50000, "maximum retained unclassified execution candidates awaiting Status classification (0 disables retention and falls back to one outbound attempt per window)")
 	flag.DurationVar(&c.snapInterval, "snapshot-interval", 60*time.Second, "how often to publish a snapshot")
 	flag.DurationVar(&c.nodeMaxIdle, "node-max-idle", 24*time.Hour, "remove unpinned nodes not observed within this period (0 = disable age-based removal)")
 	flag.DurationVar(&c.verifiedMaxIdle, "verified-node-max-idle", 7*24*time.Hour, "remove previously fingerprinted nodes not observed within this period (0 = disable age-based removal)")

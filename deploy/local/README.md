@@ -1,11 +1,11 @@
 # Local stack (docker-compose)
 
-Brings up the full ENRScout pipeline on one machine:
+This compose file brings up the full ENRScout pipeline on one machine:
 
-- **minio** - S3-compatible object storage (snapshots). Console: http://localhost:9001 (`minioadmin`/`minioadmin`).
-- **crawler** - crawls mainnet, writes Parquet snapshots to MinIO.
-- **api** - DuckDB-over-snapshots query API: http://localhost:8080
-- **web** - map explorer UI: http://localhost:8081
+- **minio**: S3-compatible object storage (snapshots). Console: http://localhost:9001 (`minioadmin`/`minioadmin`).
+- **crawler**: crawls mainnet, writes Parquet snapshots to MinIO.
+- **api**: DuckDB-over-snapshots query API: http://localhost:8080
+- **web**: map explorer UI: http://localhost:8081
 
 ## Run
 

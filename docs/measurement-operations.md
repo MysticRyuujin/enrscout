@@ -27,7 +27,7 @@ network/fork tables, evidence eligibility, or aggregate definitions requires a n
 methodology version. Do not splice the new points into the old series. Superseded
 versions stay readable so a bump is an online deployment, but writes are pinned to the
 current one, so points land under a new `<methodology_id>` prefix and the previous
-series simply ends.
+series ends.
 
 `2026-07-v2` narrowed execution currency to the exact current fork ID. Under `2026-07-v1`
 an earlier era carrying its own canonical `Next` counted as current. Measured at the

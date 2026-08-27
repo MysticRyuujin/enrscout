@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-Please report suspected vulnerabilities through a private
+Report suspected vulnerabilities through a private
 [GitHub security advisory](https://github.com/MysticRyuujin/enrscout/security/advisories/new).
 Do not open a public issue until a fix or coordinated disclosure is available.
 

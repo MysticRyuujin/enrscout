@@ -28,9 +28,12 @@ npx playwright install chromium
 node e2e/browse.mjs
 ```
 
-Schema changes to `nodeset.Row` must bump `snapshot.SchemaVersion` and include a fresh
-prefix/reset procedure. Snapshot readers intentionally do not migrate or accept older
-schemas. Preserve the recent-fork classification window, MaxMind attribution,
+Schema changes to `nodeset.Row` must stay online and backward-readable: bump
+`snapshot.SchemaVersion`, keep the prior version inside the readable range, and add
+read-time defaults in `query.migrateStagingSchema` for additive Parquet columns. Cover
+crawler restore and API loading with compatibility tests. Only a breaking change needs
+an explicit migration or a new object prefix before old-version support is dropped.
+Preserve the recent-fork classification window, MaxMind attribution,
 peer-string escaping, the CGO build split, and the address-family fallback rules called
 out in [AGENTS.md](AGENTS.md).
 

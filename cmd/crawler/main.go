@@ -434,7 +434,7 @@ func run() error {
 			for _, cached := range pending.DrainKnown(now, set.LayerOf) {
 				cr.applyInbound(cached.id, cached.layer, cached.value)
 			}
-			for _, n := range set.FingerprintCandidates(now, conf.fpWorkers*4) {
+			for _, n := range set.FingerprintCandidates(now, conf.fpWorkers*4, conf.fpWorkers) {
 				cr.enqueueFingerprint(n, now)
 			}
 		})

@@ -337,7 +337,7 @@ export default function NodesPage({ layer }: { layer: "el" | "cl" }) {
               <th>Proto</th>
               <th>Reach</th>
               <SortableHeader
-                label="Last seen"
+                label="Last discovered"
                 value="last_seen"
                 sort={sort}
                 order={order}

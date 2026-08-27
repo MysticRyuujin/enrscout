@@ -20,12 +20,13 @@ const (
 	SchemaVersion               = 2
 	OldestReadableSchemaVersion = 1
 )
-const MethodologyVersion = "2026-07-v2"
+const MethodologyVersion = "2026-08-v3"
 
 // Superseded methodologies stay readable so a bump is an online deployment rather than a
 // cutover that strands the committed manifest. Writes are pinned to MethodologyVersion.
 var readableMethodologyVersions = map[string]bool{
 	"2026-07-v1":       true,
+	"2026-07-v2":       true,
 	MethodologyVersion: true,
 }
 

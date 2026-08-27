@@ -88,7 +88,7 @@ func (p *fingerprintPool) startEL(ctx context.Context, cr *crawler, workers int,
 				// Shutdown drains the queue through a canceled context; those probes never
 				// dialed, so recording them as failures would persist spurious attempts.
 				if ctx.Err() != nil {
-					if !task.legacy {
+					if task.claimed || !task.legacy {
 						cr.set.UnclaimFingerprint(task.n.ID())
 					}
 					continue
@@ -97,6 +97,14 @@ func (p *fingerprintPool) startEL(ctx context.Context, cr *crawler, workers int,
 				if task.legacy {
 					r, err := cr.fp.ProbeStatus(ctx, task.n, legacyStatus)
 					observeFingerprintAttempt("el", "outbound", time.Since(start), err)
+					if task.claimed {
+						if err != nil && ctx.Err() != nil {
+							cr.set.UnclaimFingerprint(task.n.ID())
+							continue
+						}
+						cr.finishCandidateFingerprint(task.n, r, err)
+						continue
+					}
 					if err != nil {
 						if ctx.Err() != nil {
 							continue
