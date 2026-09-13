@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-FROM --platform=$BUILDPLATFORM golang:1.27@sha256:192b74998e350966280a2cbffbb6c40064754f7ec005096aa64f04d7ece4467e AS build
+FROM --platform=$BUILDPLATFORM golang:1.27@sha256:512690a5660563b57d37ecc31129e7f136e831db2aed24a1dbeb8ad7380dc0fa AS build
 ARG SOURCE_REVISION=unknown
 ARG SOURCE_URL=https://github.com/MysticRyuujin/enrscout
 ARG TARGETOS
