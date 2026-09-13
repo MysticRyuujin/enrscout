@@ -5,7 +5,7 @@ go 1.26.0
 toolchain go1.26.6
 
 require (
-	github.com/aws/aws-sdk-go-v2 v1.46.0
+	github.com/aws/aws-sdk-go-v2 v1.47.0
 	github.com/aws/aws-sdk-go-v2/service/route53 v1.69.0
 	github.com/duckdb/duckdb-go/v2 v2.10505.0
 	github.com/ethereum/go-ethereum v1.17.5
