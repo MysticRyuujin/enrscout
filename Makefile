@@ -1,5 +1,5 @@
 .PHONY: build crawler api compile test test-race test-nethermind-compat lint staticcheck vulncheck \
-	validate-compose web-install web-audit web-build ci ci-go ci-web tidy run-crawler run-api e2e
+	validate-compose web-install web-audit web-build ci ci-go ci-web tidy run-crawler run-api e2e-fixtures e2e
 
 # Ordered tasks, not a parallel build graph: web-build reads what web-install writes.
 .NOTPARALLEL:
@@ -77,6 +77,9 @@ run-crawler:
 
 run-api:
 	go run ./cmd/api
+
+e2e-fixtures:
+	go run ./web/e2e/genfixtures
 
 e2e:
 	cd web && node e2e/browse.mjs

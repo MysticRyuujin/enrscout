@@ -243,9 +243,14 @@ For the Vite development server, `npm run dev` proxies `/api` to
 pages, asserts data populates, and writes screenshots to `web/e2e/screenshots/`:
 
 ```bash
+make e2e-fixtures        # writes deploy/e2e/fixtures with timestamps of now
+docker compose -f deploy/e2e/docker-compose.yaml up --build --force-recreate -d
 cd web && npm ci && npx playwright install chromium
 node e2e/browse.mjs        # WEB_BASE defaults to http://localhost:8081
 ```
+
+Regenerate the fixtures before each run. Client charts count only fingerprints
+fresher than 7 days, so fixtures older than that render empty donuts.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a change.
 
