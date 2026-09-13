@@ -10,6 +10,10 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 10
+    groups:
+      deck-gl:
+        patterns:
+          - "@deck.gl/*"
   - package-ecosystem: github-actions
     directory: /
     schedule:
