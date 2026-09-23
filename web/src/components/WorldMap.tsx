@@ -7,14 +7,13 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
 import { useNavigate } from "react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { clientColor, hexRGB, layerName, OTHER_COLOR, shortId } from "../theme";
 import {
-  clientColor,
-  hexRGB,
-  networkRGB,
-  OTHER_COLOR,
-  shortId,
-} from "../theme";
-import { pointAccuracyKM, pointSubdivision } from "../types";
+  pointAccuracyKM,
+  pointClient,
+  pointLayer,
+  pointSubdivision,
+} from "../types";
 import type { MapPoint } from "../types";
 
 // Vector labels stay crisp at fractional zooms where raster label tiles blur.
@@ -80,10 +79,15 @@ interface MapCluster {
   points: MapPoint[];
   el: number;
   cl: number;
-  colorPoint: MapPoint;
-  innerPoint: MapPoint | null;
+  colorClient: string;
+  innerClient: string | null;
   accuracyKM: number;
 }
+
+const clientRGBA = (client: string): [number, number, number, number] => [
+  ...hexRGB(clientColor(client)),
+  220,
+];
 
 // accuracyKM is the cluster min: a lone coarse record can share coordinates with a real city (Ashburn).
 const stacked = (cluster: MapCluster) =>
@@ -96,25 +100,13 @@ function placeFor(point: MapPoint): string {
   );
 }
 
-function layerName(point: MapPoint): string {
-  return point[6] === "el"
-    ? "Execution"
-    : point[6] === "cl"
-      ? "Consensus"
-      : "Unknown layer";
-}
-
 export default function WorldMap({
   points,
   network,
-  colorFor,
-  colorKey,
   legend,
 }: {
   points: MapPoint[] | null;
   network: string;
-  colorFor?: (p: MapPoint) => [number, number, number, number];
-  colorKey?: string;
   legend?: { name: string; color: string }[];
 }) {
   const navigate = useNavigate();
@@ -122,10 +114,6 @@ export default function WorldMap({
   const mapRef = useRef<maplibregl.Map | null>(null);
   const overlayRef = useRef<MapboxOverlay | null>(null);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
-  const baseColor = useMemo<[number, number, number, number]>(
-    () => [...networkRGB(network), 220],
-    [network],
-  );
   const clusters = useMemo(() => {
     const grouped = new Map<string, MapPoint[]>();
     for (const point of points ?? []) {
@@ -139,10 +127,10 @@ export default function WorldMap({
       let el = 0;
       let cl = 0;
       for (const point of members) {
-        const client = point[3] || "unknown";
+        const client = pointClient(point) || "unknown";
         clients.set(client, (clients.get(client) ?? 0) + 1);
-        if (point[6] === "el") el++;
-        if (point[6] === "cl") cl++;
+        if (pointLayer(point) === "el") el++;
+        if (pointLayer(point) === "cl") cl++;
       }
       const ranked = [...clients.entries()].sort(
         (a, b) => b[1] - a[1] || a[0].localeCompare(b[0]),
@@ -156,21 +144,6 @@ export default function WorldMap({
           ? known.find((name) => name !== dominantClient)
           : undefined;
       const first = members[0];
-      const pointWith = (client: string): MapPoint => [
-        first[0],
-        first[1],
-        first[2],
-        client,
-        first[4],
-        first[5],
-        first[6],
-        first[7],
-        first[8],
-        first[9],
-        first[10],
-        first[11],
-        first[12],
-      ];
       return {
         key,
         longitude: first[1],
@@ -178,10 +151,8 @@ export default function WorldMap({
         points: members,
         el,
         cl,
-        colorPoint: pointWith(
-          dominantClient === "unknown" ? "" : dominantClient,
-        ),
-        innerPoint: innerClient ? pointWith(innerClient) : null,
+        colorClient: dominantClient === "unknown" ? "" : dominantClient,
+        innerClient: innerClient ?? null,
         accuracyKM: Math.min(...members.map(pointAccuracyKM)),
       };
     });
@@ -259,14 +230,11 @@ export default function WorldMap({
         id: "nodes",
         data: located,
         getPosition: (cluster) => [cluster.longitude, cluster.latitude],
-        getFillColor: colorFor
-          ? (cluster) => colorFor(cluster.colorPoint)
-          : () => baseColor,
+        getFillColor: (cluster) => clientRGBA(cluster.colorClient),
         getLineColor: (cluster) =>
           cluster.key === selectedKey ? [255, 255, 255, 245] : [8, 11, 18, 210],
         getLineWidth: (cluster) => (cluster.key === selectedKey ? 2.5 : 1),
         updateTriggers: {
-          getFillColor: colorKey ?? network,
           getLineColor: selectedKey,
           getLineWidth: selectedKey,
         },
@@ -278,23 +246,16 @@ export default function WorldMap({
         autoHighlight: true,
         highlightColor: [255, 255, 255, 55],
       }),
-    ];
-    if (colorFor) {
-      layers.push(
-        new ScatterplotLayer<MapCluster>({
-          id: "nodes-core",
-          data: located.filter((cluster) => cluster.innerPoint),
-          getPosition: (cluster) => [cluster.longitude, cluster.latitude],
-          getFillColor: (cluster) => colorFor(cluster.innerPoint!),
-          updateTriggers: { getFillColor: colorKey ?? network },
-          getRadius: 2.6,
-          radiusUnits: "pixels",
-          stroked: false,
-          pickable: false,
-        }),
-      );
-    }
-    layers.push(
+      new ScatterplotLayer<MapCluster>({
+        id: "nodes-core",
+        data: located.filter((cluster) => cluster.innerClient),
+        getPosition: (cluster) => [cluster.longitude, cluster.latitude],
+        getFillColor: (cluster) => clientRGBA(cluster.innerClient!),
+        getRadius: 2.6,
+        radiusUnits: "pixels",
+        stroked: false,
+        pickable: false,
+      }),
       new TextLayer<MapCluster>({
         id: "badge-counts",
         data: badges,
@@ -306,7 +267,7 @@ export default function WorldMap({
         fontWeight: 600,
         pickable: false,
       }),
-    );
+    ];
     overlayRef.current?.setProps({
       layers,
       onClick: (info) => {
@@ -337,7 +298,7 @@ export default function WorldMap({
         };
       },
     });
-  }, [baseColor, clusters, colorFor, colorKey, navigate, network, selectedKey]);
+  }, [clusters, selectedKey]);
 
   return (
     <div className="map">
@@ -414,12 +375,12 @@ export default function WorldMap({
               >
                 <span
                   className="legend-swatch"
-                  style={{ background: clientColor(point[3]) }}
+                  style={{ background: clientColor(pointClient(point)) }}
                 />
                 <span>
-                  <strong>{point[3] || "Unknown client"}</strong>
+                  <strong>{pointClient(point) || "Unknown client"}</strong>
                   <small>
-                    {layerName(point)} · {shortId(point[0], 14)}
+                    {layerName(pointLayer(point))} · {shortId(point[0], 14)}
                   </small>
                 </span>
                 <span className="map-popup-arrow">→</span>

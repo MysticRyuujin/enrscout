@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/pprof"
 	"sort"
 	"time"
 
@@ -23,23 +24,43 @@ func Start(addr, service string) error {
 	}
 	mux := http.NewServeMux()
 	mux.Handle("GET /metrics", promhttp.HandlerFor(serviceLabeled(prometheus.DefaultGatherer, service), promhttp.HandlerOpts{}))
+	return serve("metrics", addr, mux)
+}
+
+// StartPprof serves pprof on addr (empty = off); bind loopback/private, never public.
+func StartPprof(addr string) error {
+	if addr == "" {
+		return nil
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /debug/pprof/", pprof.Index)
+	mux.HandleFunc("GET /debug/pprof/cmdline", pprof.Cmdline)
+	mux.HandleFunc("GET /debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("GET /debug/pprof/symbol", pprof.Symbol)
+	mux.HandleFunc("POST /debug/pprof/symbol", pprof.Symbol)
+	mux.HandleFunc("GET /debug/pprof/trace", pprof.Trace)
+	return serve("pprof", addr, mux)
+}
+
+// serve binds synchronously so a bad production configuration fails at startup.
+func serve(name, addr string, h http.Handler) error {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
-		return fmt.Errorf("listen metrics %s: %w", addr, err)
+		return fmt.Errorf("listen %s %s: %w", name, addr, err)
 	}
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           mux,
+		Handler:           h,
 		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       10 * time.Second,
+		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       60 * time.Second,
 		MaxHeaderBytes:    32 << 10,
 	}
 	go func() {
-		slog.Info("metrics server listening", "addr", addr)
+		slog.Info(name+" server listening", "addr", addr)
 		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
-			slog.Error("metrics server stopped", "err", err)
+			slog.Error(name+" server stopped", "err", err)
 		}
 	}()
 	return nil

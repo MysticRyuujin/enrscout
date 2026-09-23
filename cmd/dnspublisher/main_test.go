@@ -641,19 +641,6 @@ func TestReserveIPv6ProportionalShare(t *testing.T) {
 	}
 }
 
-func TestParseNetworks(t *testing.T) {
-	got, err := parseNetworks(" mainnet, hoodi ,sepolia")
-	if err != nil || len(got) != 3 || got[0] != "mainnet" || got[2] != "sepolia" {
-		t.Fatalf("parseNetworks = %v, %v", got, err)
-	}
-	if _, err := parseNetworks("  "); err == nil {
-		t.Fatal("empty list should error")
-	}
-	if _, err := parseNetworks("bad/name"); err == nil {
-		t.Fatal("unsafe name should error")
-	}
-}
-
 func TestBuildTree(t *testing.T) {
 	now := time.Unix(1700000000, 0)
 	rows := []nodeset.Row{currentMainnetEL(t, v4Row(t, 1, 30303, 5, now), now)}
@@ -661,7 +648,8 @@ func TestBuildTree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := buildTree(rows, selectOpts{minScore: 1, protocol: "any", layer: "el", capability: "all"}, 42, "all.mainnet.example.org", "mainnet", key, now)
+	opt := selectOpts{minScore: 1, protocol: "any", layer: "el", capability: "all"}
+	out, err := buildTree(rankCandidates(rows, opt, now), opt, 42, "all.mainnet.example.org", "mainnet", key)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1012,13 +1000,14 @@ func TestSelectOptsValidate(t *testing.T) {
 }
 
 func TestOutputSequenceRequiresAKnownSchema(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "mainnet.json")
+	dir := t.TempDir()
+	path := filepath.Join(dir, "mainnet.json")
 	if err := os.WriteFile(path, []byte(`{"schema_version":1,"seq":7}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	prev, exists, err := readPrevious(path)
-	if err != nil || !exists {
-		t.Fatalf("readPrevious = %v, %v", exists, err)
+	prev, err := readPrevious(dir, "mainnet")
+	if err != nil || prev == nil {
+		t.Fatalf("readPrevious = %v, %v", prev, err)
 	}
 	if got, err := outputSequence(prev); err != nil || got != 7 {
 		t.Fatalf("outputSequence = %d, %v; want 7, nil", got, err)
@@ -1026,9 +1015,9 @@ func TestOutputSequenceRequiresAKnownSchema(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"seq":9}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	prev, exists, err = readPrevious(path)
-	if err != nil || !exists {
-		t.Fatalf("readPrevious = %v, %v", exists, err)
+	prev, err = readPrevious(dir, "mainnet")
+	if err != nil || prev == nil {
+		t.Fatalf("readPrevious = %v, %v", prev, err)
 	}
 	if _, err := outputSequence(prev); err == nil {
 		t.Fatal("schema-less artifact was accepted")
@@ -1275,7 +1264,7 @@ func TestZeroNodeArtifactYieldsNoBaselineButStillRaisesTheSequence(t *testing.T)
 		SchemaVersion: outputSchemaVersion, Domain: "snap.mainnet.nodes.example.org", Network: "mainnet",
 		Capability: "snap", Nodes: 0, Seq: 1_900_000_000, Records: map[string]string{"root": "enrtree-root:v1"},
 	}
-	if _, err := emitArtifact(legacy, outDir, legacy.Domain); err != nil {
+	if err := emitArtifact(legacy, outDir, legacy.Domain); err != nil {
 		t.Fatal(err)
 	}
 	nodes, seq, err := baselineFor(outDir, legacy.Domain, "mainnet", "snap")
@@ -1441,4 +1430,12 @@ func TestRunMultiTreeSkipsUnloadableNetworkAndPublishesTheRest(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(outDir, "all.hoodi.nodes.example.org.json")); !os.IsNotExist(err) {
 		t.Fatal("a tree was published for the unloadable network")
 	}
+}
+
+func selectNodes(rows []nodeset.Row, opt selectOpts, now time.Time) []*enode.Node {
+	var out []*enode.Node
+	for _, c := range pick(rankCandidates(rows, opt, now), opt) {
+		out = append(out, c.node)
+	}
+	return out
 }

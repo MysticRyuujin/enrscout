@@ -12,6 +12,10 @@ import (
 )
 
 var (
+	apiBuildInfo = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "enrscout_api_build_info",
+		Help: "Deployed build; the labels carry the revision, value is always 1.",
+	}, []string{"revision", "source_url"})
 	apiRequests = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "enrscout_api_requests_total",
 		Help: "API requests by route and status code.",
@@ -65,9 +69,10 @@ func recordRefresh(eng *query.Engine, err error) {
 		return
 	}
 	apiRefreshTotal.WithLabelValues("success").Inc()
-	apiLoadedNodes.Set(float64(eng.Loaded()))
+	state := eng.State()
+	apiLoadedNodes.Set(float64(state.Loaded))
 	apiLastRefresh.SetToCurrentTime()
-	if g := eng.GeneratedAt(); !g.IsZero() {
+	if g := state.GeneratedAt; !g.IsZero() {
 		apiSnapshotGenerated.Set(float64(g.Unix()))
 	}
 }

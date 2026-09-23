@@ -42,11 +42,7 @@ func devnetConfig() DevnetConfig {
 func registerDevnetForTest(t *testing.T) {
 	t.Helper()
 	t.Cleanup(func() {
-		delete(networks, "devnet")
-		delete(bootnodes, "devnet")
-		delete(clBootnodes, "devnet")
-		clNetworks = slices.DeleteFunc(clNetworks, func(c *clNetwork) bool { return c.name == "devnet" })
-		names = slices.DeleteFunc(names, func(n string) bool { return n == "devnet" })
+		registry = slices.DeleteFunc(registry, func(n *Network) bool { return n.Name == "devnet" })
 	})
 	if err := RegisterDevnet(devnetConfig()); err != nil {
 		t.Fatalf("RegisterDevnet: %v", err)

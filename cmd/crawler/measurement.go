@@ -1,7 +1,6 @@
 package main
 
 import (
-	"strings"
 	"time"
 
 	"github.com/MysticRyuujin/enrscout/internal/distinct"
@@ -43,7 +42,7 @@ type measurementPoint struct {
 	RollingDistinct []measurementDistinct         `json:"rolling_distinct"`
 }
 
-func measurementPointAt(at time.Time, run *snapshot.RunMetadata, byNetwork map[string][]nodeset.Row, state *distinct.State) measurementPoint {
+func measurementPointAt(at time.Time, run *snapshot.RunMetadata, byNetwork map[string][]nodeset.Row, estimates []distinct.Estimate) measurementPoint {
 	point := measurementPoint{
 		GeneratedAt: at.Format(time.RFC3339Nano), ForkEvaluatedAt: at.Format(time.RFC3339Nano),
 		SchemaVersion: snapshot.SchemaVersion, Methodology: snapshot.MethodologyVersion,
@@ -85,24 +84,13 @@ func measurementPointAt(at time.Time, run *snapshot.RunMetadata, byNetwork map[s
 		}
 		point.Networks[network] = aggregate
 	}
-	for _, estimate := range state.Estimates(at) {
-		if strings.HasPrefix(estimate.Key, "walker/") {
-			parts := strings.Split(estimate.Key, "/")
-			if len(parts) != 4 {
-				continue
-			}
-			point.RollingDistinct = append(point.RollingDistinct, measurementDistinct{
-				Walker: parts[1], Protocol: parts[2], Family: parts[3], Estimate: estimate.Distinct, Sightings: estimate.Sightings,
-				WindowStart: estimate.WindowStart.Format(time.RFC3339), WindowEnd: estimate.WindowEnd.Format(time.RFC3339), Error: estimate.Error,
-			})
-			continue
-		}
-		protocol, family, ok := strings.Cut(estimate.Key, "/")
+	for _, estimate := range estimates {
+		walker, protocol, family, ok := parseDistinctKey(estimate.Key)
 		if !ok {
 			continue
 		}
 		point.RollingDistinct = append(point.RollingDistinct, measurementDistinct{
-			Protocol: protocol, Family: family, Estimate: estimate.Distinct, Sightings: estimate.Sightings,
+			Walker: walker, Protocol: protocol, Family: family, Estimate: estimate.Distinct, Sightings: estimate.Sightings,
 			WindowStart: estimate.WindowStart.Format(time.RFC3339), WindowEnd: estimate.WindowEnd.Format(time.RFC3339), Error: estimate.Error,
 		})
 	}

@@ -8,7 +8,7 @@ export default defineConfig({
       "/api": process.env.VITE_API_PROXY || "http://localhost:8080",
     },
   },
-  // deck.gl is isolated in the lazy-loaded Overview route; the initial application
-  // bundle stays small even though that optional visualization chunk is substantial.
-  build: { outDir: "dist", sourcemap: false, chunkSizeWarningLimit: 1000 },
+  // deck.gl and maplibre live in the lazily loaded WorldMap chunk, which exceeds the default
+  // warning size on its own; everything else, including the landing route, stays small.
+  build: { outDir: "dist", sourcemap: false, chunkSizeWarningLimit: 1700 },
 });

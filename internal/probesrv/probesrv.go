@@ -156,10 +156,6 @@ func authorized(header string, tokenHash [sha256.Size]byte) bool {
 }
 
 func handle(w http.ResponseWriter, r *http.Request, fp *enrich.Fingerprinter, clfp *enrich.CLFingerprinter, geo *enrich.Geo, set *nodeset.Set, timeout time.Duration, allowDevnet bool) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
 	b, err := io.ReadAll(io.LimitReader(r.Body, maxBody+1))
 	if err != nil {
 		http.Error(w, "read request", http.StatusBadRequest)
@@ -174,7 +170,7 @@ func handle(w http.ResponseWriter, r *http.Request, fp *enrich.Fingerprinter, cl
 		http.Error(w, "missing enr", http.StatusBadRequest)
 		return
 	}
-	n, err := parse(raw)
+	n, err := enode.Parse(enode.ValidSchemes, raw)
 	if err != nil {
 		http.Error(w, "invalid record: "+err.Error(), http.StatusBadRequest)
 		return
@@ -210,10 +206,8 @@ func handle(w http.ResponseWriter, r *http.Request, fp *enrich.Fingerprinter, cl
 	}
 	if observed.Accepted {
 		res.Registered = true
-		if observed.Changed && geo != nil {
-			addr := n.IP()
-			g := geo.Lookup(addr)
-			set.SetGeo(n.ID(), addr, g.Country, g.City, g.Subdivision, g.Lat, g.Lon, g.ASN, g.Org, g.Hosting, g.HostingKnown, g.Geolocated, g.AccuracyRadiusKM)
+		if observed.Changed {
+			geo.Record(set, n.ID(), n.IP())
 		}
 	}
 	claimed := observed.Applied && set.ClaimFingerprint(n.ID())
@@ -263,10 +257,10 @@ func finishRegisteredProbe(set *nodeset.Set, id enode.ID, registered, claimed, a
 		return false
 	}
 	if claimed {
-		_, ok := set.SetClaimedFingerprint(id, fp.Client, fp.Version, fp.OS, fp.Lang, fp.Caps, "outbound")
+		_, ok := set.SetClaimedFingerprint(id, fp.Identity(), "outbound")
 		return ok
 	}
-	set.SetFingerprint(id, fp.Client, fp.Version, fp.OS, fp.Lang, fp.Caps, "outbound")
+	set.SetFingerprint(id, fp.Identity(), "outbound")
 	return applied
 }
 
@@ -283,11 +277,4 @@ func classify(n *enode.Node, forceDevnet, allowDevnet bool) (layer, network stri
 		return layer, network, routable, errors.New("devnet override requires an EL TCP endpoint or a classifiable CL record")
 	}
 	return layer, "devnet", routable, nil
-}
-
-func parse(s string) (*enode.Node, error) {
-	if n, err := enode.Parse(enode.ValidSchemes, s); err == nil {
-		return n, nil
-	}
-	return enode.ParseV4(s)
 }

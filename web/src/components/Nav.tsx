@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router";
 import { useNetwork } from "../network";
+import { networkColor } from "../theme";
 
 function BrandMark() {
   return (
@@ -95,7 +96,8 @@ export default function Nav() {
         {networks.map((n) => (
           <button
             key={n}
-            className={network === n ? `net-pill ${n} active` : "net-pill"}
+            className={network === n ? "net-pill active" : "net-pill"}
+            style={network === n ? { background: networkColor(n) } : undefined}
             onClick={() => setNetwork(n)}
           >
             {n}

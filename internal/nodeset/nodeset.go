@@ -187,7 +187,7 @@ func (n *Node) capacityClass() int {
 func (s *Set) evictForLocked(candClass int) (int, string) {
 	batch := max(64, s.max/1000)
 	worst := candClass
-	var victims []*Node
+	victims := newTopK(batch, len(s.m), evictBefore)
 	for _, n := range s.m {
 		c := n.capacityClass()
 		// Equal-priority nodes are never victims. Once a lower class becomes the
@@ -197,42 +197,30 @@ func (s *Set) evictForLocked(candClass int) (int, string) {
 		}
 		if c > worst {
 			worst = c
-			victims = victims[:0]
+			victims.items = victims.items[:0]
 		}
-		victims = append(victims, n)
+		victims.offer(n)
 	}
-	if len(victims) == 0 {
+	if len(victims.items) == 0 {
 		return 0, ""
 	}
-	sort.Slice(victims, func(i, j int) bool {
-		if victims[i].Score != victims[j].Score {
-			return victims[i].Score < victims[j].Score
-		}
-		if !victims[i].LastResolved.Equal(victims[j].LastResolved) {
-			return victims[i].LastResolved.Before(victims[j].LastResolved)
-		}
-		if !victims[i].LastSeen.Equal(victims[j].LastSeen) {
-			return victims[i].LastSeen.Before(victims[j].LastSeen)
-		}
-		return bytes.Compare(victims[i].ID[:], victims[j].ID[:]) < 0
-	})
-	if len(victims) > batch {
-		victims = victims[:batch]
-	}
-	for _, v := range victims {
+	for _, v := range victims.items {
 		s.deleteLocked(v.ID)
 	}
-	return len(victims), capacityClassNames[worst]
+	return len(victims.items), capacityClassNames[worst]
 }
 
-func (s *Set) ClassCounts() [4]int {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	var counts [4]int
-	for _, n := range s.m {
-		counts[n.capacityClass()]++
+func evictBefore(a, b *Node) bool {
+	if a.Score != b.Score {
+		return a.Score < b.Score
 	}
-	return counts
+	if !a.LastResolved.Equal(b.LastResolved) {
+		return a.LastResolved.Before(b.LastResolved)
+	}
+	if !a.LastSeen.Equal(b.LastSeen) {
+		return a.LastSeen.Before(b.LastSeen)
+	}
+	return bytes.Compare(a.ID[:], b.ID[:]) < 0
 }
 
 func ClassName(i int) string { return capacityClassNames[i] }
@@ -564,14 +552,14 @@ func (s *Set) SetExecutionCandidateLayer(id enode.ID, limit int) bool {
 // SetCandidateClient retains a Hello-proven client identity on an unclassified
 // execution candidate without marking it verified: a fpDone candidate would occupy
 // the never-evicted verified class forever and stop retrying the Status exchange.
-func (s *Set) SetCandidateClient(id enode.ID, client, version, os, lang, caps, direction string) bool {
+func (s *Set) SetCandidateClient(id enode.ID, fp Fingerprint, direction string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	n := s.m[id]
 	if n == nil || n.Network != "" {
 		return false
 	}
-	n.Client, n.ClientVersion, n.OS, n.Lang, n.Capabilities = client, version, os, lang, caps
+	n.Client, n.ClientVersion, n.OS, n.Lang, n.Capabilities = fp.Client, fp.Version, fp.OS, fp.Lang, fp.Caps
 	n.FPDirection = direction
 	return true
 }
@@ -587,14 +575,24 @@ type FingerprintState struct {
 	Attempts int32
 }
 
-// CandidateFingerprintStates reports the fingerprint state of every unclassified
-// execution candidate. State gauges cannot use SnapshotNetworks for these rows:
-// its network filter excludes every Network=="" record.
-func (s *Set) CandidateFingerprintStates() []FingerprintState {
+// Stats is everything the publish metrics read from the set, gathered in one pass.
+type Stats struct {
+	Len, Unclassified, ELCandidates int
+	Classes                         [4]int
+	// Candidates is the fingerprint state of every unclassified execution candidate. State gauges
+	// cannot use SnapshotNetworks for these rows: its network filter excludes every Network=="" record.
+	Candidates []FingerprintState
+}
+
+func (s *Set) Stats() Stats {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	out := make([]FingerprintState, 0, s.candidates)
+	st := Stats{Len: len(s.m), ELCandidates: s.candidates, Candidates: make([]FingerprintState, 0, s.candidates)}
 	for _, n := range s.m {
+		st.Classes[n.capacityClass()]++
+		if n.Network == "" {
+			st.Unclassified++
+		}
 		if !n.isELCandidate() {
 			continue
 		}
@@ -602,21 +600,9 @@ func (s *Set) CandidateFingerprintStates() []FingerprintState {
 		if n.fpInFlight && attempts > 0 {
 			attempts--
 		}
-		out = append(out, FingerprintState{Status: n.fpStatus(), Attempts: int32(attempts)})
+		st.Candidates = append(st.Candidates, FingerprintState{Status: n.fpStatus(), Attempts: int32(attempts)})
 	}
-	return out
-}
-
-func (s *Set) CountUnclassified() int {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	n := 0
-	for _, node := range s.m {
-		if node.Network == "" {
-			n++
-		}
-	}
-	return n
+	return st
 }
 
 // touchObservationLocked updates score and liveness and reports whether the
@@ -678,15 +664,26 @@ func (s *Set) ClaimFingerprint(id enode.ID) bool {
 // ClaimFingerprintAt atomically reserves a due probe. The due-time check keeps
 // repeated discovery observations from defeating fingerprint backoff.
 func (s *Set) ClaimFingerprintAt(id enode.ID, now time.Time) bool {
+	_, ok := s.ClaimFingerprintInfo(id, now)
+	return ok
+}
+
+// FingerprintClaim is the node state a probe dispatcher needs, read under the claim's own lock.
+type FingerprintClaim struct {
+	Layer, Network string
+	IP             net.IP
+}
+
+func (s *Set) ClaimFingerprintInfo(id enode.ID, now time.Time) (FingerprintClaim, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	n, ok := s.m[id]
 	if !ok || !n.fingerprintDue(now) {
-		return false
+		return FingerprintClaim{}, false
 	}
 	n.fpAttempts++
 	n.fpInFlight = true
-	return true
+	return FingerprintClaim{Layer: n.Layer, Network: n.Network, IP: n.dialIP()}, true
 }
 
 type fingerprintCandidate struct {
@@ -707,23 +704,38 @@ func fingerprintCandidateBetter(a, b fingerprintCandidate) bool {
 	return bytes.Compare(a.id[:], b.id[:]) < 0
 }
 
-// fingerprintCandidateHeap keeps the worst retained candidate at the root, so
-// a scan over the full set needs only O(limit) memory and O(nodes log limit) work.
-type fingerprintCandidateHeap []fingerprintCandidate
+// topK keeps the worst retained value at the root, so a scan over the full set needs only O(limit)
+// memory and O(nodes log limit) work.
+type topK[T any] struct {
+	items  []T
+	limit  int
+	better func(a, b T) bool
+}
 
-func (h fingerprintCandidateHeap) Len() int { return len(h) }
-func (h fingerprintCandidateHeap) Less(i, j int) bool {
-	return fingerprintCandidateBetter(h[j], h[i])
+func newTopK[T any](limit, size int, better func(a, b T) bool) *topK[T] {
+	limit = max(limit, 0)
+	return &topK[T]{items: make([]T, 0, min(limit, size)), limit: limit, better: better}
 }
-func (h fingerprintCandidateHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
-func (h *fingerprintCandidateHeap) Push(value any) {
-	*h = append(*h, value.(fingerprintCandidate))
-}
-func (h *fingerprintCandidateHeap) Pop() any {
-	old := *h
-	last := old[len(old)-1]
-	*h = old[:len(old)-1]
+
+func (h *topK[T]) Len() int           { return len(h.items) }
+func (h *topK[T]) Less(i, j int) bool { return h.better(h.items[j], h.items[i]) }
+func (h *topK[T]) Swap(i, j int)      { h.items[i], h.items[j] = h.items[j], h.items[i] }
+func (h *topK[T]) Push(value any)     { h.items = append(h.items, value.(T)) }
+func (h *topK[T]) Pop() any {
+	last := h.items[len(h.items)-1]
+	h.items = h.items[:len(h.items)-1]
 	return last
+}
+
+func (h *topK[T]) offer(v T) {
+	switch {
+	case h.limit <= 0:
+	case len(h.items) < h.limit:
+		heap.Push(h, v)
+	case h.better(v, h.items[0]):
+		h.items[0] = v
+		heap.Fix(h, 0)
+	}
 }
 
 // FingerprintCandidates returns retained records whose retry delay has elapsed.
@@ -740,8 +752,8 @@ func (s *Set) FingerprintCandidates(now time.Time, limit, unpromotedLimit int) [
 		return nil
 	}
 	s.mu.RLock()
-	selected := make(fingerprintCandidateHeap, 0, min(limit, len(s.m)))
-	unpromoted := make(fingerprintCandidateHeap, 0, min(max(unpromotedLimit, 0), len(s.m)))
+	selected := newTopK(limit, len(s.m), fingerprintCandidateBetter)
+	unpromoted := newTopK(unpromotedLimit, len(s.m), fingerprintCandidateBetter)
 	for _, n := range s.m {
 		if !n.fingerprintDue(now) {
 			continue
@@ -751,23 +763,15 @@ func (s *Set) FingerprintCandidates(now time.Time, limit, unpromotedLimit int) [
 			due = n.FirstSeen
 		}
 		candidate := fingerprintCandidate{enr: n.ENR, enode: n.Enode, due: due, score: n.Score, id: n.ID, unpromoted: n.isELCandidate()}
-		h, capacity := &selected, limit
 		if candidate.unpromoted {
-			h, capacity = &unpromoted, unpromotedLimit
-		}
-		if capacity <= 0 {
-			continue
-		}
-		if len(*h) < capacity {
-			heap.Push(h, candidate)
-		} else if fingerprintCandidateBetter(candidate, (*h)[0]) {
-			(*h)[0] = candidate
-			heap.Fix(h, 0)
+			unpromoted.offer(candidate)
+		} else {
+			selected.offer(candidate)
 		}
 	}
 	s.mu.RUnlock()
 
-	raw := append([]fingerprintCandidate(selected), unpromoted...)
+	raw := append(selected.items, unpromoted.items...)
 	sort.Slice(raw, func(i, j int) bool { return fingerprintCandidateBetter(raw[i], raw[j]) })
 	if len(raw) > limit {
 		raw = raw[:limit]
@@ -896,12 +900,16 @@ func (s *Set) IPOf(id enode.ID) net.IP {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if n := s.m[id]; n != nil {
-		if n.IP != "" {
-			return net.ParseIP(n.IP)
-		}
-		return net.ParseIP(n.IP6)
+		return n.dialIP()
 	}
 	return nil
+}
+
+func (n *Node) dialIP() net.IP {
+	if n.IP != "" {
+		return net.ParseIP(n.IP)
+	}
+	return net.ParseIP(n.IP6)
 }
 
 func (s *Set) SetExecutionStatus(id enode.ID, network string, fork forkid.ID) bool {
@@ -950,10 +958,7 @@ func creditStatusSightingLocked(n *Node, network string, now time.Time) {
 
 // SetConsensusStatus mirrors SetExecutionStatus for consensus Status results.
 func (s *Set) SetConsensusStatus(id enode.ID, network, forkHash string) bool {
-	return s.SetConsensusStatusAt(id, network, forkHash, time.Now())
-}
-
-func (s *Set) SetConsensusStatusAt(id enode.ID, network, forkHash string, now time.Time) bool {
+	now := time.Now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	n := s.m[id]
@@ -1034,27 +1039,32 @@ func fingerprintRetryDelay(id enode.ID, attempt int) time.Duration {
 // SetFingerprint records a successful unclaimed probe (inbound or on-demand)
 // and returns the number of failures that preceded it for this record. Callers
 // use that to report recoveries without exposing node IDs as metric labels.
-func (s *Set) SetFingerprint(id enode.ID, client, version, os, lang, caps, direction string) int {
-	return s.SetFingerprintAt(id, client, version, os, lang, caps, direction, time.Now())
+// Fingerprint is a client identification as a probe reports it.
+type Fingerprint struct {
+	Client, Version, OS, Lang, Caps string
 }
 
-func (s *Set) SetFingerprintAt(id enode.ID, client, version, os, lang, caps, direction string, now time.Time) int {
-	failures, _ := s.setFingerprint(id, client, version, os, lang, caps, direction, false, now)
+func (s *Set) SetFingerprint(id enode.ID, fp Fingerprint, direction string) int {
+	return s.SetFingerprintAt(id, fp, direction, time.Now())
+}
+
+func (s *Set) SetFingerprintAt(id enode.ID, fp Fingerprint, direction string, now time.Time) int {
+	failures, _ := s.setFingerprint(id, fp, direction, false, now)
 	return failures
 }
 
 // SetClaimedFingerprint completes the probe reserved by ClaimFingerprint; it is discarded (applied
 // is false) when the record changed after the claim, so the caller must not apply any other result
 // of the same probe either.
-func (s *Set) SetClaimedFingerprint(id enode.ID, client, version, os, lang, caps, direction string) (failures int, applied bool) {
-	return s.SetClaimedFingerprintAt(id, client, version, os, lang, caps, direction, time.Now())
+func (s *Set) SetClaimedFingerprint(id enode.ID, fp Fingerprint, direction string) (failures int, applied bool) {
+	return s.SetClaimedFingerprintAt(id, fp, direction, time.Now())
 }
 
-func (s *Set) SetClaimedFingerprintAt(id enode.ID, client, version, os, lang, caps, direction string, now time.Time) (failures int, applied bool) {
-	return s.setFingerprint(id, client, version, os, lang, caps, direction, true, now)
+func (s *Set) SetClaimedFingerprintAt(id enode.ID, fp Fingerprint, direction string, now time.Time) (failures int, applied bool) {
+	return s.setFingerprint(id, fp, direction, true, now)
 }
 
-func (s *Set) setFingerprint(id enode.ID, client, version, os, lang, caps, direction string, claimed bool, now time.Time) (int, bool) {
+func (s *Set) setFingerprint(id enode.ID, fp Fingerprint, direction string, claimed bool, now time.Time) (int, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	n := s.m[id]
@@ -1072,7 +1082,7 @@ func (s *Set) setFingerprint(id enode.ID, client, version, os, lang, caps, direc
 	if n.fpInFlight && failures > 0 {
 		failures--
 	}
-	n.Client, n.ClientVersion, n.OS, n.Lang, n.Capabilities = client, version, os, lang, caps
+	n.Client, n.ClientVersion, n.OS, n.Lang, n.Capabilities = fp.Client, fp.Version, fp.OS, fp.Lang, fp.Caps
 	n.FPDirection = direction
 	// fpRefresh stays armed so the outstanding claimed probe's stale completion is discarded.
 	if !n.fpRefresh {
@@ -1316,18 +1326,6 @@ type Row struct {
 	ForkObservedAt       int64   `parquet:"fork_observed_at"`
 	FPDirection          string  `parquet:"fp_direction"`
 	Pinned               bool    `parquet:"pinned"`
-}
-
-func (s *Set) CountForNetwork(network string) int {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	n := 0
-	for _, node := range s.m {
-		if node.Network == network {
-			n++
-		}
-	}
-	return n
 }
 
 func (s *Set) rows(network string) []Row {

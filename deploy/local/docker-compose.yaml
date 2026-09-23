@@ -41,7 +41,6 @@ services:
     command:
       - --advertiser-networks=mainnet,hoodi,sepolia
       - --advertiser-port-base=30303
-      - --el-identities-per-network=1
       - --identity-dir=/identity
       - --s3-endpoint=minio:9000
       - --s3-ssl=false

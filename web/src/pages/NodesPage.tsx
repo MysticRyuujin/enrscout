@@ -2,8 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { fetchNodes } from "../api";
 import { useNetwork } from "../network";
-import { num, relTime, shortId } from "../theme";
-import type { NodesResult } from "../types";
+import { layerName, num, relTime, shortId, SUPERNODE_CGC } from "../theme";
+import type { NodeQuery, NodesResult } from "../types";
 
 const PAGE = 50;
 const FILTER_DEBOUNCE_MS = 250;
@@ -42,21 +42,40 @@ function custodyText(min: string, max: string): string {
   return "";
 }
 
-function useDebouncedFilter(
-  key: string,
-  draft: string,
-  current: string,
-  patch: PatchFilter,
-) {
+// A text filter that edits a local draft and commits it to the URL after a pause, on blur, or on Enter.
+function DebouncedParamInput({
+  param,
+  value,
+  patch,
+  ...props
+}: {
+  param: string;
+  value: string;
+  patch: PatchFilter;
+  className: string;
+  placeholder: string;
+  maxLength?: number;
+}) {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => setDraft(value), [value]);
   useEffect(() => {
-    const value = draft.trim();
-    if (value === current) return;
+    const next = draft.trim();
+    if (next === value) return;
     const timer = window.setTimeout(
-      () => patch(key, value),
-      value ? FILTER_DEBOUNCE_MS : 0,
+      () => patch(param, next),
+      next ? FILTER_DEBOUNCE_MS : 0,
     );
     return () => window.clearTimeout(timer);
-  }, [key, draft, current, patch]);
+  }, [param, draft, value, patch]);
+  return (
+    <input
+      {...props}
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => patch(param, draft.trim())}
+      onKeyDown={(e) => e.key === "Enter" && patch(param, draft.trim())}
+    />
+  );
 }
 
 function SortableHeader({
@@ -96,16 +115,7 @@ function SortableHeader({
 export default function NodesPage({ layer }: { layer: "el" | "cl" }) {
   const { network } = useNetwork();
   const [sp, setSp] = useSearchParams();
-  const q = sp.get("q") ?? "";
-  const client = sp.get("client") ?? "";
-  const country = sp.get("country") ?? "";
-  const protocol = sp.get("protocol") ?? "";
-  const ipstack = sp.get("ipstack") ?? "";
-  const hosting = sp.get("hosting") ?? "";
-  const dialable = sp.get("dialable") ?? "";
-  const cgcMin = layer === "cl" ? (sp.get("cgc_min") ?? "") : "";
-  const cgcMax = layer === "cl" ? (sp.get("cgc_max") ?? "") : "";
-  const ip = sp.get("ip") ?? "";
+  const param = (k: string) => sp.get(k) ?? "";
   const sortParam = sp.get("sort");
   const sort: NodeSort =
     sortParam === "client" || (sortParam === "cgc" && layer === "cl")
@@ -115,33 +125,38 @@ export default function NodesPage({ layer }: { layer: "el" | "cl" }) {
   const defaultOrder = sort === "client" ? "asc" : "desc";
   const order =
     orderParam === "asc" || orderParam === "desc" ? orderParam : defaultOrder;
-
-  const [page, setPage] = useState(0);
-  const [res, setRes] = useState<NodesResult | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const [qDraft, setQDraft] = useState(q);
-  const [ipDraft, setIPDraft] = useState(ip);
-  const [clientDraft, setClientDraft] = useState(client);
-  const [countryDraft, setCountryDraft] = useState(country);
-  const custody = custodyText(cgcMin, cgcMax);
-  const [custodyDraft, setCustodyDraft] = useState(custody);
-  const filterKey = [
+  const query: NodeQuery = {
     network,
-    q,
-    ip,
-    client,
-    country,
     layer,
-    protocol,
-    ipstack,
-    hosting,
-    dialable,
-    cgcMin,
-    cgcMax,
+    q: param("q"),
+    ip: param("ip"),
+    client: param("client"),
+    country: param("country"),
+    protocol: param("protocol"),
+    ipstack: param("ipstack"),
+    hosting: param("hosting"),
+    dialable: param("dialable"),
+    cgc_min: layer === "cl" ? param("cgc_min") : "",
+    cgc_max: layer === "cl" ? param("cgc_max") : "",
     sort,
     order,
-  ].join("\u0000");
-  const requestedFilterKey = useRef(filterKey);
+  };
+  // Every effect keys on this one string, so a new filter cannot be missed by one of them.
+  const filterKey = JSON.stringify(query);
+  const cgcMin = query.cgc_min ?? "";
+  const cgcMax = query.cgc_max ?? "";
+
+  // A page belongs to the filter it was chosen under; any filter change resets it to zero. The reset
+  // is stored, not only derived, so returning to an earlier filter does not restore its old page.
+  const [pageState, setPageState] = useState({ key: filterKey, page: 0 });
+  if (pageState.key !== filterKey) setPageState({ key: filterKey, page: 0 });
+  const page = pageState.key === filterKey ? pageState.page : 0;
+  const setPage = (next: number) =>
+    setPageState({ key: filterKey, page: next });
+  const [res, setRes] = useState<NodesResult | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const custody = custodyText(cgcMin, cgcMax);
+  const [custodyDraft, setCustodyDraft] = useState(custody);
 
   const setSpRef = useRef(setSp);
   useEffect(() => {
@@ -171,36 +186,7 @@ export default function NodesPage({ layer }: { layer: "el" | "cl" }) {
     setSp(next, { replace: true });
   };
 
-  useEffect(
-    () => setPage(0),
-    [
-      network,
-      q,
-      ip,
-      client,
-      country,
-      layer,
-      protocol,
-      ipstack,
-      hosting,
-      dialable,
-      cgcMin,
-      cgcMax,
-      sort,
-      order,
-    ],
-  );
-
-  useEffect(() => setQDraft(q), [q]);
-  useEffect(() => setIPDraft(ip), [ip]);
-  useEffect(() => setClientDraft(client), [client]);
-  useEffect(() => setCountryDraft(country), [country]);
   useEffect(() => setCustodyDraft(custody), [custody]);
-
-  useDebouncedFilter("q", qDraft, q, patch);
-  useDebouncedFilter("ip", ipDraft, ip, patch);
-  useDebouncedFilter("client", clientDraft, client, patch);
-  useDebouncedFilter("country", countryDraft, country, patch);
 
   // One atomic update: two patch() calls race inside a React batch and the
   // second overwrites the first key from a stale base.
@@ -230,32 +216,10 @@ export default function NodesPage({ layer }: { layer: "el" | "cl" }) {
   }, [custodyDraft, custody, patchCustodyNow]);
 
   useEffect(() => {
-    if (requestedFilterKey.current !== filterKey) {
-      requestedFilterKey.current = filterKey;
-      // The reset effect will schedule the only request, at offset zero.
-      if (page !== 0) return;
-    }
     let live = true;
     setRes(null);
     setErr(null);
-    fetchNodes({
-      network,
-      q,
-      ip,
-      client,
-      country,
-      layer,
-      protocol,
-      ipstack,
-      hosting,
-      dialable,
-      cgc_min: cgcMin,
-      cgc_max: cgcMax,
-      sort,
-      order,
-      limit: PAGE,
-      offset: page * PAGE,
-    })
+    fetchNodes({ ...query, limit: PAGE, offset: page * PAGE })
       .then((r) => live && (setRes(r), setErr(null)))
       .catch(
         (e) =>
@@ -265,24 +229,8 @@ export default function NodesPage({ layer }: { layer: "el" | "cl" }) {
     return () => {
       live = false;
     };
-  }, [
-    network,
-    q,
-    ip,
-    client,
-    country,
-    layer,
-    protocol,
-    ipstack,
-    hosting,
-    dialable,
-    cgcMin,
-    cgcMax,
-    sort,
-    order,
-    page,
-    filterKey,
-  ]);
+    // query is a pure function of filterKey.
+  }, [filterKey, page]);
 
   useEffect(() => {
     if (!res || page === 0 || page * PAGE < res.total) return;
@@ -303,10 +251,10 @@ export default function NodesPage({ layer }: { layer: "el" | "cl" }) {
   return (
     <div className="page nodes">
       <div className="page-head">
-        <h1>{layer === "cl" ? "Consensus" : "Execution"} identities</h1>
+        <h1>{layerName(layer)} identities</h1>
         <p className="sub">
-          {num(total)} {layer === "cl" ? "consensus" : "execution"} identities
-          on <b>{network}</b>
+          {num(total)} {layerName(layer).toLowerCase()} identities on{" "}
+          <b>{network}</b>
         </p>
       </div>
 
@@ -326,45 +274,37 @@ export default function NodesPage({ layer }: { layer: "el" | "cl" }) {
       </div>
 
       <div className="filters">
-        <input
+        <DebouncedParamInput
+          param="q"
+          value={query.q ?? ""}
+          patch={patch}
           className="f-search"
-          value={qDraft}
-          onChange={(e) => setQDraft(e.target.value)}
           placeholder="node ID / enode / ENR"
-          onBlur={() => patch("q", qDraft.trim())}
-          onKeyDown={(e) => e.key === "Enter" && patch("q", qDraft.trim())}
         />
-        <input
+        <DebouncedParamInput
+          param="ip"
+          value={query.ip ?? ""}
+          patch={patch}
           className="f-ip"
-          value={ipDraft}
-          onChange={(e) => setIPDraft(e.target.value)}
           placeholder="IP address"
-          onBlur={() => patch("ip", ipDraft.trim())}
-          onKeyDown={(e) => e.key === "Enter" && patch("ip", ipDraft.trim())}
         />
-        <input
+        <DebouncedParamInput
+          param="client"
+          value={query.client ?? ""}
+          patch={patch}
           className="f-in"
-          value={clientDraft}
           placeholder="client contains…"
-          onChange={(e) => setClientDraft(e.target.value)}
-          onBlur={() => patch("client", clientDraft.trim())}
-          onKeyDown={(e) =>
-            e.key === "Enter" && patch("client", clientDraft.trim())
-          }
         />
-        <input
+        <DebouncedParamInput
+          param="country"
+          value={query.country ?? ""}
+          patch={patch}
           className="f-in"
-          value={countryDraft}
           placeholder="country (US, DE…)"
           maxLength={2}
-          onChange={(e) => setCountryDraft(e.target.value)}
-          onBlur={() => patch("country", countryDraft.trim())}
-          onKeyDown={(e) =>
-            e.key === "Enter" && patch("country", countryDraft.trim())
-          }
         />
         <select
-          value={protocol}
+          value={query.protocol}
           onChange={(e) => patch("protocol", e.target.value)}
         >
           <option value="">any protocol</option>
@@ -372,7 +312,7 @@ export default function NodesPage({ layer }: { layer: "el" | "cl" }) {
           <option value="v4">discv4</option>
         </select>
         <select
-          value={ipstack}
+          value={query.ipstack}
           onChange={(e) => patch("ipstack", e.target.value)}
         >
           <option value="">any IP stack</option>
@@ -381,7 +321,7 @@ export default function NodesPage({ layer }: { layer: "el" | "cl" }) {
           <option value="ipv4">IPv4 only</option>
         </select>
         <select
-          value={hosting}
+          value={query.hosting}
           onChange={(e) => patch("hosting", e.target.value)}
         >
           <option value="">any host</option>
@@ -389,7 +329,7 @@ export default function NodesPage({ layer }: { layer: "el" | "cl" }) {
           <option value="no">known non-hosting</option>
         </select>
         <select
-          value={dialable}
+          value={query.dialable}
           onChange={(e) => patch("dialable", e.target.value)}
         >
           <option value="">any reachability</option>
@@ -476,7 +416,7 @@ export default function NodesPage({ layer }: { layer: "el" | "cl" }) {
                 {layer === "cl" && (
                   <td>
                     {n.cgc_known ? (
-                      n.cgc >= 128 ? (
+                      n.cgc >= SUPERNODE_CGC ? (
                         <span className="supernode-tag">{n.cgc} ✨</span>
                       ) : (
                         n.cgc
@@ -518,7 +458,7 @@ export default function NodesPage({ layer }: { layer: "el" | "cl" }) {
 
       {pages > 1 && (
         <div className="pager">
-          <button disabled={page === 0} onClick={() => setPage((p) => p - 1)}>
+          <button disabled={page === 0} onClick={() => setPage(page - 1)}>
             ← Prev
           </button>
           <span>
@@ -526,7 +466,7 @@ export default function NodesPage({ layer }: { layer: "el" | "cl" }) {
           </span>
           <button
             disabled={page + 1 >= pages}
-            onClick={() => setPage((p) => p + 1)}
+            onClick={() => setPage(page + 1)}
           >
             Next →
           </button>

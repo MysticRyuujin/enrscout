@@ -151,8 +151,8 @@ func (p *fingerprintPool) startCL(ctx context.Context, cr *crawler, workers int)
 				}
 				start := time.Now()
 				var localFork []byte
-				if fork, forkErr := netconf.CurrentCLForkENR(cr.set.NetworkOf(n.ID())); forkErr == nil {
-					localFork = fork
+				if state, forkErr := netconf.CLForkStateAt(cr.set.NetworkOf(n.ID()), time.Now()); forkErr == nil {
+					localFork = state.ENRForkID()
 				}
 				r, err := cr.clfp.ProbeStatus(ctx, n, localFork)
 				observeFingerprintAttempt("cl", "outbound", time.Since(start), err)

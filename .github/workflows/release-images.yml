@@ -80,36 +80,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        component: [crawler, api, web]
+        arch: [amd64, arm64]
         include:
           - component: crawler
             dockerfile: Dockerfile.crawler
-            platform: linux/amd64
-            arch: amd64
-            runner: ubuntu-24.04
-          - component: crawler
-            dockerfile: Dockerfile.crawler
-            platform: linux/arm64
-            arch: arm64
-            runner: ubuntu-24.04-arm
           - component: api
             dockerfile: Dockerfile.api
-            platform: linux/amd64
-            arch: amd64
-            runner: ubuntu-24.04
-          - component: api
-            dockerfile: Dockerfile.api
-            platform: linux/arm64
-            arch: arm64
-            runner: ubuntu-24.04-arm
           - component: web
             dockerfile: web/Dockerfile
-            platform: linux/amd64
-            arch: amd64
+          - arch: amd64
             runner: ubuntu-24.04
-          - component: web
-            dockerfile: web/Dockerfile
-            platform: linux/arm64
-            arch: arm64
+          - arch: arm64
             runner: ubuntu-24.04-arm
     steps:
       - name: Resolve image name
@@ -154,21 +136,19 @@ jobs:
             type=raw,value=${{ needs.prepare.outputs.tag }}
             type=raw,value=sha-${{ needs.prepare.outputs.sha }}
 
-      - name: Build and push ${{ matrix.platform }} by digest
+      - name: Build and push linux/${{ matrix.arch }} by digest
         id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: ${{ matrix.dockerfile }}
-          platforms: ${{ matrix.platform }}
+          platforms: linux/${{ matrix.arch }}
           provenance: true
           sbom: true
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             SOURCE_REVISION=${{ needs.prepare.outputs.sha }}
             SOURCE_URL=${{ github.server_url }}/${{ github.repository }}
-            VITE_API_BASE=
-            VITE_NETWORKS=
           outputs: type=image,name=${{ steps.vars.outputs.image }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=image-${{ matrix.component }}-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=image-${{ matrix.component }}-${{ matrix.arch }}

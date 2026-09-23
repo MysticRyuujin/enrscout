@@ -1,29 +1,31 @@
-import { useEffect, useMemo, useState } from "react";
-import { fetchMap, fetchMeta, fetchStats } from "../api";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { fetchMap, fetchStats } from "../api";
 import { useNetwork } from "../network";
 import StatTiles, { type TileFilter } from "../components/StatTiles";
 import BarList from "../components/BarList";
 import Donut from "../components/Donut";
 import ClientVersions from "../components/ClientVersions";
-import WorldMap from "../components/WorldMap";
 import {
   clientColor,
   durationAgo,
-  hexRGB,
-  NETWORK_COLOR,
+  networkColor,
   num,
   OTHER_COLOR,
+  SUPERNODE_CGC,
   topN,
 } from "../theme";
 import {
   pointCGC,
-  pointClient,
   pointHosting,
   pointIPv6,
   pointLayer,
   pointVerified,
 } from "../types";
-import type { CompactMap, MapPoint, Meta, Stats } from "../types";
+import type { CompactMap, MapPoint, Stats } from "../types";
+
+// The map pulls in deck.gl and maplibre, most of the landing route's code; loading it separately
+// lets the tiles and charts render while it downloads.
+const WorldMap = lazy(() => import("../components/WorldMap"));
 
 const STALE_SECONDS = 900;
 const SUMMARY_REFRESH_MS = 60_000;
@@ -34,19 +36,15 @@ const MAP_PREDICATES: Record<string, (p: MapPoint) => boolean> = {
   ipv6: pointIPv6,
   cloud: pointHosting,
   verified: pointVerified,
-  supernode: (p) => pointCGC(p) >= 128,
+  supernode: (p) => pointCGC(p) >= SUPERNODE_CGC,
 };
 
 function identifiedCoverage(
-  byClient: Record<string, number>,
+  identified: number,
   byDirection: Record<string, number>,
   staleIdentified: number,
   layerTotal: number,
 ): string {
-  const identified = Object.values(byClient).reduce(
-    (sum, count) => sum + count,
-    0,
-  );
   const percent = layerTotal
     ? ((identified / layerTotal) * 100).toFixed(1)
     : "0.0";
@@ -98,11 +96,10 @@ export default function Overview() {
   const { network } = useNetwork();
   const [stats, setStats] = useState<Stats | null>(null);
   const [map, setMap] = useState<CompactMap | null>(null);
-  const [meta, setMeta] = useState<Meta | null>(null);
   const [errSummary, setErrSummary] = useState<string | null>(null);
   const [errMap, setErrMap] = useState<string | null>(null);
   const [mapFilters, setMapFilters] = useState<Record<string, TileFilter>>({});
-  const color = NETWORK_COLOR[network] || "#8a97ab";
+  const color = networkColor(network);
 
   const cycleFilter = (key: string) =>
     setMapFilters((f) => {
@@ -144,19 +141,14 @@ export default function Overview() {
     let live = true;
     setStats(null);
     setMap(null);
-    setMeta(null);
     setErrSummary(null);
     setErrMap(null);
     setMapFilters({});
     const loadSummary = async () => {
       try {
-        const [s, currentMeta] = await Promise.all([
-          fetchStats(network),
-          fetchMeta(),
-        ]);
+        const s = await fetchStats(network);
         if (live) {
           setStats(s);
-          setMeta(currentMeta);
           setErrSummary(null);
         }
       } catch (e) {
@@ -192,7 +184,8 @@ export default function Overview() {
     };
   }, [network]);
 
-  const stale = meta?.age_seconds != null && meta.age_seconds > STALE_SECONDS;
+  // Stats carries the snapshot age, cached per minute, which is far inside the staleness threshold.
+  const stale = (stats?.snapshot_age_seconds ?? 0) > STALE_SECONDS;
 
   const mapPoints = useMemo(() => {
     const pts = map?.points ?? null;
@@ -220,46 +213,32 @@ export default function Overview() {
           filtersActive ? (mapPoints?.length ?? 0) : null,
         );
 
-  const clientColors = useMemo(() => {
-    if (!stats) return null;
-    const counts = new Map<string, number>();
-    for (const source of [stats.by_client_el, stats.by_client_cl]) {
-      for (const [name, count] of Object.entries(source)) {
-        counts.set(name, (counts.get(name) ?? 0) + count);
-      }
-    }
-    const m = new Map<string, string>();
-    [...counts.entries()]
-      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-      .forEach(([name]) => m.set(name, clientColor(name)));
-    return m;
-  }, [stats]);
-
-  const colorFor = useMemo(() => {
-    return (p: MapPoint): [number, number, number, number] => {
-      return [...hexRGB(clientColor(pointClient(p))), 220];
-    };
-  }, []);
-  const colorKey = clientColors
-    ? "static-client-palette"
-    : "network:" + network;
   const legendLayer =
     mapFilters.el === "only" || mapFilters.cl === "hide"
       ? stats?.by_client_el
       : mapFilters.cl === "only" || mapFilters.el === "hide"
         ? stats?.by_client_cl
         : null;
-  const legend = clientColors
-    ? [...clientColors.entries()]
-        .filter(
-          ([name]) =>
-            name !== "Other" &&
-            (!legendLayer ||
-              Object.prototype.hasOwnProperty.call(legendLayer, name)),
-        )
-        .map(([name, c]) => ({ name, color: c }))
-        .concat({ name: "Other", color: OTHER_COLOR })
-    : undefined;
+  const legend = useMemo(() => {
+    if (!stats) return undefined;
+    const counts = new Map<string, number>();
+    for (const source of [stats.by_client_el, stats.by_client_cl]) {
+      for (const [name, count] of Object.entries(source)) {
+        counts.set(name, (counts.get(name) ?? 0) + count);
+      }
+    }
+    return [...counts.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([name]) => name)
+      .filter(
+        (name) =>
+          name !== "Other" &&
+          (!legendLayer ||
+            Object.prototype.hasOwnProperty.call(legendLayer, name)),
+      )
+      .map((name) => ({ name, color: clientColor(name) }))
+      .concat({ name: "Other", color: OTHER_COLOR });
+  }, [stats, legendLayer]);
 
   const ipv6pct =
     stats && stats.total
@@ -276,7 +255,7 @@ export default function Overview() {
     : [];
   const executionCaption = stats
     ? identifiedCoverage(
-        stats.by_client_el,
+        stats.el_identified,
         stats.by_direction_el,
         stats.el_identified_stale,
         stats.execution,
@@ -284,7 +263,7 @@ export default function Overview() {
     : null;
   const consensusCaption = stats
     ? identifiedCoverage(
-        stats.by_client_cl,
+        stats.cl_identified,
         stats.by_direction_cl,
         stats.cl_identified_stale,
         stats.consensus,
@@ -299,11 +278,11 @@ export default function Overview() {
           network
         </h1>
         <p className="sub">
-          {meta?.generated_at ? (
+          {stats?.snapshot_generated_at ? (
             <>
               Updated{" "}
               <span className={stale ? "freshness stale" : "freshness"}>
-                {durationAgo(meta.age_seconds ?? 0)}
+                {durationAgo(stats.snapshot_age_seconds)}
               </span>
             </>
           ) : (
@@ -423,13 +402,9 @@ export default function Overview() {
         </div>
       )}
 
-      <WorldMap
-        points={mapPoints}
-        network={network}
-        colorFor={colorFor}
-        colorKey={colorKey}
-        legend={legend}
-      />
+      <Suspense fallback={<div className="map" />}>
+        <WorldMap points={mapPoints} network={network} legend={legend} />
+      </Suspense>
 
       {stats && (
         <div className="grid-2">

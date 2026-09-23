@@ -1,24 +1,27 @@
 import { useEffect, useState } from "react";
 import { useLocation } from "react-router";
 import { fetchMeta } from "../api";
+import { useNetwork } from "../network";
 
 const DEFAULT_SOURCE_URL = "https://github.com/MysticRyuujin/enrscout";
 
 export default function About() {
-  const [sourceURL, setSourceURL] = useState(DEFAULT_SOURCE_URL);
+  const shared = useNetwork().meta;
+  const [fetched, setFetched] = useState<string | undefined>();
+  const sourceURL = shared?.source_url || fetched || DEFAULT_SOURCE_URL;
   const { hash } = useLocation();
 
+  // App's single /meta fetch may have failed; retry here rather than show the default for the session.
   useEffect(() => {
+    if (shared) return;
     let live = true;
     fetchMeta()
-      .then((meta) => {
-        if (live && meta.source_url) setSourceURL(meta.source_url);
-      })
+      .then((meta) => live && setFetched(meta.source_url))
       .catch(() => {});
     return () => {
       live = false;
     };
-  }, []);
+  }, [shared]);
 
   useEffect(() => {
     if (hash) document.getElementById(hash.slice(1))?.scrollIntoView();

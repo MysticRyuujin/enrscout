@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -126,55 +125,27 @@ func (c *route53DNS) Sync(ctx context.Context, domain string, want, retain map[s
 	if err != nil {
 		return 0, fmt.Errorf("list records: %w", err)
 	}
-	wanted := make(map[string]string, len(want))
-	for name, content := range want {
-		wanted[dnsKey(name)] = content
-	}
-	var entries, root, stale []types.Change
-	for name, content := range wanted {
-		ttl := int64(c.ttls.forName(name, domain))
-		current, exists := have[name]
-		if exists && normalizeTXT(strings.Join(current.values, "")) == content && current.ttl == ttl {
-			continue
-		}
+	plan := planSync(have, domain, want, retain, func(name, content string, current r53RecordSet) bool {
+		return normalizeTXT(strings.Join(current.values, "")) == content && current.ttl == int64(c.ttls.forName(name, domain))
+	})
+	write := func(name string) types.Change {
 		action := types.ChangeActionCreate
-		if exists {
+		if _, exists := have[name]; exists {
 			action = types.ChangeActionUpsert
 		}
-		change := txtChange(action, name, ttl, splitTXT(content))
-		if name == dnsKey(domain) {
-			root = append(root, change)
-			continue
-		}
-		entries = append(entries, change)
+		return txtChange(action, name, int64(c.ttls.forName(name, domain)), splitTXT(plan.wanted[name]))
 	}
-	// A nil retain means nothing is known to have been published, so the zone may already be serving
-	// a tree this process did not write. Pruning then would delete a live generation.
-	kept := 0
-	if retain != nil {
-		retained := make(map[string]struct{}, len(retain))
-		for name := range retain {
-			retained[dnsKey(name)] = struct{}{}
-		}
-		for name, current := range have {
-			if _, keep := wanted[name]; keep {
-				continue
-			}
-			if _, keep := retained[name]; keep {
-				kept++
-				continue
-			}
-			stale = append(stale, txtChange(types.ChangeActionDelete, name, current.ttl, current.values...))
-		}
-	} else {
-		for name := range have {
-			if _, keep := wanted[name]; !keep {
-				kept++
-			}
-		}
+	var entries, root, stale []types.Change
+	for _, name := range plan.entries {
+		entries = append(entries, write(name))
 	}
-	sortChanges(entries)
-	sortChanges(stale)
+	if plan.writeRoot {
+		root = append(root, write(dnsKey(domain)))
+	}
+	for _, name := range plan.stale {
+		current := have[name]
+		stale = append(stale, txtChange(types.ChangeActionDelete, name, current.ttl, current.values...))
+	}
 
 	ids, changed, err := c.submit(ctx, entries, "enrscout entries for "+domain)
 	if err != nil {
@@ -197,10 +168,10 @@ func (c *route53DNS) Sync(ctx context.Context, domain string, want, retain map[s
 	changed += n
 	if err != nil {
 		slog.Warn("stale DNS records left in place", "domain", domain, "records", len(stale), "err", err)
-		mDNSZoneRecords.WithLabelValues(domain).Set(float64(len(wanted) + kept + len(stale)))
+		mDNSZoneRecords.WithLabelValues(domain).Set(float64(len(plan.wanted) + plan.kept + len(stale)))
 		return changed, nil
 	}
-	mDNSZoneRecords.WithLabelValues(domain).Set(float64(len(wanted) + kept))
+	mDNSZoneRecords.WithLabelValues(domain).Set(float64(len(plan.wanted) + plan.kept))
 	return changed, nil
 }
 
@@ -292,12 +263,6 @@ func changeCount(change types.Change) int {
 		return 2
 	}
 	return 1
-}
-
-func sortChanges(changes []types.Change) {
-	sort.Slice(changes, func(i, j int) bool {
-		return *changes[i].ResourceRecordSet.Name < *changes[j].ResourceRecordSet.Name
-	})
 }
 
 func txtChange(action types.ChangeAction, name string, ttl int64, values ...string) types.Change {

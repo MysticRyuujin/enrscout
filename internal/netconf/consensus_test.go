@@ -11,7 +11,7 @@ import (
 
 func TestForkDigestsAreDisjointAcrossNetworks(t *testing.T) {
 	seen := map[[4]byte]string{}
-	for _, c := range clNetworks {
+	for _, c := range builtinCL() {
 		c.compute()
 		if len(c.digests) < len(c.forks) {
 			t.Errorf("%s: %d digests, want at least one per regular fork (%d)", c.name, len(c.digests), len(c.forks))
@@ -37,7 +37,7 @@ func TestClassifyCLUnknownDigest(t *testing.T) {
 // Post-Fusaka nodes advertise EIP-7892 masked digests; every built-in network must
 // classify the digest of its final blob-schedule era (what live nodes advertise today).
 func TestBuiltinNetworksClassifyPostFuluDigests(t *testing.T) {
-	for _, c := range clNetworks {
+	for _, c := range builtinCL() {
 		if len(c.blobSchedule) == 0 {
 			t.Errorf("%s: empty blobSchedule; post-Fulu digests are all masked", c.name)
 			continue
@@ -46,8 +46,7 @@ func TestBuiltinNetworksClassifyPostFuluDigests(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		ver, _ := decodeVersion(fork.version)
-		raw, _ := c.rawDigest(ver)
+		raw := c.rawDigest(fork.version)
 		if got := ClassifyCL(raw); got != "" {
 			t.Errorf("ClassifyCL(raw Fulu digest %x) = %q, want unknown", raw, got)
 		}
@@ -64,7 +63,7 @@ func TestBuiltinNetworksClassifyPostFuluDigests(t *testing.T) {
 }
 
 func TestCurrentCLForkDigests(t *testing.T) {
-	for _, c := range clNetworks {
+	for _, c := range builtinCL() {
 		at := c.timeAtEpoch(lastScheduledEpoch(c) + 1)
 		state, err := CLForkStateAt(c.name, at)
 		if err != nil {
@@ -77,8 +76,7 @@ func TestCurrentCLForkDigests(t *testing.T) {
 		if got := ClassifyCL(state.Digest); got != c.name {
 			t.Errorf("%s: current digest %s classifies as %q", c.name, d, got)
 		}
-		genesisVer, _ := decodeVersion(c.forks[0].version)
-		genesis, _ := c.rawDigest(genesisVer)
+		genesis := c.rawDigest(c.forks[0].version)
 		if IsCurrentCLForkAt(c.name, hex.EncodeToString(genesis[:]), at) {
 			t.Errorf("%s: genesis-era digest counted as current", c.name)
 		}
@@ -92,12 +90,13 @@ func TestCurrentCLForkDigests(t *testing.T) {
 }
 
 func TestCurrentCLForkENR(t *testing.T) {
-	for _, c := range clNetworks {
+	for _, c := range builtinCL() {
 		at := c.timeAtEpoch(lastScheduledEpoch(c) + 1)
-		entry, err := CurrentCLForkENRAt(c.name, at)
+		state, err := CLForkStateAt(c.name, at)
 		if err != nil {
 			t.Fatal(err)
 		}
+		entry := state.ENRForkID()
 		if len(entry) != 16 {
 			t.Fatalf("%s entry length = %d, want 16", c.name, len(entry))
 		}
@@ -106,7 +105,6 @@ func TestCurrentCLForkENR(t *testing.T) {
 		if got := ClassifyCL(digest); got != c.name {
 			t.Errorf("%s current digest classifies as %q", c.name, got)
 		}
-		state, _ := CLForkStateAt(c.name, at)
 		if !bytes.Equal(entry[4:8], state.CurrentVersion[:]) {
 			t.Errorf("%s no-next-fork version = %x, want current %x", c.name, entry[4:8], state.CurrentVersion)
 		}
@@ -117,7 +115,7 @@ func TestCurrentCLForkENR(t *testing.T) {
 }
 
 func TestCLForkStateBoundaries(t *testing.T) {
-	for _, c := range clNetworks {
+	for _, c := range builtinCL() {
 		epochs := make([]uint64, 0, len(c.forks)+len(c.blobSchedule))
 		for _, fork := range c.forks {
 			if fork.epoch > 0 {
@@ -151,6 +149,16 @@ func TestCLForkStateBoundaries(t *testing.T) {
 			}
 		}
 	}
+}
+
+func builtinCL() []*clNetwork {
+	var out []*clNetwork
+	for _, n := range registry {
+		if n.cl != nil {
+			out = append(out, n.cl)
+		}
+	}
+	return out
 }
 
 func lastScheduledEpoch(c *clNetwork) uint64 {

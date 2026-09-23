@@ -44,6 +44,12 @@ type publisher struct {
 	quarantines  int
 	forceUsed    bool
 	forcePending bool
+
+	// final marks the shutdown publish, which always persists the distinct state. Both timestamps
+	// are wall-clock readings compared with time.Since, whose monotonic clock ignores clock steps.
+	final              bool
+	distinctSavedAt    time.Time
+	aggregatesPrunedAt time.Time
 }
 
 type generation struct {
@@ -59,15 +65,19 @@ type generation struct {
 func (p *publisher) Publish(ctx context.Context) error {
 	defer func(start time.Time) { mPublishDuration.Observe(time.Since(start).Seconds()) }(time.Now())
 	now := p.generationTime()
+	p.persistDistinct(ctx)
 	p.pruneStale(now)
-	p.recordSetMetrics()
+	stats := p.set.Stats()
+	recordSetMetrics(stats)
 
-	m, gens, byNet, ok := p.build(now)
-	if !ok {
-		return nil
-	}
+	m, byNet := p.build(now)
+	updateFingerprintStateMetrics(byNet, stats.Candidates)
 	admitted, forced := p.admit(m)
 	if !admitted {
+		return nil
+	}
+	gens, ok := p.serialize(m, byNet)
+	if !ok {
 		return nil
 	}
 	uploaded, ok := p.upload(ctx, gens)
@@ -139,16 +149,17 @@ func (p *publisher) pruneStale(now time.Time) {
 	}
 }
 
-func (p *publisher) recordSetMetrics() {
-	mNodesetSize.Set(float64(p.set.Len()))
-	mUnclassifiedNodes.Set(float64(p.set.CountUnclassified()))
-	mCandidateNodes.Set(float64(p.set.CountELCandidates()))
-	for i, count := range p.set.ClassCounts() {
+func recordSetMetrics(stats nodeset.Stats) {
+	mNodesetSize.Set(float64(stats.Len))
+	mUnclassifiedNodes.Set(float64(stats.Unclassified))
+	mCandidateNodes.Set(float64(stats.ELCandidates))
+	for i, count := range stats.Classes {
 		mNodesetClassSize.WithLabelValues(nodeset.ClassName(i)).Set(float64(count))
 	}
 }
 
-func (p *publisher) build(now time.Time) (*snapshot.Manifest, []generation, map[string][]nodeset.Row, bool) {
+// build fills in only the counts the guards read, so a rejected publish skips Parquet serialization.
+func (p *publisher) build(now time.Time) (*snapshot.Manifest, map[string][]nodeset.Row) {
 	m := &snapshot.Manifest{
 		SchemaVersion: snapshot.SchemaVersion,
 		GeneratedAt:   now,
@@ -157,33 +168,39 @@ func (p *publisher) build(now time.Time) (*snapshot.Manifest, []generation, map[
 		Networks:      make(map[string]snapshot.NetworkSnapshot, len(p.networks)),
 	}
 	byNet := p.set.SnapshotNetworks(p.networks)
-	updateFingerprintStateMetrics(byNet, p.set.CandidateFingerprintStates())
-	gens := make([]generation, 0, len(p.networks))
 	for _, network := range p.networks {
 		rows := byNet[network]
-		data, err := nodeset.ParquetFromRows(rows)
+		m.Networks[network] = snapshot.NetworkSnapshot{
+			GenerationKey: p.layout.GenerationKey(network, now), NodeCount: len(rows),
+			CurrentNodeCount: currentForkCount(network, rows, now),
+		}
+	}
+	return m, byNet
+}
+
+func (p *publisher) serialize(m *snapshot.Manifest, byNet map[string][]nodeset.Row) ([]generation, bool) {
+	gens := make([]generation, 0, len(p.networks))
+	for _, network := range p.networks {
+		data, err := nodeset.ParquetFromRows(byNet[network])
 		if err != nil {
 			slog.Error("serialize snapshot", "network", network, "err", err)
-			return nil, nil, nil, false
+			return nil, false
 		}
 		sum := sha256.Sum256(data)
-		g := generation{
-			network: network, key: p.layout.GenerationKey(network, now), sum: hex.EncodeToString(sum[:]),
-			data: data, count: len(rows), current: currentForkCount(network, rows, now),
-		}
-		gens = append(gens, g)
-		m.Networks[network] = snapshot.NetworkSnapshot{
-			GenerationKey: g.key, NodeCount: g.count, CurrentNodeCount: g.current,
-			SHA256: g.sum, Bytes: len(g.data),
-		}
+		ns := m.Networks[network]
+		ns.SHA256, ns.Bytes = hex.EncodeToString(sum[:]), len(data)
+		m.Networks[network] = ns
+		gens = append(gens, generation{
+			network: network, key: ns.GenerationKey, sum: ns.SHA256,
+			data: data, count: ns.NodeCount, current: ns.CurrentNodeCount,
+		})
 	}
 	if err := m.Validate(p.layout); err != nil {
 		mPublishFailures.Inc()
 		slog.Error("validate manifest before upload", "err", err)
-		return nil, nil, nil, false
+		return nil, false
 	}
-
-	return m, gens, byNet, true
+	return gens, true
 }
 
 // admit runs the guards before anything is uploaded, so a rejected publish cannot orphan generation
@@ -232,14 +249,29 @@ func (p *publisher) upload(ctx context.Context, gens []generation) ([]string, bo
 	return uploaded, true
 }
 
-func (p *publisher) recordPublished(ctx context.Context, m *snapshot.Manifest, gens []generation, byNet map[string][]nodeset.Row, now time.Time) {
-	if stateData, err := p.distinct.Marshal(); err != nil {
-		slog.Warn("encode rolling-distinct state", "err", err)
-	} else if err := p.store.Put(ctx, p.distinctKey, stateData, "application/gzip"); err != nil {
-		slog.Warn("persist rolling-distinct state", "err", err)
+// persistDistinct runs before the publish guards, so a quarantined or rejected snapshot does not
+// also stop the distinct state from being saved. Buckets are hour-granular, so saving hourly (and
+// at shutdown) bounds a crash to losing at most an hour of sightings.
+func (p *publisher) persistDistinct(ctx context.Context) {
+	if !p.final && !p.distinctSavedAt.IsZero() && time.Since(p.distinctSavedAt) < time.Hour {
+		return
 	}
-	updateDistinctMetrics(p.distinct, now)
-	if pointData, err := json.Marshal(measurementPointAt(now, p.run, byNet, p.distinct)); err != nil {
+	stateData, err := p.distinct.Marshal()
+	if err != nil {
+		slog.Warn("encode rolling-distinct state", "err", err)
+		return
+	}
+	if err := p.store.Put(ctx, p.distinctKey, stateData, "application/gzip"); err != nil {
+		slog.Warn("persist rolling-distinct state", "err", err)
+		return
+	}
+	p.distinctSavedAt = time.Now()
+}
+
+func (p *publisher) recordPublished(ctx context.Context, m *snapshot.Manifest, gens []generation, byNet map[string][]nodeset.Row, now time.Time) {
+	estimates := p.distinct.Estimates(now)
+	updateDistinctMetrics(estimates)
+	if pointData, err := json.Marshal(measurementPointAt(now, p.run, byNet, estimates)); err != nil {
 		slog.Warn("encode longitudinal aggregate", "err", err)
 	} else {
 		key := fmt.Sprintf("%s/%s/%s.json", aggregatePrefix(p.statePrefix), p.run.MethodologyID, now.Format(aggregateTimeFormat))
@@ -247,7 +279,11 @@ func (p *publisher) recordPublished(ctx context.Context, m *snapshot.Manifest, g
 			slog.Warn("persist longitudinal aggregate", "key", key, "err", err)
 		}
 	}
-	pruneAggregates(ctx, p.store, p.statePrefix, p.cfg.keepAggregates, now)
+	// Retention is days long, so an hourly sweep suffices; listing the whole prefix every minute does not.
+	if p.aggregatesPrunedAt.IsZero() || time.Since(p.aggregatesPrunedAt) >= time.Hour {
+		pruneAggregates(ctx, p.store, p.statePrefix, p.cfg.keepAggregates, now)
+		p.aggregatesPrunedAt = time.Now()
+	}
 	mLastPublish.Set(float64(now.Unix()))
 	for _, g := range gens {
 		mSnapshotNodes.WithLabelValues(g.network).Set(float64(g.count))

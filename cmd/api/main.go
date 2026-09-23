@@ -20,12 +20,10 @@ import (
 	"time"
 
 	"github.com/MysticRyuujin/enrscout/internal/buildinfo"
-	"github.com/MysticRyuujin/enrscout/internal/debugsrv"
 	"github.com/MysticRyuujin/enrscout/internal/devnetconfig"
 	"github.com/MysticRyuujin/enrscout/internal/metricsrv"
 	"github.com/MysticRyuujin/enrscout/internal/netconf"
 	"github.com/MysticRyuujin/enrscout/internal/query"
-	"github.com/MysticRyuujin/enrscout/internal/snapshot"
 	"github.com/MysticRyuujin/enrscout/internal/store"
 )
 
@@ -48,27 +46,19 @@ func run() error {
 		corsOrigin  = flag.String("cors-origin", "", "Access-Control-Allow-Origin response value (empty disables cross-origin response sharing; not an authorization control)")
 		pprofAddr   = flag.String("pprof", "", "serve net/http/pprof on this address (empty = off)")
 		metricsAddr = flag.String("metrics-addr", "127.0.0.1:9101", "serve Prometheus metrics on this private listener (empty = disabled)")
-		data        = flag.String("data", "data", "filesystem snapshot dir (used when --s3-endpoint is empty)")
-		s3Endpoint  = flag.String("s3-endpoint", "", "S3-compatible endpoint (host:port); empty uses filesystem")
-		s3Bucket    = flag.String("s3-bucket", "enrscout", "S3 bucket")
-		s3Region    = flag.String("s3-region", "us-east-1", "S3 region")
-		s3SSL       = flag.Bool("s3-ssl", true, "use TLS for the S3 endpoint (set false only for a trusted local endpoint)")
+		storeFlags  = store.BindFlags(flag.CommandLine, "data", "filesystem snapshot dir")
 	)
 	flag.Parse()
 
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	if strings.TrimSpace(*devnetDir) != "" {
-		cfg, err := devnetconfig.Load(*devnetDir)
-		if err != nil {
-			return fmt.Errorf("load devnet: %w", err)
-		}
-		if err := netconf.RegisterDevnet(cfg); err != nil {
-			return fmt.Errorf("register devnet: %w", err)
+		if _, err := devnetconfig.Register(*devnetDir); err != nil {
+			return err
 		}
 	}
 
-	networks := splitCSV(*networksF)
-	if err := validateNetworks(networks); err != nil {
+	networks, err := netconf.ParseNetworkList(*networksF)
+	if err != nil {
 		return fmt.Errorf("--networks: %w", err)
 	}
 	if *refresh <= 0 {
@@ -80,9 +70,10 @@ func run() error {
 	if err := validateCORSOrigin(*corsOrigin); err != nil {
 		return fmt.Errorf("--cors-origin: %w", err)
 	}
-	if err := debugsrv.Start(*pprofAddr); err != nil {
+	if err := metricsrv.StartPprof(*pprofAddr); err != nil {
 		return err
 	}
+	apiBuildInfo.WithLabelValues(buildinfo.Revision, buildinfo.SourceURL).Set(1)
 	if err := metricsrv.Start(*metricsAddr, "api"); err != nil {
 		return err
 	}
@@ -90,10 +81,7 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	st, err := store.Open(ctx, store.S3Config{
-		Endpoint: *s3Endpoint, Region: *s3Region, Bucket: *s3Bucket,
-		AccessKey: os.Getenv("S3_ACCESS_KEY"), SecretKey: os.Getenv("S3_SECRET_KEY"), UseSSL: *s3SSL,
-	}, *data)
+	st, err := storeFlags.Open(ctx)
 	if err != nil {
 		return err
 	}
@@ -159,7 +147,7 @@ func refreshLoop(ctx context.Context, eng *query.Engine, every time.Duration) {
 				slog.Warn("snapshot refresh failed", "err", err)
 				continue
 			}
-			slog.Info("snapshots refreshed", "nodes", eng.Loaded())
+			slog.Info("snapshots refreshed", "nodes", eng.State().Loaded)
 		}
 	}
 }
@@ -189,8 +177,9 @@ func routes(eng *query.Engine, cors string, maxAge time.Duration, networks []str
 	})
 
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		body := map[string]any{"status": "ok", "nodes": eng.Loaded()}
-		if g := eng.GeneratedAt(); !g.IsZero() {
+		state := eng.State()
+		body := map[string]any{"status": "ok", "nodes": state.Loaded}
+		if g := state.GeneratedAt; !g.IsZero() {
 			body["generated_at"] = g.UTC().Format(time.RFC3339)
 			body["age_seconds"] = int(ageSince(g).Seconds())
 		}
@@ -198,7 +187,8 @@ func routes(eng *query.Engine, cors string, maxAge time.Duration, networks []str
 	})
 
 	mux.HandleFunc("GET /api/v1/meta", instrument("/api/v1/meta", func(w http.ResponseWriter, r *http.Request) {
-		run := eng.RunMetadata()
+		state := eng.State()
+		run := state.Run
 		revision, sourceURL := run.SourceRevision, run.SourceURL
 		if revision == "" {
 			revision = buildinfo.Revision
@@ -207,8 +197,8 @@ func routes(eng *query.Engine, cors string, maxAge time.Duration, networks []str
 			sourceURL = buildinfo.SourceURL
 		}
 		body := map[string]any{
-			"nodes": eng.Loaded(), "networks": networks, "schema_version": eng.SchemaVersion(),
-			"source_revision": revision, "source_url": sourceURL, "crawler_id": eng.CrawlerID(),
+			"nodes": state.Loaded, "networks": networks, "schema_version": state.SchemaVersion,
+			"source_revision": revision, "source_url": sourceURL, "crawler_id": state.CrawlerID,
 		}
 		if run.RunID != "" {
 			body["run_id"] = run.RunID
@@ -231,7 +221,7 @@ func routes(eng *query.Engine, cors string, maxAge time.Duration, networks []str
 		if !run.MethodologyStartedAt.IsZero() {
 			body["methodology_started_at"] = run.MethodologyStartedAt.UTC().Format(time.RFC3339Nano)
 		}
-		if g := eng.GeneratedAt(); !g.IsZero() {
+		if g := state.GeneratedAt; !g.IsZero() {
 			body["generated_at"] = g.UTC().Format(time.RFC3339)
 			body["age_seconds"] = int(ageSince(g).Seconds())
 		}
@@ -239,33 +229,10 @@ func routes(eng *query.Engine, cors string, maxAge time.Duration, networks []str
 	}))
 
 	mux.HandleFunc("GET /api/v1/nodes", instrument("/api/v1/nodes", func(w http.ResponseWriter, r *http.Request) {
-		q := r.URL.Query()
-		if err := validateNodeQuery(q, known); err != nil {
-			writeClientErr(w, err)
-			return
-		}
-		limit, err := parseIntParam(q.Get("limit"), 100, 1, 1000)
+		f, err := nodeFilter(r.URL.Query(), known)
 		if err != nil {
 			writeClientErr(w, err)
 			return
-		}
-		offset, err := parseIntParam(q.Get("offset"), 0, 0, 1_000_000)
-		if err != nil {
-			writeClientErr(w, err)
-			return
-		}
-		forkStatus := q.Get("fork")
-		if forkStatus == "" {
-			forkStatus = "current"
-		}
-		f := query.Filter{
-			Network: q.Get("network"), Client: q.Get("client"), Country: q.Get("country"),
-			Layer: q.Get("layer"), Protocol: q.Get("protocol"), IPStack: q.Get("ipstack"), Hosting: q.Get("hosting"),
-			Dialable: q.Get("dialable"), ForkStatus: forkStatus,
-			Membership: q.Get("membership"),
-			IP:         q.Get("ip"), Q: q.Get("q"), CGCMin: q.Get("cgc_min"), CGCMax: q.Get("cgc_max"),
-			Sort: q.Get("sort"), Order: q.Get("order"),
-			Limit: limit, Offset: offset,
 		}
 		res, err := eng.Nodes(r.Context(), f)
 		if err != nil {
@@ -310,8 +277,8 @@ func routes(eng *query.Engine, cors string, maxAge time.Duration, networks []str
 		// under Geth's key.
 		client := strings.TrimSpace(q.Get("client"))
 		membership := q.Get("membership")
-		if membership != "" && membership != "verified" && membership != "claimed" && membership != "all" {
-			writeClientErr(w, errors.New("membership must be verified, claimed, or all"))
+		if err := (query.Filter{Membership: membership}).Validate(); err != nil {
+			writeClientErr(w, err)
 			return
 		}
 		key := q.Get("network")
@@ -348,8 +315,8 @@ func routes(eng *query.Engine, cors string, maxAge time.Duration, networks []str
 			return
 		}
 		membership := r.URL.Query().Get("membership")
-		if membership != "" && membership != "verified" && membership != "claimed" && membership != "all" {
-			writeClientErr(w, errors.New("membership must be verified, claimed, or all"))
+		if err := (query.Filter{Membership: membership}).Validate(); err != nil {
+			writeClientErr(w, err)
 			return
 		}
 		// Served networks only (arbitrary keys grow the map unboundedly); the pre-query
@@ -360,9 +327,9 @@ func routes(eng *query.Engine, cors string, maxAge time.Duration, networks []str
 			writeErr(w, err)
 			return
 		}
-		refreshedAt := eng.LastRefresh()
+		refreshedAt := eng.State().LastRefresh
 		cacheKey := network + "\x00" + format + "\x00" + membership + "\x00" + era
-		body, err := maps.load(r.Context(), cacheKey, refreshedAt, func(ctx context.Context) ([]byte, error) {
+		body, etag, err := maps.load(r.Context(), cacheKey, refreshedAt, func(ctx context.Context) ([]byte, error) {
 			pts, total, err := eng.MapPointsForMembershipAt(ctx, network, membership, at)
 			if err != nil {
 				return nil, err
@@ -376,13 +343,6 @@ func routes(eng *query.Engine, cors string, maxAge time.Duration, networks []str
 			writeErr(w, err)
 			return
 		}
-		etagKey := network
-		if format == "compact" {
-			etagKey += "-compact"
-		}
-		etagKey += "-" + membership
-		etagKey += "-" + era
-		etag := mapETag(etagKey, body)
 		w.Header().Set("Cache-Control", mapCacheControl(at, nextTransition))
 		w.Header().Set("ETag", etag)
 		if etagMatches(r.Header.Get("If-None-Match"), etag) {
@@ -396,9 +356,9 @@ func routes(eng *query.Engine, cors string, maxAge time.Duration, networks []str
 	return securityHeaders(withCORS(cors, mux))
 }
 
-func mapETag(network string, body []byte) string {
+func mapETag(key string, body []byte) string {
 	h := sha256.New()
-	_, _ = h.Write([]byte(network))
+	_, _ = h.Write([]byte(key))
 	_, _ = h.Write([]byte{0})
 	_, _ = h.Write(body)
 	return fmt.Sprintf(`"map-%x"`, h.Sum(nil))
@@ -463,7 +423,7 @@ func loadStats(ctx context.Context, eng *query.Engine, aggregates *lru[query.Sta
 	shared, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
 	for attempt := 0; ; attempt++ {
-		generation := membership + "\x00" + eng.LastRefresh().UTC().Format(time.RFC3339Nano) + "\x00" + era + "\x00" + minute
+		generation := membership + "\x00" + eng.State().LastRefresh.UTC().Format(time.RFC3339Nano) + "\x00" + era + "\x00" + minute
 		result, err := aggregates.load(ctx, network+"\x00"+generation, func() (query.Stats, error) {
 			return eng.StatsForMembershipAt(shared, network, membership, at)
 		})
@@ -570,6 +530,7 @@ func (c *lru[V]) load(ctx context.Context, key string, loader func() (V, error))
 type mapEntry struct {
 	at    time.Time
 	body  []byte
+	etag  string
 	err   error
 	ready chan struct{}
 }
@@ -579,40 +540,44 @@ type mapCache struct {
 	entries map[string]*mapEntry
 }
 
-func (c *mapCache) load(ctx context.Context, network string, refresh time.Time, fn func(context.Context) ([]byte, error)) ([]byte, error) {
+// load returns the body with its ETag, hashed once per cached body rather than once per request.
+func (c *mapCache) load(ctx context.Context, key string, refresh time.Time, fn func(context.Context) ([]byte, error)) ([]byte, string, error) {
 	c.mu.Lock()
 	// Serving same-or-newer entries keeps waiters that raced a refresh from clobbering a fresher in-flight loader.
-	if e, ok := c.entries[network]; ok && !e.at.Before(refresh) {
+	if e, ok := c.entries[key]; ok && !e.at.Before(refresh) {
 		c.mu.Unlock()
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, "", ctx.Err()
 		case <-e.ready:
-			return e.body, e.err
+			return e.body, e.etag, e.err
 		}
 	}
 	e := &mapEntry{at: refresh, ready: make(chan struct{})}
-	c.entries[network] = e
+	c.entries[key] = e
 	c.mu.Unlock()
 
 	// One waiter's cancellation must not abort the query shared by all coalesced waiters.
 	lctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	e.body, e.err = fn(lctx)
 	cancel()
+	if e.err == nil {
+		e.etag = mapETag(key, e.body)
+	}
 	c.mu.Lock()
 	// An error is shared with this attempt's coalesced waiters but never cached: LastRefresh
 	// only advances on a table swap, so a cached error would be served until the next NEW
 	// generation - potentially forever if the crawler stops publishing.
-	if e.err != nil && c.entries[network] == e {
-		delete(c.entries, network)
+	if e.err != nil && c.entries[key] == e {
+		delete(c.entries, key)
 	}
 	c.mu.Unlock()
 	close(e.ready)
-	return e.body, e.err
+	return e.body, e.etag, e.err
 }
 
 func snapshotAge(eng *query.Engine) (time.Duration, bool) {
-	g := eng.GeneratedAt()
+	g := eng.State().GeneratedAt
 	if g.IsZero() {
 		return 0, false
 	}
@@ -730,86 +695,40 @@ func parseIntParam(s string, def, min, max int) (int, error) {
 
 var nodeQueryLimits = map[string]int{"client": 128, "country": 16, "ip": 64, "q": 1024, "cgc_min": 10, "cgc_max": 10}
 
-var nodeQueryAllowed = map[string]map[string]bool{
-	"layer":      {"": true, "el": true, "cl": true},
-	"protocol":   {"": true, "v4": true, "v5": true},
-	"ipstack":    {"": true, "ipv4": true, "ipv6": true, "dual": true},
-	"hosting":    {"": true, "yes": true, "no": true},
-	"dialable":   {"": true, "yes": true, "no": true},
-	"fork":       {"": true, "current": true, "stale": true, "all": true},
-	"membership": {"": true, "verified": true, "claimed": true, "all": true},
-}
-
-func validateNodeQuery(q map[string][]string, known map[string]bool) error {
-	if err := validateNetwork(first(q["network"]), known); err != nil {
-		return err
+// nodeFilter bounds the free-text parameters and leaves enum, sort, and CGC checks to
+// query.Filter.Validate, so the two layers cannot disagree about what the engine supports.
+func nodeFilter(q url.Values, known map[string]bool) (query.Filter, error) {
+	if err := validateNetwork(q.Get("network"), known); err != nil {
+		return query.Filter{}, err
 	}
 	for name, limit := range nodeQueryLimits {
-		if len(first(q[name])) > limit {
-			return fmt.Errorf("%s filter too long", name)
+		if len(q.Get(name)) > limit {
+			return query.Filter{}, fmt.Errorf("%s filter too long", name)
 		}
 	}
-	for name, values := range nodeQueryAllowed {
-		if value := first(q[name]); !values[value] {
-			return fmt.Errorf("invalid %s parameter", name)
-		}
+	limit, err := parseIntParam(q.Get("limit"), 100, 1, 1000)
+	if err != nil {
+		return query.Filter{}, err
 	}
-	for _, name := range []string{"cgc_min", "cgc_max"} {
-		if value := first(q[name]); value != "" {
-			if _, err := strconv.ParseUint(value, 10, 32); err != nil {
-				return fmt.Errorf("invalid %s parameter", name)
-			}
-		}
+	offset, err := parseIntParam(q.Get("offset"), 0, 0, 1_000_000)
+	if err != nil {
+		return query.Filter{}, err
 	}
-	if !query.ValidSort(first(q["sort"])) {
-		return errors.New("invalid sort parameter")
+	f := query.Filter{
+		Network: q.Get("network"), Client: q.Get("client"), Country: q.Get("country"),
+		Layer: q.Get("layer"), Protocol: q.Get("protocol"), IPStack: q.Get("ipstack"), Hosting: q.Get("hosting"),
+		Dialable: q.Get("dialable"), ForkStatus: q.Get("fork"),
+		Membership: q.Get("membership"),
+		IP:         q.Get("ip"), Q: q.Get("q"), CGCMin: q.Get("cgc_min"), CGCMax: q.Get("cgc_max"),
+		Sort: q.Get("sort"), Order: q.Get("order"),
+		Limit: limit, Offset: offset,
 	}
-	if !query.ValidOrder(first(q["order"])) {
-		return errors.New("invalid order parameter")
-	}
-	return nil
+	return f, f.Validate()
 }
 
 func validateNetwork(network string, known map[string]bool) error {
 	if network != "" && !known[network] {
 		return fmt.Errorf("unknown network %q", network)
-	}
-	return nil
-}
-
-func first(values []string) string {
-	if len(values) == 0 {
-		return ""
-	}
-	return values[0]
-}
-
-func splitCSV(s string) []string {
-	var out []string
-	for _, p := range strings.Split(s, ",") {
-		if p = strings.TrimSpace(p); p != "" {
-			out = append(out, p)
-		}
-	}
-	return out
-}
-
-func validateNetworks(networks []string) error {
-	if len(networks) == 0 {
-		return errors.New("must list at least one network")
-	}
-	seen := make(map[string]bool, len(networks))
-	for _, network := range networks {
-		if !snapshot.ValidComponent(network) {
-			return fmt.Errorf("invalid network name %q", network)
-		}
-		if _, err := netconf.Get(network); err != nil {
-			return err
-		}
-		if seen[network] {
-			return fmt.Errorf("duplicate network %q", network)
-		}
-		seen[network] = true
 	}
 	return nil
 }

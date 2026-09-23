@@ -39,7 +39,7 @@ type BlobParams struct {
 
 func RegisterDevnet(cfg DevnetConfig) error {
 	const name = "devnet"
-	if _, exists := networks[name]; exists {
+	if _, err := Get(name); err == nil {
 		return fmt.Errorf("network %q already registered", name)
 	}
 
@@ -55,10 +55,12 @@ func RegisterDevnet(cfg DevnetConfig) error {
 	}
 	genesis := g
 
-	gvr := strings.TrimPrefix(strings.TrimSpace(cfg.GenesisValidatorsRoot), "0x")
-	if b, err := hex.DecodeString(gvr); err != nil || len(b) != 32 {
+	root, err := hex.DecodeString(strings.TrimPrefix(strings.TrimSpace(cfg.GenesisValidatorsRoot), "0x"))
+	if err != nil || len(root) != 32 {
 		return fmt.Errorf("invalid genesis validators root %q", cfg.GenesisValidatorsRoot)
 	}
+	var gvr [32]byte
+	copy(gvr[:], root)
 
 	records := make([]string, 0, len(cfg.BootnodeRecords))
 	for _, r := range cfg.BootnodeRecords {
@@ -90,10 +92,11 @@ func RegisterDevnet(cfg DevnetConfig) error {
 		if fv == "" || configured.Epoch == math.MaxUint64 {
 			continue
 		}
-		if _, err := decodeVersion(fv); err != nil {
+		version, err := decodeVersion(fv)
+		if err != nil {
 			return fmt.Errorf("invalid CL fork version %q", fv)
 		}
-		forks = append(forks, clFork{epoch: configured.Epoch, version: fv})
+		forks = append(forks, clFork{epoch: configured.Epoch, version: version})
 	}
 	if len(forks) == 0 {
 		return fmt.Errorf("no CL fork versions")
@@ -109,24 +112,23 @@ func RegisterDevnet(cfg DevnetConfig) error {
 		return errors.New("blob schedule is empty but a Fulu fork version is set")
 	}
 
-	networks[name] = &Network{
+	registry = append(registry, &Network{
 		Name:        name,
 		NetworkID:   cfg.NetworkID,
 		ChainConfig: genesis.Config,
 		genesisFn:   func() *core.Genesis { return &genesis },
-	}
-	bootnodes[name] = records
-	clBootnodes[name] = records
-	clNetworks = append(clNetworks, &clNetwork{
-		name:           name,
-		gvr:            gvr,
-		genesisTime:    cfg.GenesisTime,
-		secondsPerSlot: cfg.SecondsPerSlot,
-		slotsPerEpoch:  cfg.SlotsPerEpoch,
-		forks:          forks,
-		fuluEpoch:      cfg.FuluForkEpoch,
-		blobSchedule:   bs,
+		bootnodes:   records,
+		clBootnodes: records,
+		cl: &clNetwork{
+			name:           name,
+			gvr:            gvr,
+			genesisTime:    cfg.GenesisTime,
+			secondsPerSlot: cfg.SecondsPerSlot,
+			slotsPerEpoch:  cfg.SlotsPerEpoch,
+			forks:          forks,
+			fuluEpoch:      cfg.FuluForkEpoch,
+			blobSchedule:   bs,
+		},
 	})
-	names = append(names, name)
 	return nil
 }
