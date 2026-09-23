@@ -101,7 +101,7 @@ func Restore(data []byte, methodology string, precision uint8) (*State, error) {
 		if key == "" || series == nil || len(series.Buckets) > RetainedHours {
 			return nil, errors.New("invalid distinct state")
 		}
-		// 64 - precision + 1 is the largest rank add can produce; a corrupted larger
+		// 64 - precision + 1 is the largest rank slot can produce; a corrupted larger
 		// register would permanently inflate every merged estimate.
 		maxRank := byte(64 - state.Precision + 1)
 		for i, bucket := range series.Buckets {
@@ -121,15 +121,25 @@ func Restore(data []byte, methodology string, precision uint8) (*State, error) {
 	return &state, nil
 }
 
+// Marshal encodes a copy so the multi-megabyte JSON and gzip work runs outside the lock that every
+// discovery reader's Observe needs.
 func (s *State) Marshal() ([]byte, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	snapshot := &State{Version: s.Version, Methodology: s.Methodology, Precision: s.Precision, Series: make(map[string]*Series, len(s.Series))}
+	for key, series := range s.Series {
+		buckets := make([]Bucket, len(series.Buckets))
+		for i, bucket := range series.Buckets {
+			buckets[i] = Bucket{Hour: bucket.Hour, Registers: bytes.Clone(bucket.Registers), Sightings: bucket.Sightings}
+		}
+		snapshot.Series[key] = &Series{Buckets: buckets, Seen: series.Seen}
+	}
+	s.mu.Unlock()
 	var out bytes.Buffer
 	zw, err := gzip.NewWriterLevel(&out, gzip.BestSpeed)
 	if err != nil {
 		return nil, err
 	}
-	if err := json.NewEncoder(zw).Encode(s); err != nil {
+	if err := json.NewEncoder(zw).Encode(snapshot); err != nil {
 		_ = zw.Close()
 		return nil, err
 	}
@@ -141,28 +151,37 @@ func (s *State) Marshal() ([]byte, error) {
 
 func hourNumber(at time.Time) int64 { return at.UTC().Unix() / int64(time.Hour/time.Second) }
 
-func (s *State) Observe(key string, identity []byte, at time.Time) {
-	if key == "" || len(identity) == 0 {
+// Observe records one sighting of identity under every key, hashing it once.
+func (s *State) Observe(identity []byte, at time.Time, keys ...string) {
+	if len(identity) == 0 {
 		return
 	}
+	index, rank := s.slot(identity)
+	hour := hourNumber(at)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	series := s.Series[key]
-	if series == nil {
-		series = &Series{}
-		s.Series[key] = series
+	for _, key := range keys {
+		if key == "" {
+			continue
+		}
+		series := s.Series[key]
+		if series == nil {
+			series = &Series{}
+			s.Series[key] = series
+		}
+		s.pruneLocked(series, hour)
+		idx := sort.Search(len(series.Buckets), func(i int) bool { return series.Buckets[i].Hour >= hour })
+		if idx == len(series.Buckets) || series.Buckets[idx].Hour != hour {
+			series.Buckets = append(series.Buckets, Bucket{})
+			copy(series.Buckets[idx+1:], series.Buckets[idx:])
+			series.Buckets[idx] = Bucket{Hour: hour, Registers: make([]byte, 1<<s.Precision)}
+		}
+		if registers := series.Buckets[idx].Registers; rank > registers[index] {
+			registers[index] = rank
+		}
+		series.Buckets[idx].Sightings++
+		series.Seen++
 	}
-	hour := hourNumber(at)
-	s.pruneLocked(series, hour)
-	idx := sort.Search(len(series.Buckets), func(i int) bool { return series.Buckets[i].Hour >= hour })
-	if idx == len(series.Buckets) || series.Buckets[idx].Hour != hour {
-		series.Buckets = append(series.Buckets, Bucket{})
-		copy(series.Buckets[idx+1:], series.Buckets[idx:])
-		series.Buckets[idx] = Bucket{Hour: hour, Registers: make([]byte, 1<<s.Precision)}
-	}
-	add(series.Buckets[idx].Registers, s.Precision, identity)
-	series.Buckets[idx].Sightings++
-	series.Seen++
 }
 
 func (s *State) pruneLocked(series *Series, currentHour int64) {
@@ -173,7 +192,9 @@ func (s *State) pruneLocked(series *Series, currentHour int64) {
 	}
 }
 
-func add(registers []byte, precision uint8, identity []byte) {
+// slot reads only the immutable Precision, so it is safe to call without the lock.
+func (s *State) slot(identity []byte) (uint64, uint8) {
+	precision := s.Precision
 	sum := sha256.Sum256(identity)
 	h := binary.BigEndian.Uint64(sum[:8])
 	index := h >> (64 - precision)
@@ -187,9 +208,7 @@ func add(registers []byte, precision uint8, identity []byte) {
 			remaining <<= 1
 		}
 	}
-	if rank > registers[index] {
-		registers[index] = rank
-	}
+	return index, rank
 }
 
 func (s *State) Estimates(at time.Time) []Estimate {

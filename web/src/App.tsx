@@ -10,6 +10,7 @@ import Nav from "./components/Nav";
 import { NetworkContext } from "./network";
 import { NETWORKS } from "./theme";
 import { fetchMeta } from "./api";
+import type { Meta } from "./types";
 
 const Overview = lazy(() => import("./pages/Overview"));
 const NodesPage = lazy(() => import("./pages/NodesPage"));
@@ -21,6 +22,14 @@ function NodesRedirect() {
   return <Navigate to={{ pathname: "/nodes/execution", search }} replace />;
 }
 
+function withNetwork(n: string) {
+  return (prev: URLSearchParams) => {
+    const next = new URLSearchParams(prev);
+    next.set("network", n);
+    return next;
+  };
+}
+
 function readStoredNetwork(): string {
   const saved = localStorage.getItem("network");
   return saved && NETWORKS.includes(saved) ? saved : NETWORKS[0];
@@ -28,6 +37,7 @@ function readStoredNetwork(): string {
 
 export default function App() {
   const [networks, setNetworks] = useState<readonly string[]>(NETWORKS);
+  const [meta, setMeta] = useState<Meta | null>(null);
   const [networksReady, setNetworksReady] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const networkParam = searchParams.get("network");
@@ -39,9 +49,10 @@ export default function App() {
   useEffect(() => {
     let live = true;
     fetchMeta()
-      .then((meta) => {
-        if (!live || !meta.networks?.length) return;
-        setNetworks(meta.networks);
+      .then((m) => {
+        if (!live) return;
+        setMeta(m);
+        if (m.networks?.length) setNetworks(m.networks);
       })
       .catch(() => {})
       .finally(() => live && setNetworksReady(true));
@@ -56,14 +67,7 @@ export default function App() {
     // immediately so the initial URL is shareable.
     if (!networksReady) {
       if (!networkParam) {
-        setSearchParams(
-          (prev) => {
-            const next = new URLSearchParams(prev);
-            next.set("network", network);
-            return next;
-          },
-          { replace: true },
-        );
+        setSearchParams(withNetwork(network), { replace: true });
       }
       return;
     }
@@ -79,31 +83,19 @@ export default function App() {
     const fallback = networks.includes(network) ? network : networks[0];
     if (fallback !== network) setNetworkState(fallback);
     localStorage.setItem("network", fallback);
-    setSearchParams(
-      (prev) => {
-        const next = new URLSearchParams(prev);
-        next.set("network", fallback);
-        return next;
-      },
-      { replace: true },
-    );
+    setSearchParams(withNetwork(fallback), { replace: true });
   }, [network, networkParam, networks, networksReady, setSearchParams]);
 
   const set = (n: string) => {
     setNetworkState(n);
     localStorage.setItem("network", n);
-    setSearchParams(
-      (prev) => {
-        const next = new URLSearchParams(prev);
-        next.set("network", n);
-        return next;
-      },
-      { replace: true },
-    );
+    setSearchParams(withNetwork(n), { replace: true });
   };
 
   return (
-    <NetworkContext.Provider value={{ network, networks, setNetwork: set }}>
+    <NetworkContext.Provider
+      value={{ network, networks, setNetwork: set, meta }}
+    >
       <div className="shell">
         <Nav />
         <main className="content">

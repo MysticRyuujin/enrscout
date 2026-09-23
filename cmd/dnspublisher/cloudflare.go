@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 )
@@ -163,52 +164,27 @@ func (c *cloudflareDNS) Sync(ctx context.Context, domain string, want, retain ma
 	if err != nil {
 		return 0, fmt.Errorf("list records: %w", err)
 	}
-	wanted := make(map[string]string, len(want))
-	for name, content := range want {
-		wanted[dnsKey(name)] = content
-	}
+	plan := planSync(have, domain, want, retain, func(name, content string, current cfRecord) bool {
+		return current.Content == content && current.TTL == c.ttls.forName(name, domain)
+	})
 	var entries, root, stale cfBatch
-	for name, content := range wanted {
-		current, exists := have[name]
-		if exists && current.Content == content && current.TTL == c.ttls.forName(name, domain) {
-			continue
-		}
-		record := cfRecord{Type: "TXT", Name: name, Content: content, TTL: c.ttls.forName(name, domain)}
-		target := &entries
-		if name == dnsKey(domain) {
-			target = &root
-		}
-		if exists {
+	write := func(target *cfBatch, name string) {
+		record := cfRecord{Type: "TXT", Name: name, Content: plan.wanted[name], TTL: c.ttls.forName(name, domain)}
+		if current, exists := have[name]; exists {
 			record.ID = current.ID
 			target.Puts = append(target.Puts, record)
-			continue
+			return
 		}
 		target.Posts = append(target.Posts, record)
 	}
-	// A nil retain means nothing is known to have been published, so the zone may already be serving
-	// a tree this process did not write. Pruning then would delete a live generation.
-	kept := 0
-	if retain != nil {
-		retained := make(map[string]struct{}, len(retain))
-		for name := range retain {
-			retained[dnsKey(name)] = struct{}{}
-		}
-		for name, current := range have {
-			if _, keep := wanted[name]; keep {
-				continue
-			}
-			if _, keep := retained[name]; keep {
-				kept++
-				continue
-			}
-			stale.Deletes = append(stale.Deletes, cfRecord{ID: current.ID})
-		}
-	} else {
-		for name := range have {
-			if _, keep := wanted[name]; !keep {
-				kept++
-			}
-		}
+	for _, name := range plan.entries {
+		write(&entries, name)
+	}
+	if plan.writeRoot {
+		write(&root, dnsKey(domain))
+	}
+	for _, name := range plan.stale {
+		stale.Deletes = append(stale.Deletes, cfRecord{ID: have[name].ID})
 	}
 
 	changed := 0
@@ -237,34 +213,26 @@ func (c *cloudflareDNS) Sync(ctx context.Context, domain string, want, retain ma
 	for _, chunk := range chunkBatch(stale) {
 		if err := c.submit(ctx, chunk); err != nil {
 			slog.Warn("stale DNS records left in place", "domain", domain, "records", len(chunk.Deletes), "err", err)
-			mDNSZoneRecords.WithLabelValues(domain).Set(float64(len(wanted) + kept + len(stale.Deletes) - pruned))
+			mDNSZoneRecords.WithLabelValues(domain).Set(float64(len(plan.wanted) + plan.kept + len(stale.Deletes) - pruned))
 			return changed, nil
 		}
 		changed += chunk.len()
 		pruned += len(chunk.Deletes)
 	}
-	mDNSZoneRecords.WithLabelValues(domain).Set(float64(len(wanted) + kept))
+	mDNSZoneRecords.WithLabelValues(domain).Set(float64(len(plan.wanted) + plan.kept))
 	return changed, nil
 }
 
 func chunkBatch(batch cfBatch) []cfBatch {
 	var out []cfBatch
-	for _, group := range []struct {
-		put  bool
-		recs []cfRecord
-	}{{true, batch.Puts}, {false, batch.Posts}} {
-		for start := 0; start < len(group.recs); start += cloudflareBatchMax {
-			end := min(start+cloudflareBatchMax, len(group.recs))
-			if group.put {
-				out = append(out, cfBatch{Puts: group.recs[start:end]})
-			} else {
-				out = append(out, cfBatch{Posts: group.recs[start:end]})
-			}
-		}
+	for c := range slices.Chunk(batch.Puts, cloudflareBatchMax) {
+		out = append(out, cfBatch{Puts: c})
 	}
-	for start := 0; start < len(batch.Deletes); start += cloudflareBatchMax {
-		end := min(start+cloudflareBatchMax, len(batch.Deletes))
-		out = append(out, cfBatch{Deletes: batch.Deletes[start:end]})
+	for c := range slices.Chunk(batch.Posts, cloudflareBatchMax) {
+		out = append(out, cfBatch{Posts: c})
+	}
+	for c := range slices.Chunk(batch.Deletes, cloudflareBatchMax) {
+		out = append(out, cfBatch{Deletes: c})
 	}
 	return out
 }

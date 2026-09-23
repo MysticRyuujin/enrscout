@@ -14,6 +14,18 @@ export const NETWORK_COLOR: Record<string, string> = {
 };
 
 export const ACCENT = "#3987e5";
+const MUTED = "#8a97ab";
+
+export function networkColor(network: string): string {
+  return NETWORK_COLOR[network] ?? MUTED;
+}
+
+export function layerName(layer: string, unknown = "Unknown layer"): string {
+  return layer === "el" ? "Execution" : layer === "cl" ? "Consensus" : unknown;
+}
+
+// A supernode custodies every PeerDAS custody group.
+export const SUPERNODE_CGC = 128;
 
 export const CATEGORICAL = [
   "#3987e5",
@@ -59,10 +71,6 @@ export function hexRGB(hex: string): [number, number, number] {
     parseInt(h.slice(2, 4), 16),
     parseInt(h.slice(4, 6), 16),
   ];
-}
-
-export function networkRGB(network: string): [number, number, number] {
-  return hexRGB(NETWORK_COLOR[network] || "#8a97ab");
 }
 
 export function num(n: number): string {

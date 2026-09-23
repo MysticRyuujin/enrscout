@@ -316,17 +316,27 @@ func candidateClientBucket(name string) string {
 	return canonical
 }
 
-func updateDistinctMetrics(state *distinct.State, now time.Time) {
-	for _, estimate := range state.Estimates(now) {
-		if strings.HasPrefix(estimate.Key, "walker/") {
-			parts := strings.Split(estimate.Key, "/")
-			if len(parts) == 4 {
-				mDiscoveryWalkerDistinct.WithLabelValues(parts[1], parts[2], parts[3]).Set(float64(estimate.Distinct))
-			}
+// parseDistinctKey splits "walker/<walker>/<proto>/<family>" and "<proto>/<family>" keys.
+func parseDistinctKey(key string) (walker, protocol, family string, ok bool) {
+	if rest, isWalker := strings.CutPrefix(key, "walker/"); isWalker {
+		parts := strings.Split(rest, "/")
+		if len(parts) != 3 {
+			return "", "", "", false
+		}
+		return parts[0], parts[1], parts[2], true
+	}
+	protocol, family, ok = strings.Cut(key, "/")
+	return "", protocol, family, ok
+}
+
+func updateDistinctMetrics(estimates []distinct.Estimate) {
+	for _, estimate := range estimates {
+		walker, protocol, family, ok := parseDistinctKey(estimate.Key)
+		if !ok {
 			continue
 		}
-		protocol, family, ok := strings.Cut(estimate.Key, "/")
-		if !ok {
+		if walker != "" {
+			mDiscoveryWalkerDistinct.WithLabelValues(walker, protocol, family).Set(float64(estimate.Distinct))
 			continue
 		}
 		mRollingDistinct.WithLabelValues(protocol, family).Set(float64(estimate.Distinct))

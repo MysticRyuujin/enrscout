@@ -49,12 +49,10 @@ func (c *crawler) applyLegacyFingerprint(n *enode.Node, via, direction string, r
 		mInvalidRecords.WithLabelValues(rejectReason(observed)).Inc()
 		return false
 	}
-	if observed.Changed && c.geo != nil {
-		addr := n.IP()
-		g := c.geo.Lookup(addr)
-		c.set.SetGeo(n.ID(), addr, g.Country, g.City, g.Subdivision, g.Lat, g.Lon, g.ASN, g.Org, g.Hosting, g.HostingKnown, g.Geolocated, g.AccuracyRadiusKM)
+	if observed.Changed {
+		c.geo.Record(c.set, n.ID(), n.IP())
 	}
-	c.set.SetFingerprint(n.ID(), r.Client, r.Version, r.OS, r.Lang, r.Caps, direction)
+	c.set.SetFingerprint(n.ID(), r.Identity(), direction)
 	mLegacyIdentified.WithLabelValues(r.Network, direction).Inc()
 	slog.Info("legacy EL node identified", "node", n.ID(), "network", r.Network, "client", r.Client, "direction", direction, "via", via)
 	return true
@@ -76,12 +74,12 @@ func (c *crawler) applyInbound(nid enode.ID, layer string, r enrich.Fingerprint)
 		// A Hello without a verified Status must not mark an unclassified candidate
 		// verified: fpDone would park it in the never-evicted class and stop its
 		// Status retries.
-		if c.set.SetCandidateClient(nid, r.Client, r.Version, r.OS, r.Lang, r.Caps, "inbound") {
+		if c.set.SetCandidateClient(nid, r.Identity(), "inbound") {
 			mCandidateClients.WithLabelValues(candidateClientBucket(r.Client), "hello_only").Inc()
 		}
 		return
 	}
-	if failures := c.set.SetFingerprint(nid, r.Client, r.Version, r.OS, r.Lang, r.Caps, "inbound"); failures > 0 {
+	if failures := c.set.SetFingerprint(nid, r.Identity(), "inbound"); failures > 0 {
 		mFingerprintRecoveries.WithLabelValues(layer).Inc()
 		slog.Info("fingerprint recovered from inbound connection", "node", nid, "layer", layer, "prior-failures", failures, "client", r.Client)
 	}
@@ -99,11 +97,15 @@ func (c *crawler) applyInbound(nid enode.ID, layer string, r enrich.Fingerprint)
 }
 
 func (c *crawler) enqueueFingerprint(n *enode.Node, now time.Time) bool {
-	if c.fp == nil || !c.set.ClaimFingerprintAt(n.ID(), now) {
+	if c.fp == nil {
 		return false
 	}
-	layer := c.set.LayerOf(n.ID())
-	if !c.targetBudget.Allow(c.set.IPOf(n.ID()), now) {
+	claim, ok := c.set.ClaimFingerprintInfo(n.ID(), now)
+	if !ok {
+		return false
+	}
+	layer := claim.Layer
+	if !c.targetBudget.Allow(claim.IP, now) {
 		c.set.UnclaimFingerprint(n.ID())
 		mActiveDialDeferrals.WithLabelValues(layer, "target_rate").Inc()
 		return false
@@ -112,7 +114,7 @@ func (c *crawler) enqueueFingerprint(n *enode.Node, now time.Time) bool {
 	switch layer {
 	case "el":
 		task := elFingerprintTask{n: n}
-		if c.set.NetworkOf(n.ID()) == "" {
+		if claim.Network == "" {
 			if c.pool.elPressure() {
 				c.set.UnclaimFingerprint(n.ID())
 				mLegacyDeferrals.WithLabelValues("queue_pressure").Inc()
@@ -210,14 +212,12 @@ func (c *crawler) finishCandidateFingerprint(n *enode.Node, r enrich.Fingerprint
 			c.set.UnclaimFingerprint(n.ID())
 			return
 		}
-		failures, applied := c.set.SetClaimedFingerprint(n.ID(), r.Client, r.Version, r.OS, r.Lang, r.Caps, "outbound")
+		failures, applied := c.set.SetClaimedFingerprint(n.ID(), r.Identity(), "outbound")
 		if !applied {
 			return
 		}
-		if observed.Changed && c.geo != nil {
-			addr := n.IP()
-			g := c.geo.Lookup(addr)
-			c.set.SetGeo(n.ID(), addr, g.Country, g.City, g.Subdivision, g.Lat, g.Lon, g.ASN, g.Org, g.Hosting, g.HostingKnown, g.Geolocated, g.AccuracyRadiusKM)
+		if observed.Changed {
+			c.geo.Record(c.set, n.ID(), n.IP())
 		}
 		if failures > 0 {
 			mFingerprintRecoveries.WithLabelValues(layerEL).Inc()
@@ -229,7 +229,7 @@ func (c *crawler) finishCandidateFingerprint(n *enode.Node, r enrich.Fingerprint
 		return
 	}
 	if r.Client != "" {
-		if c.set.SetCandidateClient(n.ID(), r.Client, r.Version, r.OS, r.Lang, r.Caps, "outbound") {
+		if c.set.SetCandidateClient(n.ID(), r.Identity(), "outbound") {
 			mCandidateClients.WithLabelValues(candidateClientBucket(r.Client), "hello_only").Inc()
 		}
 	}
@@ -245,7 +245,7 @@ func (c *crawler) finishCandidateFingerprint(n *enode.Node, r enrich.Fingerprint
 
 func (c *crawler) finishFingerprint(layer string, n *enode.Node, r enrich.Fingerprint, probeErr error) {
 	if probeErr == nil {
-		failures, applied := c.set.SetClaimedFingerprint(n.ID(), r.Client, r.Version, r.OS, r.Lang, r.Caps, "outbound")
+		failures, applied := c.set.SetClaimedFingerprint(n.ID(), r.Identity(), "outbound")
 		if applied && layer == layerEL && r.Network != "" {
 			c.set.SetExecutionStatus(n.ID(), r.Network, r.ForkID)
 		}
@@ -261,7 +261,7 @@ func (c *crawler) finishFingerprint(layer string, n *enode.Node, r enrich.Finger
 	// The Hello identifies the client even when the eth Status exchange fails; membership stays ENR-claimed since the network went unverified.
 	if layer == layerEL && r.Client != "" {
 		network := c.set.NetworkOf(n.ID())
-		c.set.SetClaimedFingerprint(n.ID(), r.Client, r.Version, r.OS, r.Lang, r.Caps, "outbound")
+		c.set.SetClaimedFingerprint(n.ID(), r.Identity(), "outbound")
 		mFingerprintHelloOnly.WithLabelValues(network).Inc()
 		slog.Debug("identified client from hello despite status failure", "node", n.ID(), "client", r.Client, "err", probeErr)
 		return

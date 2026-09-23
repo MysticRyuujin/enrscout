@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { fetchStats } from "../api";
-import { num, topN } from "../theme";
+import { topN } from "../theme";
+import { BarRows } from "./BarList";
 
 export default function ClientVersions({
   network,
@@ -38,7 +39,6 @@ export default function ClientVersions({
   }, [network, selected]);
 
   const rows = topN(versions, 12);
-  const max = Math.max(...rows.map((r) => r[1]), 1);
 
   return (
     <div className="card">
@@ -57,18 +57,7 @@ export default function ClientVersions({
           No version data for {selected || "this client"} yet.
         </p>
       ) : (
-        rows.map(([name, count]) => (
-          <div className="bar-row" key={name}>
-            <span className="bar-name mono">{name}</span>
-            <span className="bar-track">
-              <span
-                className="bar-fill"
-                style={{ width: `${(count / max) * 100}%`, background: color }}
-              />
-            </span>
-            <span className="bar-count">{num(count)}</span>
-          </div>
-        ))
+        <BarRows rows={rows} color={() => color} mono />
       )}
     </div>
   );

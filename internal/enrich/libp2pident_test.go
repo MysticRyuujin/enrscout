@@ -137,10 +137,11 @@ func TestCLStatusExchangeClassifiesForkDigest(t *testing.T) {
 	}
 	defer client.Close()
 
-	entry, err := netconf.CurrentCLForkENR("mainnet")
+	state, err := netconf.CLForkStateAt("mainnet", time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
+	entry := state.ENRForkID()
 	serveCLStatus(server, entry)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -170,10 +171,11 @@ func TestCLInboundWatcherIgnoresOutboundIdentification(t *testing.T) {
 	}
 	defer local.Close()
 
-	entry, err := netconf.CurrentCLForkENR("mainnet")
+	state, err := netconf.CLForkStateAt("mainnet", time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
+	entry := state.ENRForkID()
 	serveCLStatus(remote, entry)
 
 	identified, err := local.host.EventBus().Subscribe(new(event.EvtPeerIdentificationCompleted))
@@ -221,10 +223,11 @@ func TestCLInboundWatcherAcceptsInboundIdentification(t *testing.T) {
 	}
 	defer remote.Close()
 
-	entry, err := netconf.CurrentCLForkENR("mainnet")
+	state, err := netconf.CLForkStateAt("mainnet", time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
+	entry := state.ENRForkID()
 	var reads atomic.Int32
 	serveCLStatus(remote, entry)
 	callbacks := make(chan InboundCLFingerprint, 1)

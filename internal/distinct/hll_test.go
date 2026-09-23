@@ -12,8 +12,8 @@ func TestRollingDistinctAndRestore(t *testing.T) {
 	s := New("method-v1", DefaultPrecision)
 	for i := 0; i < 20_000; i++ {
 		id := []byte(fmt.Sprintf("node-%d", i))
-		s.Observe("v5/udp4", id, now)
-		s.Observe("v5/udp4", id, now) // re-observation must not inflate cardinality
+		s.Observe(id, now, "v5/udp4")
+		s.Observe(id, now, "v5/udp4") // re-observation must not inflate cardinality
 	}
 	est := s.Estimates(now)[0]
 	if delta := int64(est.Distinct) - 20_000; delta < -700 || delta > 700 {
@@ -37,7 +37,7 @@ func TestRollingDistinctAndRestore(t *testing.T) {
 
 func TestRestoreRejectsUncompressedJSON(t *testing.T) {
 	s := New("method-v1", DefaultPrecision)
-	s.Observe("all/all", []byte("node"), time.Now())
+	s.Observe([]byte("node"), time.Now(), "all/all")
 	raw, err := json.Marshal(s)
 	if err != nil {
 		t.Fatal(err)
@@ -50,8 +50,8 @@ func TestRestoreRejectsUncompressedJSON(t *testing.T) {
 func TestBucketExpiryAndMethodologyMismatch(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0).UTC().Truncate(time.Hour)
 	s := New("old", DefaultPrecision)
-	s.Observe("v4/udp4", []byte("expired"), now.Add(-WindowHours*time.Hour))
-	s.Observe("v4/udp4", []byte("current"), now)
+	s.Observe([]byte("expired"), now.Add(-WindowHours*time.Hour), "v4/udp4")
+	s.Observe([]byte("current"), now, "v4/udp4")
 	if got := s.Estimates(now)[0].Distinct; got != 1 {
 		t.Fatalf("rolling estimate = %d, want 1", got)
 	}
@@ -64,8 +64,8 @@ func TestBucketExpiryAndMethodologyMismatch(t *testing.T) {
 func TestRestoreRejectsUnorderedBuckets(t *testing.T) {
 	s := New("m", DefaultPrecision)
 	at := time.Unix(1_800_000_000, 0).UTC()
-	s.Observe("k", []byte{1}, at)
-	s.Observe("k", []byte{2}, at.Add(time.Hour))
+	s.Observe([]byte{1}, at, "k")
+	s.Observe([]byte{2}, at.Add(time.Hour), "k")
 	data, err := s.Marshal()
 	if err != nil {
 		t.Fatal(err)
@@ -88,7 +88,7 @@ func TestRestoreRejectsUnorderedBuckets(t *testing.T) {
 func TestRestoreRejectsImpossibleRegisterValues(t *testing.T) {
 	s := New("m", DefaultPrecision)
 	at := time.Unix(1_800_000_000, 0).UTC()
-	s.Observe("k", []byte{1}, at)
+	s.Observe([]byte{1}, at, "k")
 	restored, err := Restore(mustMarshal(t, s), "m", DefaultPrecision)
 	if err != nil {
 		t.Fatal(err)

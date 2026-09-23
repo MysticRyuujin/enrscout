@@ -30,8 +30,8 @@ func TestClassifyHosting(t *testing.T) {
 		{22612, "Namecheap, Inc."},
 	}
 	for _, tc := range hosting {
-		if !ClassifyHosting(tc.asn, tc.org) {
-			t.Errorf("ClassifyHosting(%d, %q) = false, want true", tc.asn, tc.org)
+		if hosting, _ := HostingClassification(tc.asn, tc.org); !hosting {
+			t.Errorf("HostingClassification(%d, %q) = false, want true", tc.asn, tc.org)
 		}
 	}
 	residential := []struct {
@@ -47,8 +47,8 @@ func TestClassifyHosting(t *testing.T) {
 		{0, ""},
 	}
 	for _, tc := range residential {
-		if ClassifyHosting(tc.asn, tc.org) {
-			t.Errorf("ClassifyHosting(%d, %q) = true, want false", tc.asn, tc.org)
+		if hosting, _ := HostingClassification(tc.asn, tc.org); hosting {
+			t.Errorf("HostingClassification(%d, %q) = true, want false", tc.asn, tc.org)
 		}
 	}
 }

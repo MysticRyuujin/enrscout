@@ -1,14 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"log/slog"
 	"sync"
 	"time"
 
-	"github.com/MysticRyuujin/enrscout/internal/discovery"
-	"github.com/MysticRyuujin/enrscout/internal/enrich"
 	"github.com/MysticRyuujin/enrscout/internal/netconf"
 )
 
@@ -76,17 +75,12 @@ func (rt *identityRuntime) startRefresh(ctx context.Context) {
 				identity.discovery.SetELForkID(nw.CurrentForkIDAt(at))
 				continue
 			}
-			entry, err := netconf.CurrentCLForkENRAt(identity.spec.Network, at)
+			state, err := netconf.CLForkStateAt(identity.spec.Network, at)
 			if err != nil {
 				slog.Warn("refresh consensus advertiser ENR", "network", identity.spec.Network, "err", err)
 				continue
 			}
-			nfd, err := netconf.CurrentCLNFDAt(identity.spec.Network, at)
-			if err != nil {
-				slog.Warn("refresh consensus advertiser nfd", "network", identity.spec.Network, "err", err)
-				continue
-			}
-			identity.discovery.SetCLForkState(entry, nfd)
+			identity.discovery.SetCLForkState(state.ENRForkID(), bytes.Clone(state.NextDigest[:]))
 		}
 	}
 	nextDelay := func(at time.Time) time.Duration {
@@ -123,11 +117,3 @@ func (rt *identityRuntime) startRefresh(ctx context.Context) {
 		}
 	}()
 }
-
-type discoveryCloser struct{ c *discovery.Crawler }
-
-func (d discoveryCloser) Close() error { d.c.Close(); return nil }
-
-type clCloser struct{ c *enrich.CLFingerprinter }
-
-func (d clCloser) Close() error { d.c.Close(); return nil }

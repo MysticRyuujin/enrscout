@@ -133,7 +133,7 @@ func TestPassiveInboundRLPxFingerprint(t *testing.T) {
 	payload, err := rlp.EncodeToBytes(&protoHandshake{
 		Version:    baseProtoVersion,
 		Name:       "Nethermind/v1.34.0/linux-x64/dotnet9.0.8",
-		Caps:       []p2pCap{{"eth", 69}},
+		Caps:       []p2p.Cap{{Name: "eth", Version: 69}},
 		ListenPort: 30303,
 		ID:         crypto.FromECDSAPub(&clientKey.PublicKey)[1:],
 	})
@@ -247,7 +247,7 @@ func TestProbeStatusRoundTrip(t *testing.T) {
 		hello, err := rlp.EncodeToBytes(&protoHandshake{
 			Version: baseProtoVersion,
 			Name:    "Nethermind/v1.39.1/linux-x64/dotnet9.0.8",
-			Caps:    []p2pCap{{"eth", 71}},
+			Caps:    []p2p.Cap{{Name: "eth", Version: 71}},
 			ID:      crypto.FromECDSAPub(&serverKey.PublicKey)[1:],
 		})
 		if err != nil {
@@ -350,7 +350,7 @@ func TestProbeStatusRoundTripLegacyEth66(t *testing.T) {
 		hello, err := rlp.EncodeToBytes(&protoHandshake{
 			Version: baseProtoVersion,
 			Name:    "Geth/v1.13.0-stable/linux-amd64/go1.21.0",
-			Caps:    []p2pCap{{"eth", 66}},
+			Caps:    []p2p.Cap{{Name: "eth", Version: 66}},
 			ID:      crypto.FromECDSAPub(&serverKey.PublicKey)[1:],
 		})
 		if err != nil {
@@ -504,7 +504,7 @@ func TestDecodeEthStatusRejectsNegotiatedVersionMismatch(t *testing.T) {
 }
 
 func TestNegotiatedEthVersion(t *testing.T) {
-	if got := negotiatedEthVersion([]p2pCap{{"eth", 68}, {"snap", 1}, {"eth", 72}, {"eth", 73}}); got != 72 {
+	if got := negotiatedEthVersion([]p2p.Cap{{Name: "eth", Version: 68}, {Name: "snap", Version: 1}, {Name: "eth", Version: 72}, {Name: "eth", Version: 73}}); got != 72 {
 		t.Fatalf("negotiated version = %d, want 72", got)
 	}
 }
@@ -614,7 +614,7 @@ func TestNormalizeOS(t *testing.T) {
 }
 
 func TestFormatCaps(t *testing.T) {
-	got := formatCaps([]p2pCap{{"eth", 68}, {"snap", 1}})
+	got := formatCaps([]p2p.Cap{{Name: "eth", Version: 68}, {Name: "snap", Version: 1}})
 	if got != "eth/68,snap/1" {
 		t.Errorf("formatCaps = %q, want eth/68,snap/1", got)
 	}

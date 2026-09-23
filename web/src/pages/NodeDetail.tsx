@@ -1,7 +1,12 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router";
 import { ApiError, fetchNode } from "../api";
-import { NETWORK_COLOR, relTime } from "../theme";
+import {
+  layerName as layerLabel,
+  networkColor,
+  relTime,
+  SUPERNODE_CGC,
+} from "../theme";
 import type { Node } from "../types";
 
 function Row({
@@ -65,12 +70,7 @@ export default function NodeDetail() {
     );
   if (!node) return <div className="page error">Failed to load node.</div>;
 
-  const layerName =
-    node.layer === "cl"
-      ? "Consensus"
-      : node.layer === "el"
-        ? "Execution"
-        : node.layer;
+  const layerName = layerLabel(node.layer, node.layer);
   const layerPath =
     node.layer === "cl" ? "/nodes/consensus" : "/nodes/execution";
   const dialTransports = [
@@ -129,7 +129,7 @@ export default function NodeDetail() {
         <h1>
           <span
             className="net-dot"
-            style={{ background: NETWORK_COLOR[node.network] || "#8a97ab" }}
+            style={{ background: networkColor(node.network) }}
           />
           {node.client || "Unknown client"}{" "}
           <span className="dim">{node.client_version}</span>
@@ -154,11 +154,7 @@ export default function NodeDetail() {
           />
           <Row
             label="Membership verified"
-            value={
-              node.membership_verified_at
-                ? relTime(node.membership_verified_at)
-                : "-"
-            }
+            value={relTime(node.membership_verified_at)}
           />
           <Row
             label="Fork readiness"
@@ -174,10 +170,7 @@ export default function NodeDetail() {
                   : "-"
             }
           />
-          <Row
-            label="Fork observed"
-            value={node.fork_observed_at ? relTime(node.fork_observed_at) : "-"}
-          />
+          <Row label="Fork observed" value={relTime(node.fork_observed_at)} />
           <Row label="Fork hash" value={node.fork_hash} mono />
           <Row label="Fork next" value={node.fork_next || "0"} />
           {node.layer === "cl" && (
@@ -186,7 +179,7 @@ export default function NodeDetail() {
               value={
                 node.cgc_known ? (
                   <span title="Custody group count (cgc) advertised in the node's ENR: how many of the 128 PeerDAS data-column groups it stores and serves. 128 means every column.">
-                    {node.cgc >= 128 ? (
+                    {node.cgc >= SUPERNODE_CGC ? (
                       <>
                         {node.cgc}
                         <span className="supernode-tag"> ✨ supernode</span>
@@ -238,14 +231,8 @@ export default function NodeDetail() {
           />
           <Row label="First seen" value={relTime(node.first_seen)} />
           <Row label="Last discovered" value={relTime(node.last_seen)} />
-          <Row
-            label="Last resolved"
-            value={node.last_resolved ? relTime(node.last_resolved) : "-"}
-          />
-          <Row
-            label="Last contacted"
-            value={lastContacted ? relTime(lastContacted) : "-"}
-          />
+          <Row label="Last resolved" value={relTime(node.last_resolved)} />
+          <Row label="Last contacted" value={relTime(lastContacted)} />
           <Row label="Pinned" value={node.pinned ? "Yes" : "No"} />
         </div>
 

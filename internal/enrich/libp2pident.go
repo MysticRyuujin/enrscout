@@ -29,8 +29,10 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/protocol"
 	"github.com/libp2p/go-libp2p/p2p/muxer/yamux"
+	"github.com/libp2p/go-libp2p/p2p/protocol/identify"
 	"github.com/libp2p/go-libp2p/p2p/security/noise"
 	ma "github.com/multiformats/go-multiaddr"
+	manet "github.com/multiformats/go-multiaddr/net"
 
 	"github.com/MysticRyuujin/enrscout/internal/clientname"
 	"github.com/MysticRyuujin/enrscout/internal/netconf"
@@ -287,20 +289,82 @@ func (f *CLFingerprinter) probe(ctx context.Context, n *enode.Node, localFork []
 		statusCh <- statusOutcome{err: errors.New("no consensus fork entry for status request")}
 	}
 
+	if agent, ok := f.awaitAgent(cctx, pid); ok {
+		fp.Client, fp.Version, fp.OS, fp.Lang = parseCLAgent(agent)
+		f.awaitStatus(cctx, statusCh, &fp)
+		return fp, nil
+	}
+	return fp, atProbeStage("identify", errors.New("identify did not complete"))
+}
+
+func (f *CLFingerprinter) agent(pid peer.ID) (string, bool) {
+	v, err := f.host.Peerstore().Get(pid, agentVersionKey)
+	s, ok := v.(string)
+	return s, err == nil && ok && s != ""
+}
+
+// awaitAgent returns once any connection to pid has identified it. Connect waits for identify only
+// on a fresh dial and returns at once when a connection already exists, such as an inbound one to a
+// shared advertiser that may still be identifying. Identify publishes an event per connection after
+// it stores the agent, so subscribing before the first peerstore read misses no completion,
+// including one on a connection opened during the wait. A failure, or a completion without an
+// agent, ends the wait as soon as every connection to the peer has finished identify, instead of
+// holding a probe worker until the timeout.
+func (f *CLFingerprinter) awaitAgent(ctx context.Context, pid peer.ID) (string, bool) {
+	sub, err := f.host.EventBus().Subscribe([]any{new(event.EvtPeerIdentificationCompleted), new(event.EvtPeerIdentificationFailed)})
+	if err != nil {
+		return f.agent(pid)
+	}
+	if s, ok := f.agent(pid); ok {
+		sub.Close()
+		return s, true
+	}
 	for {
-		if v, err := f.host.Peerstore().Get(pid, agentVersionKey); err == nil {
-			if s, ok := v.(string); ok && s != "" {
-				fp.Client, fp.Version, fp.OS, fp.Lang = parseCLAgent(s)
-				f.awaitStatus(cctx, statusCh, &fp)
-				return fp, nil
-			}
-		}
 		select {
-		case <-cctx.Done():
-			return fp, atProbeStage("identify", errors.New("identify did not complete"))
-		case <-time.After(120 * time.Millisecond):
+		case e, open := <-sub.Out():
+			if !open {
+				return "", false
+			}
+			switch evt := e.(type) {
+			case event.EvtPeerIdentificationCompleted:
+				if evt.Peer != pid {
+					continue
+				}
+				if evt.AgentVersion != "" {
+					sub.Close()
+					return evt.AgentVersion, true
+				}
+			case event.EvtPeerIdentificationFailed:
+				if evt.Peer != pid {
+					continue
+				}
+			default:
+				continue
+			}
+			// Identify emits before it marks the connection done, so settle by waiting on the
+			// connections rather than reading their state now. The subscription is closed first so
+			// a slow wait here cannot block identify events for every other peer.
+			sub.Close()
+			return f.settleAgent(ctx, pid)
+		case <-ctx.Done():
+			sub.Close()
+			return "", false
 		}
 	}
+}
+
+// settleAgent waits until every connection to pid has finished identify, then reads the agent.
+func (f *CLFingerprinter) settleAgent(ctx context.Context, pid peer.ID) (string, bool) {
+	if ids, ok := f.host.(interface{ IDService() identify.IDService }); ok {
+		for _, c := range f.host.Network().ConnsToPeer(pid) {
+			select {
+			case <-ids.IDService().IdentifyWait(c):
+			case <-ctx.Done():
+				return "", false
+			}
+		}
+	}
+	return f.agent(pid)
 }
 
 func (f *CLFingerprinter) awaitStatus(ctx context.Context, statusCh <-chan statusOutcome, fp *Fingerprint) {
@@ -422,12 +486,12 @@ func inboundCLNode(pub *ecdsa.PublicKey, remote ma.Multiaddr, listenAddrs []ma.M
 	if pub == nil {
 		return nil
 	}
-	remoteIP := multiaddrIP(remote)
+	remoteIP, _ := manet.ToIP(remote)
 	if !netpolicy.Usable(remoteIP, allowPrivate) {
 		return nil
 	}
 	for _, addr := range listenAddrs {
-		if ip := multiaddrIP(addr); ip == nil || !ip.Equal(remoteIP) {
+		if ip, _ := manet.ToIP(addr); ip == nil || !ip.Equal(remoteIP) {
 			continue
 		}
 		rawPort, err := addr.ValueForProtocol(ma.P_TCP)
@@ -439,19 +503,6 @@ func inboundCLNode(pub *ecdsa.PublicKey, remote ma.Multiaddr, listenAddrs []ma.M
 			continue
 		}
 		return enode.NewV4(pub, remoteIP, port, 0)
-	}
-	return nil
-}
-
-func multiaddrIP(addr ma.Multiaddr) net.IP {
-	if addr == nil {
-		return nil
-	}
-	for _, code := range []int{ma.P_IP4, ma.P_IP6} {
-		raw, err := addr.ValueForProtocol(code)
-		if err == nil {
-			return net.ParseIP(raw)
-		}
 	}
 	return nil
 }

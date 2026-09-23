@@ -27,6 +27,7 @@ import (
 	"github.com/MysticRyuujin/enrscout/internal/clientname"
 	"github.com/MysticRyuujin/enrscout/internal/netconf"
 	"github.com/MysticRyuujin/enrscout/internal/netpolicy"
+	"github.com/MysticRyuujin/enrscout/internal/nodeset"
 )
 
 const (
@@ -43,23 +44,18 @@ const (
 	ethRangeStatusVersion = 69
 )
 
-func ethCaps() []p2pCap {
-	caps := make([]p2pCap, 0, maxEthVersion-minEthVersion+2)
+func ethCaps() []p2p.Cap {
+	caps := make([]p2p.Cap, 0, maxEthVersion-minEthVersion+2)
 	for v := maxEthVersion; v >= minEthVersion; v-- {
-		caps = append(caps, p2pCap{"eth", uint(v)})
+		caps = append(caps, p2p.Cap{Name: "eth", Version: uint(v)})
 	}
-	return append(caps, p2pCap{"snap", 1})
-}
-
-type p2pCap struct {
-	Name    string
-	Version uint
+	return append(caps, p2p.Cap{Name: "snap", Version: 1})
 }
 
 type protoHandshake struct {
 	Version    uint64
 	Name       string
-	Caps       []p2pCap
+	Caps       []p2p.Cap
 	ListenPort uint64
 	ID         []byte
 	Rest       []rlp.RawValue `rlp:"tail"`
@@ -74,6 +70,10 @@ type Fingerprint struct {
 	Network  string
 	ForkHash string
 	ForkID   forkid.ID
+}
+
+func (f Fingerprint) Identity() nodeset.Fingerprint {
+	return nodeset.Fingerprint{Client: f.Client, Version: f.Version, OS: f.OS, Lang: f.Lang, Caps: f.Caps}
 }
 
 // InboundFingerprint is emitted for every accepted passive RLPx connection.
@@ -408,7 +408,7 @@ type ethStatusRange struct {
 	LatestBlockHash common.Hash
 }
 
-func exchangeEthStatus(conn *rlpx.Conn, caps []p2pCap, local *netconf.Network, fp *Fingerprint) error {
+func exchangeEthStatus(conn *rlpx.Conn, caps []p2p.Cap, local *netconf.Network, fp *Fingerprint) error {
 	version := negotiatedEthVersion(caps)
 	if version == 0 {
 		return atProbeStage("eth_status", errors.New("peer has no mutually supported eth capability"))
@@ -484,7 +484,7 @@ func decodeEthStatus(data []byte, version uint, fp *Fingerprint) error {
 	return nil
 }
 
-func negotiatedEthVersion(caps []p2pCap) uint {
+func negotiatedEthVersion(caps []p2p.Cap) uint {
 	var best uint
 	for _, cap := range caps {
 		if cap.Name == "eth" && cap.Version >= minEthVersion && cap.Version <= maxEthVersion && cap.Version > best {
@@ -655,10 +655,10 @@ func NormalizeOS(raw string) string {
 	}
 }
 
-func formatCaps(caps []p2pCap) string {
+func formatCaps(caps []p2p.Cap) string {
 	out := make([]string, 0, len(caps))
 	for _, c := range caps {
-		out = append(out, fmt.Sprintf("%s/%d", c.Name, c.Version))
+		out = append(out, c.String())
 	}
 	return strings.Join(out, ",")
 }

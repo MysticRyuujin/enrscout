@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/big"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -274,8 +275,9 @@ func TestEveryNetworkHasBootnodes(t *testing.T) {
 
 func TestCLBootnodesParseAndHaveUniqueIDs(t *testing.T) {
 	seen := make(map[enode.ID]string)
-	for _, name := range Names() {
-		for _, record := range clBootnodes[name] {
+	for _, n := range registry {
+		name := n.Name
+		for _, record := range n.clBootnodes {
 			n, err := enode.Parse(enode.ValidSchemes, record)
 			if err != nil {
 				t.Errorf("parse %s CL bootnode: %v", name, err)
@@ -286,6 +288,18 @@ func TestCLBootnodesParseAndHaveUniqueIDs(t *testing.T) {
 				continue
 			}
 			seen[n.ID()] = name
+		}
+	}
+}
+
+func TestParseNetworkList(t *testing.T) {
+	got, err := ParseNetworkList(" mainnet, hoodi ,,sepolia")
+	if err != nil || !slices.Equal(got, []string{"mainnet", "hoodi", "sepolia"}) {
+		t.Fatalf("ParseNetworkList = %v, %v", got, err)
+	}
+	for _, csv := range []string{"", "  ", "mainnet,mainnet", "../mainnet", "bad/name", "devnet.local", "mainet", "devnet-1"} {
+		if _, err := ParseNetworkList(csv); err == nil {
+			t.Errorf("ParseNetworkList(%q) accepted", csv)
 		}
 	}
 }

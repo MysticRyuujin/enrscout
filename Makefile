@@ -1,5 +1,5 @@
 .PHONY: build crawler api compile test test-race test-nethermind-compat lint staticcheck vulncheck \
-	validate-compose web-install web-audit web-build ci ci-go ci-web tidy run-crawler run-api e2e-fixtures e2e
+	validate-compose web-install web-audit web-build tidy run-crawler run-api e2e-fixtures e2e
 
 # Ordered tasks, not a parallel build graph: web-build reads what web-install writes.
 .NOTPARALLEL:
@@ -11,7 +11,7 @@ SOURCE_REVISION ?= unknown
 SOURCE_URL ?= https://github.com/MysticRyuujin/enrscout
 BUILDINFO_LDFLAGS = -X github.com/MysticRyuujin/enrscout/internal/buildinfo.Revision=$(SOURCE_REVISION) -X github.com/MysticRyuujin/enrscout/internal/buildinfo.SourceURL=$(SOURCE_URL)
 NETHERMIND_IMAGES ?= nethermind/nethermind:1.35.2 nethermind/nethermind:1.35.8 nethermind/nethermind:1.36.0 nethermind/nethermind:1.37.2 nethermind/nethermind:1.38.1 nethermind/nethermind:1.39.1
-STATICCHECK_VERSION ?= 2026.1
+STATICCHECK_VERSION ?= 2026.2.1
 GOVULNCHECK_VERSION ?= v1.6.0
 
 build: crawler api
@@ -61,13 +61,6 @@ web-audit:
 
 web-build:
 	cd web && npm run build
-
-# CI invokes these targets so the check list has no second copy to drift from.
-ci-go: compile lint staticcheck test-race vulncheck validate-compose
-
-ci-web: web-install web-audit web-build
-
-ci: ci-go ci-web
 
 tidy:
 	go mod tidy

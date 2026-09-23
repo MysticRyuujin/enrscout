@@ -115,9 +115,7 @@ func (p *resolverPool) read(ctx context.Context, bound boundSource) {
 		mDiscoveryWalkerSightings.WithLabelValues(bound.walker, src.Proto, src.Family).Inc()
 		nodeID := node.ID()
 		seen := time.Now()
-		p.distinct.Observe(protoKey, nodeID[:], seen)
-		p.distinct.Observe(walkerKey, nodeID[:], seen)
-		p.distinct.Observe("all/all", nodeID[:], seen)
+		p.distinct.Observe(nodeID[:], seen, protoKey, walkerKey, "all/all")
 		if p.limiter != nil {
 			waitStart := time.Now()
 			if err := p.limiter.Wait(ctx); err != nil {
@@ -190,7 +188,7 @@ func (p *resolverPool) resolve(d discovered) {
 			// Take above consumed any cached Hello-only inbound result, so its
 			// client identity must be carried onto the candidate here or lost.
 			if ok && cached.Client != "" {
-				set.SetCandidateClient(n.ID(), cached.Client, cached.Version, cached.OS, cached.Lang, cached.Caps, "inbound")
+				set.SetCandidateClient(n.ID(), cached.Identity(), "inbound")
 			}
 			return
 		} else if disposition := cr.enqueueLegacyFingerprint(n, d.via); disposition == legacyFingerprintUnavailable {
@@ -231,10 +229,8 @@ func (p *resolverPool) resolve(d discovered) {
 		mNodesetAdmissions.Inc()
 	}
 	recordEvictions(observed)
-	if observed.Changed && cr.geo != nil {
-		addr := rn.IP()
-		g := cr.geo.Lookup(addr)
-		set.SetGeo(rn.ID(), addr, g.Country, g.City, g.Subdivision, g.Lat, g.Lon, g.ASN, g.Org, g.Hosting, g.HostingKnown, g.Geolocated, g.AccuracyRadiusKM)
+	if observed.Changed {
+		cr.geo.Record(set, rn.ID(), rn.IP())
 	}
 	layer := set.LayerOf(rn.ID())
 	if cached, ok := cr.pending.Take(rn.ID(), layer, observedAt); ok {

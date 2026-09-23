@@ -39,12 +39,12 @@ func TestSecurityHeaders(t *testing.T) {
 	}
 }
 
-func TestValidateNodeQuery(t *testing.T) {
+func TestNodeFilter(t *testing.T) {
 	known := map[string]bool{"mainnet": true}
-	if err := validateNodeQuery(url.Values{"network": {"mainnet"}, "protocol": {"v5"}, "order": {"asc"}, "fork": {"current"}}, known); err != nil {
+	if _, err := nodeFilter(url.Values{"network": {"mainnet"}, "protocol": {"v5"}, "order": {"asc"}, "fork": {"current"}}, known); err != nil {
 		t.Fatalf("valid query rejected: %v", err)
 	}
-	if err := validateNodeQuery(url.Values{"fork": {"all"}}, known); err != nil {
+	if _, err := nodeFilter(url.Values{"fork": {"all"}}, known); err != nil {
 		t.Fatalf("explicit all-fork query rejected: %v", err)
 	}
 	for _, q := range []url.Values{
@@ -61,7 +61,7 @@ func TestValidateNodeQuery(t *testing.T) {
 		{"cgc_max": {"-1"}},
 		{"cgc_min": {"9999999999"}},
 	} {
-		if err := validateNodeQuery(q, known); err == nil {
+		if _, err := nodeFilter(q, known); err == nil {
 			t.Errorf("invalid query accepted: %v", q)
 		}
 	}
@@ -74,17 +74,6 @@ func TestParseIntParam(t *testing.T) {
 	for _, value := range []string{"nope", "0", "1001", "-1"} {
 		if _, err := parseIntParam(value, 100, 1, 1000); err == nil {
 			t.Errorf("invalid integer %q accepted", value)
-		}
-	}
-}
-
-func TestValidateNetworks(t *testing.T) {
-	if err := validateNetworks([]string{"mainnet", "hoodi", "sepolia"}); err != nil {
-		t.Fatalf("valid networks rejected: %v", err)
-	}
-	for _, networks := range [][]string{nil, {"mainnet", "mainnet"}, {"../mainnet"}, {"devnet.local"}, {"mainet"}, {"devnet-1"}} {
-		if err := validateNetworks(networks); err == nil {
-			t.Errorf("invalid networks accepted: %v", networks)
 		}
 	}
 }
@@ -246,20 +235,20 @@ func TestMapCacheDoesNotCacheErrors(t *testing.T) {
 	refresh := time.Unix(1700000000, 0)
 	ctx := context.Background()
 	calls := 0
-	if _, err := c.load(ctx, "mainnet", refresh, func(context.Context) ([]byte, error) {
+	if _, _, err := c.load(ctx, "mainnet", refresh, func(context.Context) ([]byte, error) {
 		calls++
 		return nil, errors.New("transient")
 	}); err == nil {
 		t.Fatal("loader error was not returned")
 	}
-	body, err := c.load(ctx, "mainnet", refresh, func(context.Context) ([]byte, error) {
+	body, _, err := c.load(ctx, "mainnet", refresh, func(context.Context) ([]byte, error) {
 		calls++
 		return []byte("map"), nil
 	})
 	if err != nil || string(body) != "map" {
 		t.Fatalf("retry after error = %q, %v; an error must not be pinned until the next generation", body, err)
 	}
-	body, err = c.load(ctx, "mainnet", refresh, func(context.Context) ([]byte, error) {
+	body, _, err = c.load(ctx, "mainnet", refresh, func(context.Context) ([]byte, error) {
 		calls++
 		return nil, errors.New("must not run: success is cached")
 	})
@@ -275,7 +264,7 @@ func TestMapCacheSharesInFlightErrorWithWaiters(t *testing.T) {
 	release := make(chan struct{})
 	loaderErr := make(chan error, 1)
 	go func() {
-		_, err := c.load(context.Background(), "mainnet", refresh, func(context.Context) ([]byte, error) {
+		_, _, err := c.load(context.Background(), "mainnet", refresh, func(context.Context) ([]byte, error) {
 			close(started)
 			<-release
 			return nil, errors.New("shared failure")
@@ -285,7 +274,7 @@ func TestMapCacheSharesInFlightErrorWithWaiters(t *testing.T) {
 	<-started
 	waiterErr := make(chan error, 1)
 	go func() {
-		_, err := c.load(context.Background(), "mainnet", refresh, func(context.Context) ([]byte, error) {
+		_, _, err := c.load(context.Background(), "mainnet", refresh, func(context.Context) ([]byte, error) {
 			return nil, errors.New("waiter ran its own loader")
 		})
 		waiterErr <- err

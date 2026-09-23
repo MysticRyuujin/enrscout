@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
@@ -164,10 +165,9 @@ func newIdentityRuntime(ctx context.Context, cr *crawler, families []string, res
 				if !ok {
 					err = fmt.Errorf("no consensus ENR identity fields in %s bootnodes", spec.Network)
 				} else {
-					cfg.Eth2, err = netconf.CurrentCLForkENR(spec.Network)
-					if err == nil {
-						cfg.NFD, err = netconf.CurrentCLNFD(spec.Network)
-					}
+					var state netconf.CLForkState
+					state, err = netconf.CLForkStateAt(spec.Network, time.Now())
+					cfg.Eth2, cfg.NFD = state.ENRForkID(), bytes.Clone(state.NextDigest[:])
 					cfg.Attnets, cfg.Syncnets, cfg.CGC = cl.attnets, cl.syncnets, cl.cgc
 					if len(cfg.Attnets) == 0 {
 						cfg.Attnets = []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
@@ -183,7 +183,7 @@ func newIdentityRuntime(ctx context.Context, cr *crawler, families []string, res
 			return nil, fmt.Errorf("start %s %s discovery identity: %w", spec.Network, spec.Layer, err)
 		}
 		identity := &runtimeIdentity{spec: spec, discovery: disc}
-		rt.track(discoveryCloser{disc})
+		rt.track(disc)
 
 		if !conf.fingerprint {
 			return identity, nil
@@ -241,15 +241,15 @@ func newIdentityRuntime(ctx context.Context, cr *crawler, families []string, res
 			if err != nil {
 				return nil, err
 			}
-			rt.track(clCloser{identity.cl})
+			rt.track(identity.cl)
 			if clfp == nil {
 				clfp, cr.clfp = identity.cl, identity.cl
 			} else {
 				identity.cl.ShareInboundBudget(clfp)
 			}
 			if err := identity.cl.WatchInbound(func() []byte {
-				entry, _ := netconf.CurrentCLForkENR(spec.Network)
-				return entry
+				state, _ := netconf.CLForkStateAt(spec.Network, time.Now())
+				return state.ENRForkID()
 			}, func(result enrich.InboundCLFingerprint) {
 				defer recoverPeerCallback(spec.Network, layerCL)
 				if result.Err != nil {
@@ -265,12 +265,10 @@ func newIdentityRuntime(ctx context.Context, cr *crawler, families []string, res
 					if candidate := consensusInboundCandidate(set, result); candidate != nil {
 						observed := set.ObserveAuthenticatedCL(candidate, result.Fingerprint.Network, result.Fingerprint.ForkHash, now)
 						if observed.Accepted {
-							if observed.Changed && geo != nil {
-								addr := candidate.IP()
-								g := geo.Lookup(addr)
-								set.SetGeo(result.NodeID, addr, g.Country, g.City, g.Subdivision, g.Lat, g.Lon, g.ASN, g.Org, g.Hosting, g.HostingKnown, g.Geolocated, g.AccuracyRadiusKM)
+							if observed.Changed {
+								geo.Record(set, result.NodeID, candidate.IP())
 							}
-							set.SetFingerprint(result.NodeID, result.Fingerprint.Client, result.Fingerprint.Version, result.Fingerprint.OS, result.Fingerprint.Lang, result.Fingerprint.Caps, "inbound")
+							set.SetFingerprint(result.NodeID, result.Fingerprint.Identity(), "inbound")
 							mAdvertiserInbound.WithLabelValues(spec.Network, layerCL, "identified_new").Inc()
 							slog.Info("inbound CL node identified", "node", result.NodeID, "network", result.Fingerprint.Network, "client", result.Fingerprint.Client)
 							return

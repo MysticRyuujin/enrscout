@@ -267,14 +267,10 @@ func (c *Crawler) SetELForkID(id forkid.ID) {
 	c.ln.Set(netconf.EthEntry{ForkID: id})
 }
 
-func (c *Crawler) SetCLForkID(eth2 []byte) {
+func (c *Crawler) SetCLForkState(eth2, nfd []byte) {
 	if len(eth2) > 0 {
 		c.ln.Set(netconf.Eth2Entry(eth2))
 	}
-}
-
-func (c *Crawler) SetCLForkState(eth2, nfd []byte) {
-	c.SetCLForkID(eth2)
 	if len(nfd) > 0 {
 		c.ln.Set(netconf.NFDEntry(nfd))
 	}
@@ -295,15 +291,9 @@ func (c *Crawler) Sources() []Source {
 }
 
 func (c *Crawler) Resolve(n *enode.Node) (*enode.Node, string, error) {
-	fams := nodeFamilies(n)
 	for _, proto := range []string{"v5", "v4"} {
-		for _, e := range c.endpoints {
-			if e.proto != proto || !fams[e.family] {
-				continue
-			}
-			if rn, err := e.res.RequestENR(n); err == nil && rn != nil {
-				return rn, e.proto, nil
-			}
+		if rn, via, err := c.ResolveProtocol(n, proto); err == nil {
+			return rn, via, nil
 		}
 	}
 	return nil, "", errUnresolved
@@ -325,7 +315,7 @@ func (c *Crawler) ResolveProtocol(n *enode.Node, proto string) (*enode.Node, str
 	return nil, "", errUnresolved
 }
 
-func (c *Crawler) Close() {
+func (c *Crawler) Close() error {
 	for _, cl := range c.closers {
 		cl()
 	}
@@ -335,6 +325,7 @@ func (c *Crawler) Close() {
 	if c.db != nil {
 		c.db.Close()
 	}
+	return nil
 }
 
 func nodeFamilies(n *enode.Node) map[string]bool {

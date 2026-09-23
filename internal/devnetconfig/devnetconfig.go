@@ -14,6 +14,19 @@ import (
 	"github.com/MysticRyuujin/enrscout/internal/netconf"
 )
 
+// Register loads dir and registers it as the devnet network. Call it before starting concurrent
+// users of netconf.
+func Register(dir string) (netconf.DevnetConfig, error) {
+	cfg, err := Load(dir)
+	if err != nil {
+		return cfg, fmt.Errorf("load devnet: %w", err)
+	}
+	if err := netconf.RegisterDevnet(cfg); err != nil {
+		return cfg, fmt.Errorf("register devnet: %w", err)
+	}
+	return cfg, nil
+}
+
 // Load reads a crawler/API devnet directory without mutating netconf's global
 // registry. Call netconf.RegisterDevnet before starting concurrent users.
 func Load(dir string) (netconf.DevnetConfig, error) {
@@ -82,6 +95,13 @@ func parseCLConfig(path string) (clConfig, error) {
 	}
 	defer f.Close()
 
+	numeric := map[string]*uint64{
+		"GENESIS_TIME":                &cfg.genesisTime,
+		"SECONDS_PER_SLOT":            &cfg.secondsPerSlot,
+		"SLOT_DURATION_MS":            &cfg.slotDurationMS,
+		"SLOTS_PER_EPOCH":             &cfg.slotsPerEpoch,
+		"MAX_BLOBS_PER_BLOCK_ELECTRA": &cfg.electraMaxBlobs,
+	}
 	versions := map[string]string{}
 	epochs := map[string]uint64{"GENESIS": 0}
 	var forkOrder []string
@@ -171,30 +191,12 @@ func parseCLConfig(path string) (clConfig, error) {
 			if name == "ELECTRA" {
 				cfg.electraEpoch = n
 			}
-		case key == "GENESIS_TIME":
+		case numeric[key] != nil:
 			n, err := strconv.ParseUint(val, 10, 64)
 			if err != nil {
 				return cfg, fmt.Errorf("invalid %s: %w", key, err)
 			}
-			cfg.genesisTime = n
-		case key == "SECONDS_PER_SLOT":
-			n, err := strconv.ParseUint(val, 10, 64)
-			if err != nil {
-				return cfg, fmt.Errorf("invalid SECONDS_PER_SLOT: %w", err)
-			}
-			cfg.secondsPerSlot = n
-		case key == "SLOT_DURATION_MS":
-			n, err := strconv.ParseUint(val, 10, 64)
-			if err != nil {
-				return cfg, fmt.Errorf("invalid SLOT_DURATION_MS: %w", err)
-			}
-			cfg.slotDurationMS = n
-		case key == "SLOTS_PER_EPOCH":
-			n, err := strconv.ParseUint(val, 10, 64)
-			if err != nil {
-				return cfg, fmt.Errorf("invalid SLOTS_PER_EPOCH: %w", err)
-			}
-			cfg.slotsPerEpoch = n
+			*numeric[key] = n
 		case key == "PRESET_BASE":
 			switch val {
 			case "mainnet":
@@ -202,12 +204,6 @@ func parseCLConfig(path string) (clConfig, error) {
 			case "minimal":
 				cfg.slotsPerEpoch = 8
 			}
-		case key == "MAX_BLOBS_PER_BLOCK_ELECTRA":
-			n, err := strconv.ParseUint(val, 10, 64)
-			if err != nil {
-				return cfg, fmt.Errorf("invalid MAX_BLOBS_PER_BLOCK_ELECTRA: %w", err)
-			}
-			cfg.electraMaxBlobs = n
 		}
 	}
 	if err := flush(); err != nil {

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 	"time"
 )
@@ -88,4 +89,52 @@ func normalizeTXT(content string) string {
 // see every entry as both missing and stale.
 func dnsKey(name string) string {
 	return strings.ToLower(strings.TrimSuffix(name, "."))
+}
+
+// syncPlan is the provider-neutral half of a reconcile. Names are dnsKey-normalized and sorted.
+type syncPlan struct {
+	wanted    map[string]string
+	entries   []string
+	writeRoot bool
+	stale     []string
+	kept      int
+}
+
+// planSync decides what a provider must write and delete. Records are removed only once they are
+// absent from both want and retain, so a client still holding the previous root can finish its walk.
+func planSync[R any](have map[string]R, domain string, want, retain map[string]string, unchanged func(name, content string, current R) bool) syncPlan {
+	p := syncPlan{wanted: make(map[string]string, len(want))}
+	for name, content := range want {
+		p.wanted[dnsKey(name)] = content
+	}
+	root := dnsKey(domain)
+	for name, content := range p.wanted {
+		if current, exists := have[name]; exists && unchanged(name, content, current) {
+			continue
+		}
+		if name == root {
+			p.writeRoot = true
+			continue
+		}
+		p.entries = append(p.entries, name)
+	}
+	// A nil retain means nothing is known to have been published, so the zone may already be serving
+	// a tree this process did not write. Pruning then would delete a live generation.
+	retained := make(map[string]struct{}, len(retain))
+	for name := range retain {
+		retained[dnsKey(name)] = struct{}{}
+	}
+	for name := range have {
+		if _, keep := p.wanted[name]; keep {
+			continue
+		}
+		if _, keep := retained[name]; keep || retain == nil {
+			p.kept++
+			continue
+		}
+		p.stale = append(p.stale, name)
+	}
+	slices.Sort(p.entries)
+	slices.Sort(p.stale)
+	return p
 }

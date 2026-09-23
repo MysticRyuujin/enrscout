@@ -18,12 +18,12 @@ type blobParams struct {
 
 type clFork struct {
 	epoch   uint64
-	version string
+	version [4]byte
 }
 
 type clNetwork struct {
 	name           string
-	gvr            string
+	gvr            [32]byte
 	genesisTime    uint64
 	secondsPerSlot uint64
 	slotsPerEpoch  uint64
@@ -127,15 +127,10 @@ func (c *clNetwork) blobAt(epoch uint64) (blobParams, error) {
 	return active, nil
 }
 
-func (c *clNetwork) rawDigest(version [4]byte) ([4]byte, error) {
+func (c *clNetwork) rawDigest(version [4]byte) [4]byte {
 	var digest [4]byte
-	gvr, err := hex.DecodeString(c.gvr)
-	if err != nil || len(gvr) != 32 {
-		return digest, fmt.Errorf("network %q has invalid genesis validators root", c.name)
-	}
-	base := forkDataRoot(version[:], gvr)
-	copy(digest[:], base[:4])
-	return digest, nil
+	copy(digest[:], forkDataRoot(version[:], c.gvr[:]))
+	return digest
 }
 
 // digestAt implements compute_fork_digest, including EIP-7892 masking from Fulu.
@@ -145,14 +140,8 @@ func (c *clNetwork) digestAt(epoch uint64) ([4]byte, [4]byte, error) {
 	if err != nil {
 		return digest, [4]byte{}, err
 	}
-	version, err := decodeVersion(fork.version)
-	if err != nil {
-		return digest, [4]byte{}, err
-	}
-	digest, err = c.rawDigest(version)
-	if err != nil {
-		return digest, version, err
-	}
+	version := fork.version
+	digest = c.rawDigest(version)
 	if c.fuluEpoch != math.MaxUint64 && epoch >= c.fuluEpoch {
 		bp, err := c.blobAt(epoch)
 		if err != nil {
@@ -208,10 +197,7 @@ func (c *clNetwork) computeStateAt(epoch uint64) (CLForkState, error) {
 			continue
 		}
 		state.NextForkEpoch = fork.epoch
-		state.NextForkVersion, err = decodeVersion(fork.version)
-		if err != nil {
-			return CLForkState{}, err
-		}
+		state.NextForkVersion = fork.version
 		nextEpoch = fork.epoch
 		break
 	}
@@ -235,17 +221,9 @@ func (c *clNetwork) compute() {
 	c.once.Do(func() {
 		c.digests = make(map[[4]byte]struct{}, len(c.forks)+len(c.blobSchedule))
 		for _, fork := range c.forks {
-			version, err := decodeVersion(fork.version)
-			if err != nil {
-				continue
-			}
-			var digest [4]byte
 			if c.fuluEpoch == math.MaxUint64 || fork.epoch < c.fuluEpoch {
-				digest, err = c.rawDigest(version)
-			} else {
-				digest, _, err = c.digestAt(fork.epoch)
-			}
-			if err == nil {
+				c.digests[c.rawDigest(fork.version)] = struct{}{}
+			} else if digest, _, err := c.digestAt(fork.epoch); err == nil {
 				c.digests[digest] = struct{}{}
 			}
 		}
@@ -261,91 +239,93 @@ func (c *clNetwork) compute() {
 	})
 }
 
-func clNetworkByName(name string) (*clNetwork, error) {
-	for _, c := range clNetworks {
-		if c.name == name {
-			return c, nil
-		}
-	}
-	return nil, fmt.Errorf("unknown consensus network %q", name)
-}
-
 func CLForkStateAt(name string, at time.Time) (CLForkState, error) {
-	c, err := clNetworkByName(name)
-	if err != nil {
-		return CLForkState{}, err
+	n, err := Get(name)
+	if err != nil || n.cl == nil {
+		return CLForkState{}, fmt.Errorf("unknown consensus network %q", name)
 	}
-	return c.stateAt(at)
+	return n.cl.stateAt(at)
 }
 
 func IsCurrentCLForkAt(name, forkHash string, at time.Time) bool {
-	raw, err := hex.DecodeString(strings.TrimPrefix(strings.ToLower(strings.TrimSpace(forkHash)), "0x"))
-	if err != nil || len(raw) != 4 {
+	digest, ok := parseHash4(forkHash)
+	if !ok {
 		return false
 	}
 	state, err := CLForkStateAt(name, at)
-	return err == nil && string(raw) == string(state.Digest[:])
+	return err == nil && digest == state.Digest
 }
 
-// blobSchedule begins with the Electra fallback parameters used from Fulu until the
-// first explicit BPO entry.
-var clNetworks = []*clNetwork{
-	{
-		name: "mainnet", gvr: "4b363db94e286120d76eb905340fdd4e54bfe9f06bf33ff6cf5ad27f511bfe95",
-		genesisTime: 1606824023, secondsPerSlot: 12, slotsPerEpoch: 32, fuluEpoch: 411392,
-		forks:        []clFork{{0, "00000000"}, {74240, "01000000"}, {144896, "02000000"}, {194048, "03000000"}, {269568, "04000000"}, {364032, "05000000"}, {411392, "06000000"}},
-		blobSchedule: []blobParams{{364032, 9}, {412672, 15}, {419072, 21}},
-	},
-	{
-		name: "hoodi", gvr: "212f13fc4df078b6cb7db228f1c8307566dcecf900867401a92023d7ba99cb5f",
-		genesisTime: 1742213400, secondsPerSlot: 12, slotsPerEpoch: 32, fuluEpoch: 50688,
-		forks:        []clFork{{0, "10000910"}, {0, "20000910"}, {0, "30000910"}, {0, "40000910"}, {0, "50000910"}, {2048, "60000910"}, {50688, "70000910"}},
-		blobSchedule: []blobParams{{2048, 9}, {52480, 15}, {54016, 21}},
-	},
-	{
-		name: "sepolia", gvr: "d8ea171f3c94aea21ebc42a1ed61052acf3f9209c00e4efbaaddac09ed9b8078",
-		genesisTime: 1655733600, secondsPerSlot: 12, slotsPerEpoch: 32, fuluEpoch: 272640,
-		forks:        []clFork{{0, "90000069"}, {50, "90000070"}, {100, "90000071"}, {56832, "90000072"}, {132608, "90000073"}, {222464, "90000074"}, {272640, "90000075"}, {353024, "90000076"}},
-		blobSchedule: []blobParams{{222464, 9}, {274176, 15}, {275712, 21}},
-	},
+type namedFork struct {
+	name    string
+	epoch   uint64
+	version string
 }
+
+// electraMaxBlobs is MAX_BLOBS_PER_BLOCK_ELECTRA, the blob limit every built-in network uses from
+// Electra until its first BPO.
+const electraMaxBlobs = 9
+
+// compiledCL builds a built-in network. Fulu's epoch and the Electra fallback blob entry (used from
+// Fulu until the first BPO) are derived from the named forks rather than repeated beside them.
+func compiledCL(name, gvr string, genesisTime uint64, forks []namedFork, bpos []blobParams) *clNetwork {
+	root, err := hex.DecodeString(gvr)
+	if err != nil || len(root) != 32 {
+		panic(fmt.Sprintf("netconf: %s genesis validators root %q", name, gvr))
+	}
+	c := &clNetwork{name: name, genesisTime: genesisTime, secondsPerSlot: 12, slotsPerEpoch: 32, fuluEpoch: math.MaxUint64}
+	copy(c.gvr[:], root)
+	for _, f := range forks {
+		version, err := decodeVersion(f.version)
+		if err != nil {
+			panic(fmt.Sprintf("netconf: %s %s: %v", name, f.name, err))
+		}
+		c.forks = append(c.forks, clFork{epoch: f.epoch, version: version})
+		switch f.name {
+		case "electra":
+			c.blobSchedule = append(c.blobSchedule, blobParams{f.epoch, electraMaxBlobs})
+		case "fulu":
+			c.fuluEpoch = f.epoch
+		}
+	}
+	c.blobSchedule = append(c.blobSchedule, bpos...)
+	return c
+}
+
+var (
+	mainnetCL = compiledCL("mainnet", "4b363db94e286120d76eb905340fdd4e54bfe9f06bf33ff6cf5ad27f511bfe95", 1606824023,
+		[]namedFork{{"phase0", 0, "00000000"}, {"altair", 74240, "01000000"}, {"bellatrix", 144896, "02000000"}, {"capella", 194048, "03000000"},
+			{"deneb", 269568, "04000000"}, {"electra", 364032, "05000000"}, {"fulu", 411392, "06000000"}},
+		[]blobParams{{412672, 15}, {419072, 21}})
+	hoodiCL = compiledCL("hoodi", "212f13fc4df078b6cb7db228f1c8307566dcecf900867401a92023d7ba99cb5f", 1742213400,
+		[]namedFork{{"phase0", 0, "10000910"}, {"altair", 0, "20000910"}, {"bellatrix", 0, "30000910"}, {"capella", 0, "40000910"},
+			{"deneb", 0, "50000910"}, {"electra", 2048, "60000910"}, {"fulu", 50688, "70000910"}},
+		[]blobParams{{52480, 15}, {54016, 21}})
+	sepoliaCL = compiledCL("sepolia", "d8ea171f3c94aea21ebc42a1ed61052acf3f9209c00e4efbaaddac09ed9b8078", 1655733600,
+		[]namedFork{{"phase0", 0, "90000069"}, {"altair", 50, "90000070"}, {"bellatrix", 100, "90000071"}, {"capella", 56832, "90000072"},
+			{"deneb", 132608, "90000073"}, {"electra", 222464, "90000074"}, {"fulu", 272640, "90000075"}, {"gloas", 353024, "90000076"}},
+		[]blobParams{{274176, 15}, {275712, 21}})
+)
 
 func ClassifyCL(forkDigest [4]byte) string {
-	for _, c := range clNetworks {
-		c.compute()
-		if _, ok := c.digests[forkDigest]; ok {
-			return c.name
+	for _, n := range registry {
+		if n.cl == nil {
+			continue
+		}
+		n.cl.compute()
+		if _, ok := n.cl.digests[forkDigest]; ok {
+			return n.Name
 		}
 	}
 	return ""
 }
 
-func CurrentCLForkENRAt(name string, at time.Time) ([]byte, error) {
-	state, err := CLForkStateAt(name, at)
-	if err != nil {
-		return nil, err
-	}
+// ENRForkID is the SSZ ENRForkID an eth2 ENR entry carries: digest, next fork version, and the
+// little-endian next fork epoch.
+func (s CLForkState) ENRForkID() []byte {
 	out := make([]byte, 16)
-	copy(out[:4], state.Digest[:])
-	copy(out[4:8], state.NextForkVersion[:])
-	binary.LittleEndian.PutUint64(out[8:16], state.NextForkEpoch)
-	return out, nil
-}
-
-func CurrentCLForkENR(name string) ([]byte, error) {
-	return CurrentCLForkENRAt(name, time.Now())
-}
-
-func CurrentCLNFDAt(name string, at time.Time) ([]byte, error) {
-	state, err := CLForkStateAt(name, at)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]byte, 4)
-	copy(out, state.NextDigest[:])
-	return out, nil
-}
-
-func CurrentCLNFD(name string) ([]byte, error) {
-	return CurrentCLNFDAt(name, time.Now())
+	copy(out[:4], s.Digest[:])
+	copy(out[4:8], s.NextForkVersion[:])
+	binary.LittleEndian.PutUint64(out[8:16], s.NextForkEpoch)
+	return out
 }

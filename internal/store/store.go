@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"io/fs"
@@ -343,6 +344,30 @@ func Open(ctx context.Context, cfg S3Config, dir string) (Store, error) {
 		return NewFS(dir)
 	}
 	return NewS3(ctx, cfg)
+}
+
+// Flags are the object-store options every binary shares. --s3-ssl defaults to true on purpose:
+// a plaintext endpoint has to be opted into explicitly.
+type Flags struct {
+	Dir string
+	S3  S3Config
+}
+
+func BindFlags(fs *flag.FlagSet, dirFlag, dirUsage string) *Flags {
+	f := &Flags{}
+	fs.StringVar(&f.Dir, dirFlag, "data", dirUsage+" (used when --s3-endpoint is empty)")
+	fs.StringVar(&f.S3.Endpoint, "s3-endpoint", "", "S3-compatible endpoint (host:port); empty uses filesystem")
+	fs.StringVar(&f.S3.Bucket, "s3-bucket", "enrscout", "S3 bucket")
+	fs.StringVar(&f.S3.Region, "s3-region", "us-east-1", "S3 region")
+	fs.BoolVar(&f.S3.UseSSL, "s3-ssl", true, "use TLS for the S3 endpoint (set false only for a trusted local endpoint)")
+	return f
+}
+
+// Open reads the S3 credentials from S3_ACCESS_KEY and S3_SECRET_KEY.
+func (f *Flags) Open(ctx context.Context) (Store, error) {
+	cfg := f.S3
+	cfg.AccessKey, cfg.SecretKey = os.Getenv("S3_ACCESS_KEY"), os.Getenv("S3_SECRET_KEY")
+	return Open(ctx, cfg, f.Dir)
 }
 
 type s3Store struct {

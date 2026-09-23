@@ -112,7 +112,8 @@ type Manifest struct {
 	LegacyPopulationHistory json.RawMessage `json:"population_history,omitempty"`
 }
 
-func unmarshalStrict(data []byte, value any) error {
+// UnmarshalStrict decodes exactly one JSON value and rejects unknown fields.
+func UnmarshalStrict(data []byte, value any) error {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(value); err != nil {
@@ -143,7 +144,7 @@ func decodeManifest(data []byte, l Layout) (*Manifest, error) {
 		return nil, fmt.Errorf("manifest too large: %d bytes", len(data))
 	}
 	var m Manifest
-	if err := unmarshalStrict(data, &m); err != nil {
+	if err := UnmarshalStrict(data, &m); err != nil {
 		return nil, fmt.Errorf("decode manifest: %w", err)
 	}
 	if err := m.Validate(l); err != nil {

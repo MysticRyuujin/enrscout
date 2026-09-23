@@ -28,7 +28,6 @@ import (
 	"golang.org/x/time/rate"
 
 	"github.com/MysticRyuujin/enrscout/internal/buildinfo"
-	"github.com/MysticRyuujin/enrscout/internal/debugsrv"
 	"github.com/MysticRyuujin/enrscout/internal/devnetconfig"
 	"github.com/MysticRyuujin/enrscout/internal/discovery"
 	"github.com/MysticRyuujin/enrscout/internal/distinct"
@@ -213,17 +212,14 @@ func run() error {
 	// go-ethereum's log.SetDefault also hijacks the global slog default, so ours must come after it.
 	gethlog.SetDefault(gethlog.NewLogger(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn})))
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: conf.level})))
-	if err := debugsrv.Start(conf.pprofAddr); err != nil {
+	if err := metricsrv.StartPprof(conf.pprofAddr); err != nil {
 		return err
 	}
 
 	if conf.devnetDir != "" {
-		dcfg, err := devnetconfig.Load(conf.devnetDir)
+		dcfg, err := devnetconfig.Register(conf.devnetDir)
 		if err != nil {
-			return fmt.Errorf("load devnet: %w", err)
-		}
-		if err := netconf.RegisterDevnet(dcfg); err != nil {
-			return fmt.Errorf("register devnet: %w", err)
+			return err
 		}
 		slog.Info("registered devnet", "bootnodes", len(dcfg.BootnodeRecords), "cl-forks", len(dcfg.CLForks))
 	}
@@ -269,11 +265,7 @@ func run() error {
 	}
 	defer releaseProcessLock(processLock)
 
-	st, err := store.Open(ctx, store.S3Config{
-		Endpoint: conf.s3Endpoint, Region: conf.s3Region, Bucket: conf.s3Bucket,
-		AccessKey: os.Getenv("S3_ACCESS_KEY"), SecretKey: os.Getenv("S3_SECRET_KEY"), UseSSL: conf.s3SSL, CreateBucket: conf.s3Create,
-		ConditionalMode: conf.s3Conditional,
-	}, conf.out)
+	st, err := conf.store.Open(ctx)
 	if err != nil {
 		return err
 	}
@@ -336,7 +328,7 @@ func run() error {
 	}
 	// Expose restored rolling state immediately. Otherwise the per-walker gauges
 	// disappear after restart until the next (potentially multi-minute) publish.
-	updateDistinctMetrics(distinctState, time.Now())
+	updateDistinctMetrics(distinctState.Estimates(time.Now()))
 	runMetadata := &snapshot.RunMetadata{
 		RunID:                runID,
 		SourceRevision:       buildinfo.Revision,
@@ -500,6 +492,7 @@ func shutdown(resolvers *resolverPool, loops *backgroundLoops, pool *fingerprint
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	pub.final = true
 	return pub.Publish(ctx)
 }
 

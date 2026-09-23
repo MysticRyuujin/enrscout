@@ -87,7 +87,15 @@ var filterEnums = []struct {
 	{"membership", func(f Filter) string { return f.Membership }, map[string]bool{"": true, "verified": true, "claimed": true, "all": true}},
 }
 
-func (f Filter) validate() error {
+// Validate rejects every filter value the engine cannot implement, so callers can report a
+// client error before querying.
+func (f Filter) Validate() error {
+	if !ValidSort(f.Sort) {
+		return fmt.Errorf("invalid sort %q", f.Sort)
+	}
+	if !ValidOrder(f.Order) {
+		return fmt.Errorf("invalid order %q", f.Order)
+	}
 	for _, e := range filterEnums {
 		if value := e.get(f); !e.values[value] {
 			return fmt.Errorf("invalid %s %q", e.name, value)
@@ -294,14 +302,20 @@ type Engine struct {
 	refreshMu sync.Mutex
 	publishMu sync.RWMutex
 
-	mu          sync.RWMutex
-	loaded      int
-	generatedAt time.Time
-	lastRefresh time.Time
-	manifestID  string
-	run         snapshot.RunMetadata
-	crawlerID   string
-	schema      int
+	mu         sync.RWMutex
+	state      State
+	manifestID string
+}
+
+// State describes the loaded generation. It is copied under one lock so a caller never mixes
+// fields from two refreshes.
+type State struct {
+	Loaded        int
+	GeneratedAt   time.Time
+	LastRefresh   time.Time
+	Run           snapshot.RunMetadata
+	CrawlerID     string
+	SchemaVersion int
 }
 
 func New(st store.Store, networks []string, tmpDir, prefix string) (*Engine, error) {
@@ -376,40 +390,10 @@ func (e *Engine) Close() error {
 	return err
 }
 
-func (e *Engine) Loaded() int {
+func (e *Engine) State() State {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
-	return e.loaded
-}
-
-func (e *Engine) GeneratedAt() time.Time {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-	return e.generatedAt
-}
-
-func (e *Engine) LastRefresh() time.Time {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-	return e.lastRefresh
-}
-
-func (e *Engine) RunMetadata() snapshot.RunMetadata {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-	return e.run
-}
-
-func (e *Engine) CrawlerID() string {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-	return e.crawlerID
-}
-
-func (e *Engine) SchemaVersion() int {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-	return e.schema
+	return e.state
 }
 
 func (e *Engine) Refresh(ctx context.Context) error {
@@ -522,11 +506,12 @@ func (e *Engine) Refresh(ctx context.Context) error {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, "CREATE OR REPLACE TABLE nodes AS SELECT * FROM nodes_staging"); err != nil {
-		return fmt.Errorf("commit snapshots: %w", err)
+	// A rename swaps catalog entries instead of copying every row into a second table.
+	if _, err := tx.ExecContext(ctx, "DROP TABLE nodes"); err != nil {
+		return fmt.Errorf("drop served table: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, "DROP TABLE nodes_staging"); err != nil {
-		return fmt.Errorf("drop snapshot staging table: %w", err)
+	if _, err := tx.ExecContext(ctx, "ALTER TABLE nodes_staging RENAME TO nodes"); err != nil {
+		return fmt.Errorf("commit snapshots: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit snapshots: %w", err)
@@ -538,13 +523,11 @@ func (e *Engine) Refresh(ctx context.Context) error {
 		n += count
 	}
 	e.mu.Lock()
-	e.loaded = n
-	e.generatedAt = m.GeneratedAt
-	e.lastRefresh = time.Now()
+	e.state = State{
+		Loaded: n, GeneratedAt: m.GeneratedAt, LastRefresh: time.Now(),
+		Run: m.Run, CrawlerID: m.CrawlerID, SchemaVersion: m.SchemaVersion,
+	}
 	e.manifestID = manifestID
-	e.schema = m.SchemaVersion
-	e.crawlerID = m.CrawlerID
-	e.run = m.Run
 	e.mu.Unlock()
 	return nil
 }
@@ -727,7 +710,7 @@ func escapeLike(s string) string {
 }
 
 func (e *Engine) Nodes(ctx context.Context, f Filter) (NodesResult, error) {
-	if err := f.validate(); err != nil {
+	if err := f.Validate(); err != nil {
 		return NodesResult{}, err
 	}
 	if f.ForkAt.IsZero() {
@@ -815,10 +798,10 @@ func isNodeIDPrefix(value string) bool {
 func (e *Engine) StatsForMembershipAt(ctx context.Context, network, membership string, at time.Time) (Stats, error) {
 	e.publishMu.RLock()
 	defer e.publishMu.RUnlock()
-	generatedAt := e.GeneratedAt()
-	run := e.RunMetadata()
+	state := e.State()
+	generatedAt, run := state.GeneratedAt, state.Run
 	s := Stats{
-		Generation:      e.LastRefresh(),
+		Generation:      state.LastRefresh,
 		ForkEvaluatedAt: at.UTC().Format(time.RFC3339Nano), FingerprintWindowSeconds: int64(chartMaxFingerprintAge.Seconds()),
 		ByNetwork: map[string]int{}, ByClient: map[string]int{}, ByClientEL: map[string]int{}, ByClientCL: map[string]int{},
 		ByDirectionEL: map[string]int{}, ByDirectionCL: map[string]int{},
@@ -844,7 +827,7 @@ func (e *Engine) StatsForMembershipAt(ctx context.Context, network, membership s
 		}
 	}
 	f := Filter{Network: network, ForkAt: at, Membership: membership}
-	if err := f.validate(); err != nil {
+	if err := f.Validate(); err != nil {
 		return Stats{}, err
 	}
 	rawClause, rawArgs, err := f.where(e.networks)
@@ -855,95 +838,89 @@ func (e *Engine) StatsForMembershipAt(ctx context.Context, network, membership s
 	if err != nil {
 		return Stats{}, err
 	}
-	clause := appendWhereCondition(rawClause, currentCondition)
-	args := appendArgs(rawArgs, currentArgs...)
+	chartCond, chartCutoff := chartFingerprintConditionAt(at)
 	tx, err := e.db.BeginTx(ctx, nil)
 	if err != nil {
 		return s, err
 	}
 	defer tx.Rollback()
 
-	scalars := fmt.Sprintf(`SELECT
-		count(*),
-		count(*) FILTER (WHERE layer = 'el'),
-		count(*) FILTER (WHERE layer = 'cl'),
-		count(*) FILTER (WHERE has_v4),
-		count(*) FILTER (WHERE has_v5),
-		count(*) FILTER (WHERE geolocated),
-		count(*) FILTER (WHERE ip6 <> ''),
-		count(*) FILTER (WHERE ip <> '' AND ip6 <> ''),
-		count(*) FILTER (WHERE hosting),
-		count(*) FILTER (WHERE dialable),
+	// Every aggregate reads one pass over the filtered rows with the fork and fingerprint predicates
+	// computed once as columns. The predicates are coalesced to strict booleans, so FILTER (WHERE NOT
+	// cur) is the exact complement of FILTER (WHERE cur), as the separate WHERE clauses were.
+	flagged := fmt.Sprintf(`(SELECT *, %s AS cur, (%s) AS chart, (%s AND client <> '' AND coalesce(fp_at, 0) < ?) AS ident_stale FROM nodes%s)`,
+		currentCondition, chartCond, verifiedFingerprintCondition, rawClause)
+	flaggedArgs := appendArgs(appendArgs(currentArgs, chartCutoff, chartCutoff), rawArgs...)
+
+	scalars := `SELECT
+		count(*) FILTER (WHERE cur),
+		count(*) FILTER (WHERE cur AND layer = 'el'),
+		count(*) FILTER (WHERE cur AND layer = 'cl'),
+		count(*) FILTER (WHERE cur AND has_v4),
+		count(*) FILTER (WHERE cur AND has_v5),
+		count(*) FILTER (WHERE cur AND geolocated),
+		count(*) FILTER (WHERE cur AND ip6 <> ''),
+		count(*) FILTER (WHERE cur AND ip <> '' AND ip6 <> ''),
+		count(*) FILTER (WHERE cur AND hosting),
+		count(*) FILTER (WHERE cur AND dialable),
 		-- Equivalent to the v6 half of dialable: if ip6 is set and no v6 port applies, no v4 port
 		-- applies either, so dialable is already false. Reusing the column keeps one definition.
-		count(*) FILTER (WHERE dialable AND ip6 <> ''),
-		count(*) FILTER (WHERE ip6 <> '' AND (tcp6 <> 0 OR quic6 <> 0))
-		FROM nodes%s`, clause)
-	if err := tx.QueryRowContext(ctx, scalars, args...).Scan(
+		count(*) FILTER (WHERE cur AND dialable AND ip6 <> ''),
+		count(*) FILTER (WHERE cur AND ip6 <> '' AND (tcp6 <> 0 OR quic6 <> 0)),
+		count(*) FILTER (WHERE cur AND membership_source = 'status'),
+		count(*) FILTER (WHERE cur AND membership_source = 'enr'),
+		count(*) FILTER (WHERE NOT cur AND layer = 'el'),
+		count(*) FILTER (WHERE NOT cur AND layer = 'cl'),
+		count(*) FILTER (WHERE cur AND ident_stale AND layer = 'el'),
+		count(*) FILTER (WHERE cur AND ident_stale AND layer = 'cl')
+		FROM ` + flagged
+	if err := tx.QueryRowContext(ctx, scalars, flaggedArgs...).Scan(
 		&s.Total, &s.Execution, &s.Consensus, &s.Discv4, &s.Discv5, &s.Geolocated, &s.IPv6, &s.DualStack, &s.Hosting, &s.Dialable,
-		&s.IPv6Dialable, &s.IPv6ExplicitPort); err != nil {
-		return s, err
-	}
-	if err := tx.QueryRowContext(ctx, "SELECT count(*) FILTER (WHERE membership_source = 'status'), count(*) FILTER (WHERE membership_source = 'enr') FROM nodes"+clause, args...).Scan(&s.MembershipVerified, &s.MembershipClaimed); err != nil {
-		return s, err
-	}
-	staleClause := appendWhereCondition(rawClause, "layer = 'el' AND NOT "+currentCondition)
-	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM nodes"+staleClause, appendArgs(rawArgs, currentArgs...)...).Scan(&s.ExecutionStale); err != nil {
-		return s, err
-	}
-	clStaleClause := appendWhereCondition(rawClause, "layer = 'cl' AND NOT "+currentCondition)
-	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM nodes"+clStaleClause, appendArgs(rawArgs, currentArgs...)...).Scan(&s.ConsensusStale); err != nil {
+		&s.IPv6Dialable, &s.IPv6ExplicitPort, &s.MembershipVerified, &s.MembershipClaimed,
+		&s.ExecutionStale, &s.ConsensusStale, &s.ELIdentifiedStale, &s.CLIdentifiedStale); err != nil {
 		return s, err
 	}
 
-	groups := map[string]map[string]int{
-		"network": s.ByNetwork, "country": s.ByCountry,
-		"org": s.ByOrg, "layer": s.ByLayer,
-	}
-	for col, dst := range groups {
-		q := fmt.Sprintf("SELECT %s, count(*) FROM nodes%s GROUP BY 1", col, clause)
-		if err := scanCounts(ctx, tx, q, args, dst); err != nil {
-			return s, err
-		}
-	}
-	chartCond, chartCutoff := chartFingerprintConditionAt(at)
-	identifiedClause := appendWhereCondition(clause, chartCond+" AND client <> ''")
-	if err := scanCounts(ctx, tx, "SELECT client, count(*) FROM nodes"+identifiedClause+" GROUP BY 1", appendArgs(args, chartCutoff), s.ByClient); err != nil {
-		return s, err
-	}
-	osClause := appendWhereCondition(clause, chartCond+" AND os <> ''")
-	if err := scanCounts(ctx, tx, "SELECT os, count(*) FROM nodes"+osClause+" GROUP BY 1", appendArgs(args, chartCutoff), s.ByOS); err != nil {
+	groups := `SELECT network, country, org, layer, grouping(network), grouping(country), grouping(org), count(*)
+		FROM ` + flagged + ` WHERE cur GROUP BY GROUPING SETS ((network), (country), (org), (layer))`
+	if err := scanGroupingSets(ctx, tx, groups, flaggedArgs, s.ByNetwork, s.ByCountry, s.ByOrg, s.ByLayer); err != nil {
 		return s, err
 	}
 
-	for _, lg := range []struct {
-		layer string
-		dst   map[string]int
-		dir   map[string]int
-	}{{"el", s.ByClientEL, s.ByDirectionEL}, {"cl", s.ByClientCL, s.ByDirectionCL}} {
-		lf := Filter{Network: network, Layer: lg.layer, ForkStatus: "current", ForkAt: at, Membership: membership}
-		lc, la, err := lf.where(e.networks)
-		if err != nil {
-			return Stats{}, err
-		}
-		lc = appendWhereCondition(lc, chartCond+" AND client <> ''")
-		la = appendArgs(la, chartCutoff)
-		q := fmt.Sprintf("SELECT client, count(*) FROM nodes%s GROUP BY 1", lc)
-		if err := scanCounts(ctx, tx, q, la, lg.dst); err != nil {
+	clients := `SELECT layer, client, fp_direction, os, count(*)
+		FROM ` + flagged + ` WHERE cur AND chart AND (client <> '' OR os <> '') GROUP BY ALL`
+	rows, err := tx.QueryContext(ctx, clients, flaggedArgs...)
+	if err != nil {
+		return s, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var layer, client, direction, os sql.NullString
+		var c int
+		if err := rows.Scan(&layer, &client, &direction, &os, &c); err != nil {
 			return s, err
 		}
-		q = fmt.Sprintf("SELECT fp_direction, count(*) FROM nodes%s GROUP BY 1", lc)
-		if err := scanCounts(ctx, tx, q, la, lg.dir); err != nil {
-			return s, err
+		if os.String != "" {
+			s.ByOS[os.String] += c
+		}
+		if client.String == "" {
+			continue
+		}
+		s.ByClient[client.String] += c
+		byClient, byDirection := s.ByClientEL, s.ByDirectionEL
+		switch layer.String {
+		case "el":
+		case "cl":
+			byClient, byDirection = s.ByClientCL, s.ByDirectionCL
+		default:
+			continue
+		}
+		byClient[client.String] += c
+		if direction.String != "" {
+			byDirection[direction.String] += c
 		}
 	}
-
-	staleIdentClause := appendWhereCondition(clause, verifiedFingerprintCondition+" AND client <> '' AND coalesce(fp_at, 0) < ?")
-	staleIdent := fmt.Sprintf(`SELECT
-		count(*) FILTER (WHERE layer = 'el'),
-		count(*) FILTER (WHERE layer = 'cl')
-		FROM nodes%s`, staleIdentClause)
-	if err := tx.QueryRowContext(ctx, staleIdent, appendArgs(args, chartCutoff)...).Scan(&s.ELIdentifiedStale, &s.CLIdentifiedStale); err != nil {
+	if err := rows.Err(); err != nil {
 		return s, err
 	}
 
@@ -982,10 +959,10 @@ func appendArgs(args []any, extra ...any) []any {
 func (e *Engine) VersionsForMembershipAt(ctx context.Context, network, client, membership string, at time.Time) (map[string]int, time.Time, error) {
 	e.publishMu.RLock()
 	defer e.publishMu.RUnlock()
-	generation := e.LastRefresh()
+	generation := e.State().LastRefresh
 	out := map[string]int{}
 	f := Filter{Network: network, Client: client, ClientExact: true, ForkStatus: "current", ForkAt: at, Membership: membership}
-	if err := f.validate(); err != nil {
+	if err := f.Validate(); err != nil {
 		return nil, generation, err
 	}
 	clause, args, err := f.where(e.networks)
@@ -1039,7 +1016,7 @@ func (e *Engine) MapPointsForMembershipAt(ctx context.Context, network, membersh
 	e.publishMu.RLock()
 	defer e.publishMu.RUnlock()
 	f := Filter{Network: network, ForkStatus: "current", ForkAt: at, Membership: membership}
-	if err := f.validate(); err != nil {
+	if err := f.Validate(); err != nil {
 		return nil, 0, err
 	}
 	clause, args, err := f.where(e.networks)
@@ -1086,20 +1063,30 @@ type queryContext interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }
 
-func scanCounts(ctx context.Context, db queryContext, q string, args []any, dst map[string]int) error {
+// scanGroupingSets fills one map per grouping set of a (network), (country), (org), (layer) query.
+func scanGroupingSets(ctx context.Context, db queryContext, q string, args []any, byNetwork, byCountry, byOrg, byLayer map[string]int) error {
 	rows, err := db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var k sql.NullString
-		var c int
-		if err := rows.Scan(&k, &c); err != nil {
+		var network, country, org, layer sql.NullString
+		var gNetwork, gCountry, gOrg, c int
+		if err := rows.Scan(&network, &country, &org, &layer, &gNetwork, &gCountry, &gOrg, &c); err != nil {
 			return err
 		}
-		if k.Valid && k.String != "" {
-			dst[k.String] = c
+		key, dst := layer, byLayer
+		switch {
+		case gNetwork == 0:
+			key, dst = network, byNetwork
+		case gCountry == 0:
+			key, dst = country, byCountry
+		case gOrg == 0:
+			key, dst = org, byOrg
+		}
+		if key.Valid && key.String != "" {
+			dst[key.String] = c
 		}
 	}
 	return rows.Err()

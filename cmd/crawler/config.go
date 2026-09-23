@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"strings"
 	"time"
+
+	"github.com/MysticRyuujin/enrscout/internal/store"
 )
 
 // config is the crawler's validated configuration. Parsing and every constraint check live here,
@@ -41,13 +43,7 @@ type config struct {
 	keepGens            int
 	keepAggregates      time.Duration
 	crawlerID           string
-	out                 string
-	s3Endpoint          string
-	s3Bucket            string
-	s3Region            string
-	s3SSL               bool
-	s3Create            bool
-	s3Conditional       string
+	store               *store.Flags
 	pprofAddr           string
 	metricsAddr         string
 	probeAddr           string
@@ -96,13 +92,9 @@ func parseFlags() (*config, error) {
 	flag.IntVar(&c.keepGens, "keep-generations", 48, "immutable snapshot generations to retain per network (0 = keep all)")
 	flag.DurationVar(&c.keepAggregates, "keep-aggregates", 30*24*time.Hour, "delete longitudinal aggregate objects older than this, across every methodology (0 = keep all); must exceed the seven-day assessment window")
 	flag.StringVar(&c.crawlerID, "crawler-id", "", "identity recorded in the manifest (empty = hostname)")
-	flag.StringVar(&c.out, "out", "data", "filesystem output dir (used when --s3-endpoint is empty)")
-	flag.StringVar(&c.s3Endpoint, "s3-endpoint", "", "S3-compatible endpoint (host:port); empty uses filesystem")
-	flag.StringVar(&c.s3Bucket, "s3-bucket", "enrscout", "S3 bucket")
-	flag.StringVar(&c.s3Region, "s3-region", "us-east-1", "S3 region")
-	flag.BoolVar(&c.s3SSL, "s3-ssl", true, "use TLS for the S3 endpoint (set false only for a trusted local endpoint)")
-	flag.BoolVar(&c.s3Create, "s3-create-bucket", false, "create the S3 bucket if absent (crawler role only; requires elevated storage permissions)")
-	flag.StringVar(&c.s3Conditional, "s3-conditional-mode", "native", "manifest write mode: native (atomic PutObject If-Match) or verified (non-atomic precheck/write/verify for partial-S3 services; single-host writer lock required)")
+	c.store = store.BindFlags(flag.CommandLine, "out", "filesystem output dir")
+	flag.BoolVar(&c.store.S3.CreateBucket, "s3-create-bucket", false, "create the S3 bucket if absent (crawler role only; requires elevated storage permissions)")
+	flag.StringVar(&c.store.S3.ConditionalMode, "s3-conditional-mode", "native", "manifest write mode: native (atomic PutObject If-Match) or verified (non-atomic precheck/write/verify for partial-S3 services; single-host writer lock required)")
 	flag.StringVar(&c.pprofAddr, "pprof", "", "serve net/http/pprof on this address, e.g. 127.0.0.1:6060 (empty = off)")
 	flag.StringVar(&c.metricsAddr, "metrics-addr", "", "serve Prometheus /metrics on this address (empty = off)")
 	flag.StringVar(&c.probeAddr, "probe-addr", "", "serve the on-demand /probe API on this address (empty = off); authentication required by default")

@@ -4,7 +4,10 @@ import (
 	"net"
 	"strings"
 
+	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/oschwald/geoip2-golang"
+
+	"github.com/MysticRyuujin/enrscout/internal/nodeset"
 )
 
 type GeoResult struct {
@@ -99,13 +102,8 @@ var hostingASNs = map[uint]string{
 	397423: "Tier.Net",
 }
 
-// ClassifyHosting labels a node's autonomous system as cloud/datacenter by
+// HostingClassification labels a node's autonomous system as cloud/datacenter by
 // ASN or organization-name keyword.
-func ClassifyHosting(asn uint, org string) bool {
-	hosting, _ := HostingClassification(asn, org)
-	return hosting
-}
-
 func HostingClassification(asn uint, org string) (hosting, known bool) {
 	l := strings.ToLower(org)
 	for _, k := range residentialExceptions {
@@ -178,6 +176,16 @@ func (g *Geo) Lookup(ip net.IP) GeoResult {
 		}
 	}
 	return r
+}
+
+// Record looks up addr and stores the result on id. It is a no-op without a database, so every
+// ingress path can call it unconditionally when an observation changed the node.
+func (g *Geo) Record(set *nodeset.Set, id enode.ID, addr net.IP) {
+	if g == nil {
+		return
+	}
+	r := g.Lookup(addr)
+	set.SetGeo(id, addr, r.Country, r.City, r.Subdivision, r.Lat, r.Lon, r.ASN, r.Org, r.Hosting, r.HostingKnown, r.Geolocated, r.AccuracyRadiusKM)
 }
 
 func (g *Geo) Close() {

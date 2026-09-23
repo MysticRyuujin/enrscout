@@ -223,7 +223,7 @@ func TestMeasurementPointUsesSameForkAndFingerprintRules(t *testing.T) {
 		{Layer: "cl", ForkHash: hex.EncodeToString(cl.Digest[:]), MembershipSource: "enr"},
 		{Layer: "cl", ForkHash: "ffffffff"},
 	}}
-	point := measurementPointAt(at, &snapshot.RunMetadata{}, rows, distinct.New("test", distinct.DefaultPrecision))
+	point := measurementPointAt(at, &snapshot.RunMetadata{}, rows, nil)
 	got := point.Networks["mainnet"]
 	if got.Current != 2 || got.ExecutionCurrent != 1 || got.ConsensusCurrent != 1 || got.ExecutionStale != 2 || got.ConsensusStale != 1 ||
 		got.MembershipVerified != 1 || got.MembershipClaimed != 1 || got.FingerprintIdentified != 1 || got.FingerprintDirection["inbound"] != 1 {
@@ -367,7 +367,7 @@ func TestRestorePreviousSchema(t *testing.T) {
 	if restored.Len() != 1 {
 		t.Errorf("restored %d nodes, want 1", restored.Len())
 	}
-	if got := restored.CountForNetwork("mainnet"); got != 1 {
+	if got := len(restored.SnapshotNetworks([]string{"mainnet"})["mainnet"]); got != 1 {
 		t.Errorf("mainnet count = %d, want 1", got)
 	}
 }
@@ -432,10 +432,10 @@ func TestRestoreSkipsUnconfiguredNetworks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := restored.CountForNetwork("mainnet"); got != 1 {
+	if got := len(restored.SnapshotNetworks([]string{"mainnet"})["mainnet"]); got != 1 {
 		t.Errorf("mainnet count = %d, want 1", got)
 	}
-	if got := restored.CountForNetwork("sepolia"); got != 0 {
+	if got := len(restored.SnapshotNetworks([]string{"sepolia"})["sepolia"]); got != 0 {
 		t.Errorf("sepolia count = %d, want 0 for an unconfigured network", got)
 	}
 	if len(m.Networks) != 2 {
@@ -769,5 +769,39 @@ func TestForcePublishConsumedOnlyByCommittedPublish(t *testing.T) {
 	}
 	if admitted, forced := pending.admit(guardManifest(20000, 18000)); !admitted || forced {
 		t.Fatalf("benign admit with a pending force = %v/%v, want admitted without forcing", admitted, forced)
+	}
+}
+
+func TestDistinctStatePersistsHourlyAndAtShutdownDespiteRejectedPublish(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.NewFS(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := distinct.New("test", distinct.DefaultPrecision)
+	state.Observe([]byte("node"), time.Now(), "all/all")
+	// An empty set with a current-node floor rejects every publish, so persistence must not depend
+	// on admission.
+	p := &publisher{
+		cfg: publishConfig{minCurrentNodes: 1}, store: st, layout: snapshot.Layout{}, set: nodeset.NewWithLimit(0),
+		distinct: state, run: &snapshot.RunMetadata{}, crawlerID: "test", networks: []string{"mainnet"},
+		distinctKey: "state/distinct.json.gz",
+	}
+	saved := func() bool {
+		_, err := st.Get(ctx, p.distinctKey)
+		return err == nil
+	}
+	if err := p.Publish(ctx); err != nil || !saved() {
+		t.Fatalf("first publish: err=%v saved=%v, want the state saved", err, saved())
+	}
+	if err := st.Delete(ctx, p.distinctKey); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Publish(ctx); err != nil || saved() {
+		t.Fatalf("second publish within the hour: err=%v saved=%v, want no save", err, saved())
+	}
+	p.final = true
+	if err := p.Publish(ctx); err != nil || !saved() {
+		t.Fatalf("shutdown publish: err=%v saved=%v, want the state saved", err, saved())
 	}
 }
