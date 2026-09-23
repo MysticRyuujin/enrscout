@@ -102,10 +102,14 @@ func (rt *identityRuntime) startRefresh(ctx context.Context) {
 		}
 		return delay
 	}
+	// Each identity captured its fork state when it was built, so a transition during
+	// start would otherwise wait out the next timer, an hour when no fork follows it.
+	now := time.Now()
+	refreshAt(now)
 	rt.refresh.Add(1)
 	go func() {
 		defer rt.refresh.Done()
-		t := time.NewTimer(nextDelay(time.Now()))
+		t := time.NewTimer(nextDelay(now))
 		defer t.Stop()
 		for {
 			select {

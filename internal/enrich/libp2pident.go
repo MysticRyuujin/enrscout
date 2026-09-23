@@ -123,9 +123,10 @@ func (f *CLFingerprinter) ShareInboundBudget(with *CLFingerprinter) {
 
 // WatchInbound reports the client of any peer that dials in; Caplin refuses
 // outbound probes but identifies on connections it initiates. Unknown peers
-// receive a network only after a consensus Status exchange.
-func (f *CLFingerprinter) WatchInbound(localFork []byte, onFP func(InboundCLFingerprint)) error {
-	if len(localFork) < 4 {
+// receive a network only after a consensus Status exchange. localFork is read per
+// peer so that a fork transition takes effect without a restart.
+func (f *CLFingerprinter) WatchInbound(localFork func() []byte, onFP func(InboundCLFingerprint)) error {
+	if localFork == nil || len(localFork()) < 4 {
 		return errors.New("inbound consensus fork entry is required")
 	}
 	if f.sub != nil {
@@ -156,7 +157,7 @@ func (f *CLFingerprinter) WatchInbound(localFork []byte, onFP func(InboundCLFing
 							slog.Error("panic handling inbound libp2p identification", "panic", recovered)
 						}
 					}()
-					f.handleInboundIdentification(evt, localFork, onFP)
+					f.handleInboundIdentification(evt, localFork(), onFP)
 				}()
 			default:
 				safeInboundCLCallback(onFP, InboundCLFingerprint{Err: atProbeStage("read_capacity", errors.New("inbound libp2p identification capacity exhausted"))})

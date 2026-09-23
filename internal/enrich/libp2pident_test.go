@@ -182,7 +182,7 @@ func TestCLInboundWatcherIgnoresOutboundIdentification(t *testing.T) {
 	}
 	defer identified.Close()
 	callbacks := make(chan InboundCLFingerprint, 1)
-	if err := local.WatchInbound(entry, func(result InboundCLFingerprint) { callbacks <- result }); err != nil {
+	if err := local.WatchInbound(func() []byte { return entry }, func(result InboundCLFingerprint) { callbacks <- result }); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -225,9 +225,10 @@ func TestCLInboundWatcherAcceptsInboundIdentification(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var reads atomic.Int32
 	serveCLStatus(remote, entry)
 	callbacks := make(chan InboundCLFingerprint, 1)
-	if err := local.WatchInbound(entry, func(result InboundCLFingerprint) { callbacks <- result }); err != nil {
+	if err := local.WatchInbound(func() []byte { reads.Add(1); return entry }, func(result InboundCLFingerprint) { callbacks <- result }); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -240,6 +241,9 @@ func TestCLInboundWatcherAcceptsInboundIdentification(t *testing.T) {
 	case result := <-callbacks:
 		if result.NodeID == (enode.ID{}) || result.Fingerprint.Network != "mainnet" {
 			t.Fatalf("inbound fingerprint = %+v", result)
+		}
+		if reads.Load() < 2 {
+			t.Fatal("local fork was not re-read for the peer; inbound Status would keep a pre-transition digest")
 		}
 	case <-ctx.Done():
 		t.Fatal("inbound identify did not reach callback")
@@ -274,7 +278,7 @@ func TestCLFingerprinterCloseWaitsForInboundHandlers(t *testing.T) {
 	entered := make(chan struct{}, 1)
 	release := make(chan struct{})
 	var finished atomic.Bool
-	if err := server.WatchInbound([]byte{1, 2, 3, 4}, func(InboundCLFingerprint) {
+	if err := server.WatchInbound(func() []byte { return []byte{1, 2, 3, 4} }, func(InboundCLFingerprint) {
 		select {
 		case entered <- struct{}{}:
 		default:

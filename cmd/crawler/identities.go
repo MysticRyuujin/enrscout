@@ -247,7 +247,10 @@ func newIdentityRuntime(ctx context.Context, cr *crawler, families []string, res
 			} else {
 				identity.cl.ShareInboundBudget(clfp)
 			}
-			if err := identity.cl.WatchInbound(cfg.Eth2, func(result enrich.InboundCLFingerprint) {
+			if err := identity.cl.WatchInbound(func() []byte {
+				entry, _ := netconf.CurrentCLForkENR(spec.Network)
+				return entry
+			}, func(result enrich.InboundCLFingerprint) {
 				defer recoverPeerCallback(spec.Network, layerCL)
 				if result.Err != nil {
 					observeFingerprintAttempt(layerCL, "inbound", 0, result.Err)
