@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/hex"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -64,7 +65,7 @@ func TestBuiltinNetworksClassifyPostFuluDigests(t *testing.T) {
 
 func TestCurrentCLForkDigests(t *testing.T) {
 	for _, c := range clNetworks {
-		at := c.timeAtEpoch(c.blobSchedule[len(c.blobSchedule)-1].epoch + 1)
+		at := c.timeAtEpoch(lastScheduledEpoch(c) + 1)
 		state, err := CLForkStateAt(c.name, at)
 		if err != nil {
 			t.Fatalf("%s: %v", c.name, err)
@@ -92,7 +93,7 @@ func TestCurrentCLForkDigests(t *testing.T) {
 
 func TestCurrentCLForkENR(t *testing.T) {
 	for _, c := range clNetworks {
-		at := c.timeAtEpoch(c.blobSchedule[len(c.blobSchedule)-1].epoch + 1)
+		at := c.timeAtEpoch(lastScheduledEpoch(c) + 1)
 		entry, err := CurrentCLForkENRAt(c.name, at)
 		if err != nil {
 			t.Fatal(err)
@@ -149,5 +150,42 @@ func TestCLForkStateBoundaries(t *testing.T) {
 				t.Errorf("%s digest changed again one slot after epoch %d", c.name, epoch)
 			}
 		}
+	}
+}
+
+func lastScheduledEpoch(c *clNetwork) uint64 {
+	return max(c.forks[len(c.forks)-1].epoch, c.blobSchedule[len(c.blobSchedule)-1].epoch)
+}
+
+// Glamsterdam activates both layers at one instant. The digests are computed
+// independently of this package and the fork ids come from geth's forkid tests.
+func TestSepoliaGlamsterdamTransition(t *testing.T) {
+	const amsterdam = 1791294816
+	n, _ := Get("sepolia")
+	for _, tc := range []struct {
+		unix       int64
+		el, cl     string
+		clNextFork uint64
+	}{
+		{amsterdam - 1, "268956b6", "74d01459", 353024},
+		{amsterdam, "6c1d9423", "669e6c11", ^uint64(0)},
+	} {
+		at := time.Unix(tc.unix, 0)
+		if got := fmt.Sprintf("%x", n.CurrentForkIDAt(at).Hash); got != tc.el {
+			t.Errorf("EL fork id at %d = %s, want %s", tc.unix, got, tc.el)
+		}
+		state, err := CLForkStateAt("sepolia", at)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := hex.EncodeToString(state.Digest[:]); got != tc.cl {
+			t.Errorf("CL digest at %d = %s, want %s", tc.unix, got, tc.cl)
+		}
+		if state.NextForkEpoch != tc.clNextFork {
+			t.Errorf("CL next fork epoch at %d = %d, want %d", tc.unix, state.NextForkEpoch, tc.clNextFork)
+		}
+	}
+	if got := ClassifyCL([4]byte{0x66, 0x9e, 0x6c, 0x11}); got != "sepolia" {
+		t.Errorf("Gloas digest classifies as %q", got)
 	}
 }
