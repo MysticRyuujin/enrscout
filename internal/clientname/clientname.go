@@ -91,6 +91,10 @@ func ConsensusAgentHasNestedVersion(client, second string) bool {
 
 const Other = "Other"
 
+// Self is the client name our own advertisers announce in the RLPx Hello and the libp2p agent
+// string. Other ENRScout deployments therefore appear as identities, and readiness views drop them.
+const Self = "enrscout"
+
 // Crawlers, tooling, L2 clients (OP-Geth), and garbage self-reported strings are
 // deliberately absent so aggregation collapses them to Other. Keep in sync with the
 // web CLIENT_COLOR map in web/src/theme.ts.

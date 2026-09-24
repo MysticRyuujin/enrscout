@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"time"
 
+	"github.com/MysticRyuujin/enrscout/internal/clientname"
 	"github.com/MysticRyuujin/enrscout/internal/netconf"
 	"github.com/MysticRyuujin/enrscout/internal/nodeset"
 	"github.com/MysticRyuujin/enrscout/internal/snapshot"
@@ -23,6 +25,9 @@ func readinessPointAt(target netconf.ForkTarget, network string, rows []nodeset.
 		point.CL = map[string]int{}
 	}
 	for _, row := range rows {
+		if strings.EqualFold(row.Client, clientname.Self) {
+			continue
+		}
 		var layer map[string]int
 		switch row.Layer {
 		case "el":

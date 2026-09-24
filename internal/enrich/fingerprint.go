@@ -34,7 +34,7 @@ const (
 	handshakeMsg      = 0x00
 	discMsg           = 0x01
 	baseProtoVersion  = 5
-	fingerprintName   = "enrscout"
+	fingerprintName   = clientname.Self
 	maxHandshakeBytes = 2048
 	ethStatusMsg      = 0x10
 	maxStatusBytes    = 2048

@@ -31,6 +31,7 @@ func TestRecordReadinessAppendsAcrossRestartsAndKeepsUnreadable(t *testing.T) {
 		{ID: "a", Layer: "el", ForkHash: hex.EncodeToString(hash[:]), ForkNext: sepoliaAmsterdam, Client: "Geth", FPStatus: "ok", FPAt: at.Unix()},
 		{ID: "b", Layer: "el", ForkHash: hex.EncodeToString(hash[:]), Client: "Geth", FPStatus: "ok", FPAt: at.Unix()},
 		{ID: "c", Layer: "el", ForkHash: hex.EncodeToString(hash[:])},
+		{ID: "d", Layer: "el", ForkHash: hex.EncodeToString(hash[:]), ForkNext: sepoliaAmsterdam, Client: "enrscout", FPStatus: "ok", FPAt: at.Unix()},
 	}}
 	key, err := layout.ReadinessHistoryKey("sepolia", "Glamsterdam")
 	if err != nil {

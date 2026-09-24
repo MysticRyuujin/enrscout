@@ -44,8 +44,8 @@ type LayerReadiness struct {
 	Total  int             `json:"total"`
 	Counts ReadinessCounts `json:"counts"`
 	Sync   map[string]int  `json:"sync"`
-	// Unidentified holds the non-stale rows outside the client-chart population, so Clients plus
-	// Unidentified add up to Counts less the stale rows.
+	// Unidentified holds the non-stale rows without a fresh fingerprint or a recognized client name, so
+	// Clients plus Unidentified add up to Counts less the stale rows.
 	Unidentified ReadinessCounts   `json:"unidentified"`
 	Clients      []ClientReadiness `json:"clients"`
 }
@@ -64,6 +64,10 @@ type ForkReadiness struct {
 }
 
 const readinessVersionRows = 15
+
+// notSelfCondition drops our own advertiser identities: they announce every scheduled fork, so they
+// would count as ready nodes of the network. Bound to clientname.Self.
+const notSelfCondition = "lower(coalesce(client, '')) <> ?"
 
 // ForkReadinessAt groups rows by the raw evidence columns in SQL and classifies each group with
 // netconf.ReadinessAt, so the aggregate never needs a second copy of the rule.
@@ -97,8 +101,8 @@ func (e *Engine) ForkReadinessAt(ctx context.Context, network string, at time.Ti
 	chartCond, chartCutoff := chartFingerprintConditionAt(at)
 	q := fmt.Sprintf(`SELECT layer, coalesce(fork_hash, ''), coalesce(fork_next, 0), %s,
 		coalesce(%s, false), coalesce(client, ''), coalesce(client_version, ''), %s, %s, count(*)
-		FROM nodes WHERE network = ? AND layer IN ('el', 'cl') GROUP BY ALL`, enrScheduleColumns, chartCond, normalizedClientVersionSQL, syncStateColumn)
-	rows, err := e.db.QueryContext(ctx, q, chartCutoff, network)
+		FROM nodes WHERE network = ? AND layer IN ('el', 'cl') AND %s GROUP BY ALL`, enrScheduleColumns, chartCond, normalizedClientVersionSQL, syncStateColumn, notSelfCondition)
+	rows, err := e.db.QueryContext(ctx, q, chartCutoff, network, clientname.Self)
 	if err != nil {
 		return out, err
 	}
@@ -135,12 +139,9 @@ func (e *Engine) ForkReadinessAt(ctx context.Context, network string, at time.Ti
 		if readiness == netconf.Stale {
 			continue
 		}
-		if !chart || client == "" {
+		if !chart || !clientname.Recognized(client) {
 			layer.Unidentified[readiness] += count
 			continue
-		}
-		if !clientname.Recognized(client) {
-			client = clientname.Other
 		}
 		ck := [2]string{ev.Layer, client}
 		c := clients[ck]

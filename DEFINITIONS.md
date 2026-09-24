@@ -138,6 +138,11 @@ After activation, a row on the new fork is `ready` (upgraded), a row still on th
 digest is `not_ready` (left behind), and any other row is `stale`. The tracker therefore counts
 stale-fork rows of the network, which the current-network views exclude.
 
+Client rows and the per-client split cover recognized clients with a verified handshake in the
+last 7 days; every other row is `unidentified`. The crawler's own advertiser identities (client
+`enrscout`, which announce every scheduled fork) are excluded from all readiness counts, from the
+readiness history, and from the `readiness` node filter.
+
 The release table is curated by hand: built into `internal/netconf/releases.go`, and replaceable at
 runtime with the API's `--client-releases-file`. For each client it lists the first release of
 each release line that ships the schedule (`min_versions`). A reported version is labelled:

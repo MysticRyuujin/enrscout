@@ -158,9 +158,11 @@ func TestForkReadinessAggregate(t *testing.T) {
 		('u1', 'sepolia', 'el', ?, 0, '', '', 0, 'Geth', 'v1.17.6', '', 0),
 		('l1', 'sepolia', 'cl', ?, 0, ?, '90000075', CAST('18446744073709551615' AS UBIGINT), 'Lighthouse', 'v8.2.2', 'ok', ?),
 		('p1', 'sepolia', 'cl', ?, 0, '', '', 0, 'Prysm', 'v7.1.8', 'ok', ?),
-		('s1', 'sepolia', 'el', 'deadbeef', 0, '', '', 0, 'Geth', 'v1.16.0', 'ok', ?)`,
+		('s1', 'sepolia', 'el', 'deadbeef', 0, '', '', 0, 'Geth', 'v1.16.0', 'ok', ?),
+		('o1', 'sepolia', 'el', ?, ?, '', '', 0, 'Silkworm', 'v0.1.0', 'ok', ?),
+		('e1', 'sepolia', 'el', ?, ?, '', '', 0, 'enrscout', '', 'ok', ?)`,
 		el, sepoliaAmsterdam, fresh, el, fresh, el, fresh, el, sepoliaAmsterdam, fresh, el,
-		cl, cl, fresh, cl, fresh, fresh)
+		cl, cl, fresh, cl, fresh, fresh, el, sepoliaAmsterdam, fresh, el, sepoliaAmsterdam, fresh)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,8 +175,16 @@ func TestForkReadinessAggregate(t *testing.T) {
 		t.Fatalf("header = phase %q fork %q releases %d", r.Phase, r.Fork.Name, len(r.Releases))
 	}
 	elr := r.Layers["el"]
-	if elr.Total != 6 || elr.Counts[netconf.Ready] != 2 || elr.Counts[netconf.NotReady] != 3 || elr.Counts[netconf.Stale] != 1 || elr.Unidentified[netconf.NotReady] != 1 {
+	// o1 is fresh but unrecognized, so it joins the unidentified row; e1 is our own advertiser and is
+	// left out of every count.
+	if elr.Total != 7 || elr.Counts[netconf.Ready] != 3 || elr.Counts[netconf.NotReady] != 3 || elr.Counts[netconf.Stale] != 1 ||
+		elr.Unidentified[netconf.NotReady] != 1 || elr.Unidentified[netconf.Ready] != 1 {
 		t.Fatalf("el = %+v", elr)
+	}
+	for _, c := range elr.Clients {
+		if c.Client == "Other" || c.Client == "Silkworm" || c.Client == "enrscout" {
+			t.Fatalf("unexpected client row %+v", c)
+		}
 	}
 	geth := elr.Clients[0]
 	if geth.Client != "Geth" || geth.Total != 3 {
@@ -201,6 +211,15 @@ func TestForkReadinessAggregate(t *testing.T) {
 	stale, err := eng.Nodes(ctx, Filter{Network: "sepolia", Readiness: "stale", ForkAt: at})
 	if err != nil || stale.Total != 1 || stale.Nodes[0].ID != "s1" {
 		t.Fatalf("readiness=stale = %+v, %v; want s1", stale, err)
+	}
+	ready, err := eng.Nodes(ctx, Filter{Network: "sepolia", Readiness: "ready", ForkAt: at})
+	if err != nil || ready.Total != 3 {
+		t.Fatalf("readiness=ready = %+v, %v; want g1, n1, o1", ready, err)
+	}
+	for _, n := range ready.Nodes {
+		if n.ID == "e1" {
+			t.Fatalf("readiness=ready lists our own advertiser: %+v", n)
+		}
 	}
 
 	none, err := eng.ForkReadinessAt(ctx, "sepolia", time.Unix(sepoliaAmsterdam, 0).Add(netconf.ForkTrackingGrace+time.Hour))

@@ -82,7 +82,7 @@ func NewCLFingerprinterWithLimits(timeout time.Duration, key *ecdsa.PrivateKey, 
 		return nil, fmt.Errorf("inbound identification limit must be positive, got %d", inboundLimit)
 	}
 	opts := []libp2p.Option{
-		libp2p.UserAgent("enrscout"),
+		libp2p.UserAgent(clientname.Self),
 		libp2p.DisableRelay(),
 		libp2p.Security(noise.ID, noise.New),
 		libp2p.Muxer(yamux.ID, yamux.DefaultTransport),

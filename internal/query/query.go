@@ -677,6 +677,8 @@ func (f Filter) where(networks []string) (string, []any, error) {
 		}
 		conds = append(conds, condition)
 		args = append(args, readinessArgs...)
+		conds = append(conds, notSelfCondition)
+		args = append(args, clientname.Self)
 	}
 	if f.Sync != "" {
 		conds = append(conds, syncStateColumn+" = ?")

@@ -206,19 +206,17 @@ function ClientRow({
           total={c.total}
           activated={activated}
           ready={
-            c.client === "Other" ? undefined : (
-              <Link
-                to={nodesLink(layer, {
-                  network,
-                  client: c.client,
-                  client_exact: "yes",
-                  identified: "recent",
-                  readiness: "ready",
-                })}
-              >
-                {num(c.counts.ready)}
-              </Link>
-            )
+            <Link
+              to={nodesLink(layer, {
+                network,
+                client: c.client,
+                client_exact: "yes",
+                identified: "recent",
+                readiness: "ready",
+              })}
+            >
+              {num(c.counts.ready)}
+            </Link>
           }
         />
       </tr>
@@ -257,9 +255,9 @@ function LayerCard({
     <div className="card">
       <h3>{layerName(layer)} clients</h3>
       <p className="card-subtitle">
-        {num(data.total)} identities. Client rows count identities with a
-        verified handshake in the last 7 days; everything else is in the last
-        row. Ready counts link to the matching nodes.
+        {num(data.total)} identities. Client rows count recognized clients with
+        a verified handshake in the last 7 days; everything else is in the
+        last row. Ready counts link to the matching nodes.
       </p>
       <Legend activated={activated} />
       <div className="table-wrap">
