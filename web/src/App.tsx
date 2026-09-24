@@ -42,10 +42,9 @@ export default function App() {
   const [networksReady, setNetworksReady] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const networkParam = searchParams.get("network");
-  const [network, setNetworkState] = useState<string>(() => {
-    if (networkParam && NETWORKS.includes(networkParam)) return networkParam;
-    return readStoredNetwork();
-  });
+  const [network, setNetworkState] = useState<string>(
+    () => networkParam || readStoredNetwork(),
+  );
 
   useEffect(() => {
     let live = true;
@@ -101,21 +100,25 @@ export default function App() {
         <Nav />
         <main className="content">
           <Suspense fallback={<div className="loading">Loading…</div>}>
-            <Routes>
-              <Route path="/" element={<Overview />} />
-              <Route path="/nodes" element={<NodesRedirect />} />
-              <Route
-                path="/nodes/execution"
-                element={<NodesPage layer="el" />}
-              />
-              <Route
-                path="/nodes/consensus"
-                element={<NodesPage layer="cl" />}
-              />
-              <Route path="/nodes/:key" element={<NodeDetail />} />
-              <Route path="/forks" element={<Forks />} />
-              <Route path="/about" element={<About />} />
-            </Routes>
+            {networksReady && networks.includes(network) ? (
+              <Routes>
+                <Route path="/" element={<Overview />} />
+                <Route path="/nodes" element={<NodesRedirect />} />
+                <Route
+                  path="/nodes/execution"
+                  element={<NodesPage layer="el" />}
+                />
+                <Route
+                  path="/nodes/consensus"
+                  element={<NodesPage layer="cl" />}
+                />
+                <Route path="/nodes/:key" element={<NodeDetail />} />
+                <Route path="/forks" element={<Forks />} />
+                <Route path="/about" element={<About />} />
+              </Routes>
+            ) : (
+              <div className="loading">Loading…</div>
+            )}
           </Suspense>
         </main>
       </div>
