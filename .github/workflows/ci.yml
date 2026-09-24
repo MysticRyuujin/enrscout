@@ -73,13 +73,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        component: [api, web]
+        component: [api, web, minio]
         arch: [amd64, arm64]
         include:
           - component: api
             dockerfile: Dockerfile.api
           - component: web
             dockerfile: web/Dockerfile
+          - component: minio
+            dockerfile: deploy/local/Dockerfile.minio
           - arch: amd64
             runner: ubuntu-24.04
           - arch: arm64
