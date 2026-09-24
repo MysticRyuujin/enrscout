@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	SchemaVersion               = 3
+	SchemaVersion               = 4
 	OldestReadableSchemaVersion = 1
 )
 const MethodologyVersion = "2026-08-v3"

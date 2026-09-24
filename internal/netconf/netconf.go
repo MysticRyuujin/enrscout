@@ -81,7 +81,7 @@ type Network struct {
 
 	once    sync.Once
 	genesis *types.Block
-	times   []uint64
+	elForks []elForkTime
 	hashMu  sync.RWMutex
 	hashes  map[[4]byte]struct{}
 	hashAt  time.Time
@@ -97,7 +97,7 @@ type forkMemo struct {
 func (n *Network) load() {
 	n.once.Do(func() {
 		n.genesis = n.genesisFn().ToBlock()
-		n.times = forkTimes(n.ChainConfig)
+		n.elForks = forkTimes(n.ChainConfig)
 	})
 }
 
@@ -106,8 +106,8 @@ func (n *Network) load() {
 func (n *Network) forkEraAt(at time.Time) int64 {
 	unix := clampUnix(at)
 	var era int64
-	for _, ft := range n.times {
-		if t := int64(ft); t <= unix && t > era {
+	for _, f := range n.elForks {
+		if t := int64(f.time); t <= unix && t > era {
 			era = t
 		}
 	}
@@ -132,9 +132,9 @@ func (n *Network) gatherHashes(at time.Time) map[[4]byte]struct{} {
 	// With the head block fixed, the id changes only at scheduled fork times (the same invariant
 	// forkEraAt relies on), so the window is the id at its start plus each boundary inside it.
 	set[forkid.NewID(n.ChainConfig, n.genesis, forkHeadBlock, uint64(start)).Hash] = struct{}{}
-	for _, ft := range n.times {
-		if t := int64(ft); t >= start && t <= now+ahead {
-			set[forkid.NewID(n.ChainConfig, n.genesis, forkHeadBlock, ft).Hash] = struct{}{}
+	for _, f := range n.elForks {
+		if t := int64(f.time); t >= start && t <= now+ahead {
+			set[forkid.NewID(n.ChainConfig, n.genesis, forkHeadBlock, f.time).Hash] = struct{}{}
 		}
 	}
 	return set
@@ -150,17 +150,24 @@ func (n *Network) RefreshClassifyWindowAt(at time.Time) {
 	n.hashMu.Unlock()
 }
 
-// Reflection over *Time fields, not a hand-kept list, so geth upgrades add forks for free.
-func forkTimes(cfg *params.ChainConfig) []uint64 {
+type elForkTime struct {
+	name string
+	time uint64
+}
+
+// Reflection over *Time fields, not a hand-kept list, so geth upgrades add forks for free. Fields are
+// in activation order, and the name is the field name without "Time", such as "Amsterdam".
+func forkTimes(cfg *params.ChainConfig) []elForkTime {
 	v := reflect.ValueOf(cfg).Elem()
 	t := v.Type()
-	var out []uint64
+	var out []elForkTime
 	for i := 0; i < t.NumField(); i++ {
-		if !strings.HasSuffix(t.Field(i).Name, "Time") {
+		name, ok := strings.CutSuffix(t.Field(i).Name, "Time")
+		if !ok {
 			continue
 		}
 		if p, ok := v.Field(i).Interface().(*uint64); ok && p != nil {
-			out = append(out, *p)
+			out = append(out, elForkTime{name: name, time: *p})
 		}
 	}
 	return out
@@ -240,8 +247,8 @@ func ForkEraTokenAt(at time.Time, requested ...string) (string, time.Time, error
 		if !state.NextTransition.IsZero() && (next.IsZero() || state.NextTransition.Before(next)) {
 			next = state.NextTransition
 		}
-		for _, unix := range n.times {
-			transition := time.Unix(int64(unix), 0).UTC()
+		for _, f := range n.elForks {
+			transition := time.Unix(int64(f.time), 0).UTC()
 			if transition.After(at) && (next.IsZero() || transition.Before(next)) {
 				next = transition
 			}
@@ -327,14 +334,42 @@ func RowForkCurrentAt(layer, network, forkHash string, forkNext uint64, at time.
 // registry lists every network in classification priority order.
 var registry = []*Network{
 	{Name: "mainnet", NetworkID: 1, ChainConfig: params.MainnetChainConfig, genesisFn: core.DefaultGenesisBlock,
-		cl: mainnetCL, bootnodes: params.MainnetBootnodes, clBootnodes: mainnetCLBootnodes},
+		cl: mainnetCL, bootnodes: mainnetELBootnodes, clBootnodes: mainnetCLBootnodes},
 	{Name: "hoodi", NetworkID: 560048, ChainConfig: params.HoodiChainConfig, genesisFn: core.DefaultHoodiGenesisBlock,
-		cl: hoodiCL, bootnodes: params.HoodiBootnodes, clBootnodes: hoodiCLBootnodes},
+		cl: hoodiCL, bootnodes: hoodiELBootnodes, clBootnodes: hoodiCLBootnodes},
 	{Name: "sepolia", NetworkID: 11155111, ChainConfig: params.SepoliaChainConfig, genesisFn: core.DefaultSepoliaGenesisBlock,
-		cl: sepoliaCL, bootnodes: params.SepoliaBootnodes, clBootnodes: sepoliaCLBootnodes},
+		cl: sepoliaCL, bootnodes: sepoliaELBootnodes, clBootnodes: sepoliaCLBootnodes},
 }
 
-// Consensus bootnodes mirror Lighthouse's built-in network configuration:
+// Execution bootnodes are the NodeOps fleet's dual-stack records (discv4 and discv5 on the EL
+// port), as go-ethereum PR #35682 ships them. They carry no eth entry, so they never need
+// re-signing at a fork.
+var mainnetELBootnodes = []string{
+	"enr:-KG4QCF1Mj32xpKHjinNb6ocCtMZG6IR_tyF5dkio5Hkek7zVbT6MM5eJwhjJFdiksQl51T33IRgryE0XLXiy1QOqsUBgmlkgnY0gmlwhNRj2kKDaXA2kCoAHKALAA0CAAAAAAAAAF6Jc2VjcDI1NmsxoQLKlnQYuhZRBTA8-7cz37kr_KuA1lAJ1eXxWMjp5fLJB4N1ZHCCTreEdWRwNoJOtw", // nodeops-bootnode-dcl1-01
+	"enr:-KG4QMHihBfLI_tpXLWmfTi28HItJa4wDADDAaVjkfSELAb0BajqVWXM2GEMds5J63SCkpDRlqct5E8ftfQi4U93pigBgmlkgnY0gmlwhIHUpj2DaXA2kCYEqIAABAHQAAAAA2GdUACJc2VjcDI1NmsxoQLeQmW8OMuoUIoUImNW-r9IC4jaiAwZ2knfV4BqWyQvKoN1ZHCCdl-EdWRwNoJ2Xw", // nodeops-bootnode-sfo3-01
+	"enr:-KG4QKsHcKQvIX8UPbJgw2cIEP_9EislF1srNGdYom4dcSsobt-92iEDNkHTt9dcdKXHaDMVbCM8QQ4V1RP8HcExLDsBgmlkgnY0gmlwhJB-_BiDaXA2kCQAYYABAADQAAAAAYEgYAGJc2VjcDI1NmsxoQILdc6UClD5s_N8-hYhIGQtFqRYR3Qxf9qgLQ7sj4qvEYN1ZHCCdl-EdWRwNoJ2Xw", // nodeops-bootnode-blr1-01
+	"enr:-KG4QFplptv1jVEhFeNNxRN7qe5p9rAGGlMeNnmGvUJV23W4Kr8hmiSzdWjZZHFqwi7nOuQrM32VO6uHBORXOdLG98gBgmlkgnY0gmlwhLKc14yDaXA2kCoBBP8A9DxKAAAAAAAAAAGJc2VjcDI1NmsxoQMBRycp4yiHbGzOqZPPMmuKGslp1NpOrFf_predLYM4-oN1ZHCCdl-EdWRwNoJ2Xw", // nodeops-bootnode-ash-01
+	"enr:-KG4QGY74qTrst5NbQDAMIF8B7jEC8CMBSo6C5Ljea5I4PxYV1VSYdsGUqqIBlOYRBfwhl6YpEyvvvZOqNCa4dvmSXgBgmlkgnY0gmlwhAXfXlGDaXA2kCoBBP8C8BytAAAAAAAAAAGJc2VjcDI1NmsxoQIMlJp7yNcblauYicEeSBpHQzFAk9Wg3lhx3ie9gpTohIN1ZHCCdl-EdWRwNoJ2Xw", // nodeops-bootnode-sin-01
+}
+
+var sepoliaELBootnodes = []string{
+	"enr:-KG4QHn1Os72NN5Z44Ehf9CHPmN490GBphTFirfk33pFuWnkY9UNrQMfHkuCw6a-ykeRhGKrPL5ppMXiZQchgPrCDJQBgmlkgnY0gmlwhNRj2kKDaXA2kCoAHKALAA0CAAAAAAAAAF6Jc2VjcDI1NmsxoQJK_ye9jx9mela-ME_Kt5e017Ywv3hYH_5rwNhIUrtzNoN1ZHCCTriEdWRwNoJOuA", // nodeops-bootnode-dcl1-01
+	"enr:-KG4QCpiRltiyX7LgozCkQ8XBrcDzejBXbE7YRUQFmIEgv46SC8B4CJLcOO3O2bH-_u-B242GTzO_hQPhv3rpyvAHXMBgmlkgnY0gmlwhIHUpj2DaXA2kCYEqIAABAHQAAAAA2GdUACJc2VjcDI1NmsxoQNmVWXve5c0uvsn_agjTKQ8pR6gl9DynZyTQNruBDfJ4YN1ZHCCdsOEdWRwNoJ2ww", // nodeops-bootnode-sfo3-01
+	"enr:-KG4QJUWvc8qvCUr7x-qCFWee6HPLgmRUfVn-M_yqXD-sjSoAalKCV3NgUhmlqozjTJIj_nPr7J_uT8WJwbWiIx3Cv4BgmlkgnY0gmlwhJB-_BiDaXA2kCQAYYABAADQAAAAAYEgYAGJc2VjcDI1NmsxoQKOQetrA-97TELUzuGegVD1_cHKKNnjOmJ9CYdeSTor7YN1ZHCCdsOEdWRwNoJ2ww", // nodeops-bootnode-blr1-01
+	"enr:-KG4QIBsIiST0JBBvgSNxvHQOeH5PkRgWeufahVXYQQWj7GLYPFDsviuQ6qU-3Xx4qnARaZiI-qqVRyw_2qqmOKRY1UBgmlkgnY0gmlwhLKc14yDaXA2kCoBBP8A9DxKAAAAAAAAAAGJc2VjcDI1NmsxoQKx4n3wy0KtwnuZCHmlxMmc4b0VvfC4Ka_f3sUPvjUq1oN1ZHCCdsOEdWRwNoJ2ww", // nodeops-bootnode-ash-01
+	"enr:-KG4QPM5C6wuTxu5yk4jkI9Mm64iSUKMPNt8y8kmoFzOlYrnYV4SBeZK7UiS4YWrkX4y2FD9_eH7xiPGvLQ-nXoXIcYBgmlkgnY0gmlwhAXfXlGDaXA2kCoBBP8C8BytAAAAAAAAAAGJc2VjcDI1NmsxoQIC3FMD8Si9DIBVofsSbJkpvXTUAfyi8q66XXQgjRhUsIN1ZHCCdsOEdWRwNoJ2ww", // nodeops-bootnode-sin-01
+}
+
+var hoodiELBootnodes = []string{
+	"enr:-KG4QHqPRT-PQyT1l2-DzAJ4WiSGWDbLvzqV8umrSRmBVvzfaYAIjswgIY3S4iZFBtOGGdFeUXh5uaFXI4FdN4ib-S0BgmlkgnY0gmlwhNRj2kKDaXA2kCoAHKALAA0CAAAAAAAAAF6Jc2VjcDI1NmsxoQNwurkRdfm7zrv78VVkT0bAPtRO9JJ9gW42Abpf0y96JIN1ZHCCTrmEdWRwNoJOuQ", // nodeops-bootnode-dcl1-01
+	"enr:-KG4QO3rOpovULG1tqfd5prt30FBF_0_dbh6z13W1CS94yZvObO3BDatF6v_5p0Fol4ayvf32rtLy9IoeIrllRNO6mEBgmlkgnY0gmlwhIHUpj2DaXA2kCYEqIAABAHQAAAAA2GdUACJc2VjcDI1NmsxoQKv1QQH20VixQSfOvSJdDoktzLLpq8hleYiBb5ZrmRaoIN1ZHCCdyeEdWRwNoJ3Jw", // nodeops-bootnode-sfo3-01
+	"enr:-KG4QK3lmOaDQ5f-OLtwBQDwZZwORygbjDKbSWR79YFuQBQMbdStUfUKBucPPB8BW2mIZPcAHmsKan6HK9_CLv1ntfsBgmlkgnY0gmlwhJB-_BiDaXA2kCQAYYABAADQAAAAAYEgYAGJc2VjcDI1NmsxoQL3h68BwVT7D-gnmNXHLKgePyp4l5ikdqbJPaesuz9YAIN1ZHCCdyeEdWRwNoJ3Jw", // nodeops-bootnode-blr1-01
+	"enr:-KG4QC1VbcxVmJVOBrQFyaTshr7kGgI8_IgGhkXMlPGQN6ijWpc72mLFR9qx6islo-bcG5gcfJDBA85Pjjk3zXdhsckBgmlkgnY0gmlwhLKc14yDaXA2kCoBBP8A9DxKAAAAAAAAAAGJc2VjcDI1NmsxoQJxxADpm6ox6R2Op72lhQ7xQ7nalLB0E9vUwchMS1_EdIN1ZHCCdyeEdWRwNoJ3Jw", // nodeops-bootnode-ash-01
+	"enr:-KG4QACXfYMzVZrG5YGEM6JoAyALZrmSG_0rtTtRQK3Z7q3TUYgb1gqEbyXfA07HpqJq9i4ZaG1EmRwgZbwNFIa9M8gBgmlkgnY0gmlwhAXfXlGDaXA2kCoBBP8C8BytAAAAAAAAAAGJc2VjcDI1NmsxoQOBqr1yI_NF5xO381XMdmgLqOw6ewmPEAZVpGfkBJETWIN1ZHCCdyeEdWRwNoJ3Jw", // nodeops-bootnode-sin-01
+}
+
+// Consensus bootnodes are the NodeOps fleet's records followed by the third-party entries of
+// Lighthouse's built-in network configuration (the legacy EF records they replace are gone):
 // https://github.com/sigp/lighthouse/tree/stable/common/eth2_network_config/built_in_network_configs
 // Keep the signed ENRs current: an updated record can retain its node ID while
 // changing address, so a stale entry silently points discovery at a dead endpoint.
@@ -348,10 +383,11 @@ var mainnetCLBootnodes = []string{
 	"enr:-Le4QLHZDSvkLfqgEo8IWGG96h6mxwe_PsggC20CL3neLBjfXLGAQFOPSltZ7oP6ol54OvaNqO02Rnvb8YmDR274uq8ChGV0aDKQtTA_KgEAAAAAIgEAAAAAAIJpZIJ2NIJpcISLosQxg2lwNpAqAX4AAAAAAPA8kv_-ax65iXNlY3AyNTZrMaEDBJj7_dLFACaxBfaI8KZTh_SSJUjhyAyfshimvSqo22WDdWRwgiMohHVkcDaCI4I",
 	"enr:-Le4QH6LQrusDbAHPjU_HcKOuMeXfdEB5NJyXgHWFadfHgiySqeDyusQMvfphdYWOzuSZO9Uq2AMRJR5O4ip7OvVma8BhGV0aDKQtTA_KgEAAAAAIgEAAAAAAIJpZIJ2NIJpcISLY9ncg2lwNpAkAh8AgQIBAAAAAAAAAAmXiXNlY3AyNTZrMaECDYCZTZEksF-kmgPholqgVt8IXr-8L7Nu7YrZ7HUpgxmDdWRwgiMohHVkcDaCI4I",
 	"enr:-Le4QIqLuWybHNONr933Lk0dcMmAB5WgvGKRyDihy1wHDIVlNuuztX62W51voT4I8qD34GcTEOTmag1bcdZ_8aaT4NUBhGV0aDKQtTA_KgEAAAAAIgEAAAAAAIJpZIJ2NIJpcISLY04ng2lwNpAkAh8AgAIBAAAAAAAAAA-fiXNlY3AyNTZrMaEDscnRV6n1m-D9ID5UsURk0jsoKNXt1TIrj8uKOGW6iluDdWRwgiMohHVkcDaCI4I",
-	"enr:-Ku4QHqVeJ8PPICcWk1vSn_XcSkjOkNiTg6Fmii5j6vUQgvzMc9L1goFnLKgXqBJspJjIsB91LTOleFmyWWrFVATGngBh2F0dG5ldHOIAAAAAAAAAACEZXRoMpC1MD8qAAAAAP__________gmlkgnY0gmlwhAMRHkWJc2VjcDI1NmsxoQKLVXFOhp2uX6jeT0DvvDpPcU8FWMjQdR4wMuORMhpX24N1ZHCCIyg",
-	"enr:-Ku4QG-2_Md3sZIAUebGYT6g0SMskIml77l6yR-M_JXc-UdNHCmHQeOiMLbylPejyJsdAPsTHJyjJB2sYGDLe0dn8uYBh2F0dG5ldHOIAAAAAAAAAACEZXRoMpC1MD8qAAAAAP__________gmlkgnY0gmlwhBLY-NyJc2VjcDI1NmsxoQORcM6e19T1T9gi7jxEZjk_sjVLGFscUNqAY9obgZaxbIN1ZHCCIyg",
-	"enr:-Ku4QPn5eVhcoF1opaFEvg1b6JNFD2rqVkHQ8HApOKK61OIcIXD127bKWgAtbwI7pnxx6cDyk_nI88TrZKQaGMZj0q0Bh2F0dG5ldHOIAAAAAAAAAACEZXRoMpC1MD8qAAAAAP__________gmlkgnY0gmlwhDayLMaJc2VjcDI1NmsxoQK2sBOLGcUb4AwuYzFuAVCaNHA-dy24UuEKkeFNgCVCsIN1ZHCCIyg",
-	"enr:-Ku4QEWzdnVtXc2Q0ZVigfCGggOVB2Vc1ZCPEc6j21NIFLODSJbvNaef1g4PxhPwl_3kax86YPheFUSLXPRs98vvYsoBh2F0dG5ldHOIAAAAAAAAAACEZXRoMpC1MD8qAAAAAP__________gmlkgnY0gmlwhDZBrP2Jc2VjcDI1NmsxoQM6jr8Rb1ktLEsVcKAPa08wCsKUmvoQ8khiOl_SLozf9IN1ZHCCIyg",
+	"enr:-KG4QIH7EyRfHFmXLZaG6j0bMvow18k63nKWPfppuKh6iBHMPGM93HX3W3hl7jZdv_Hz8yd_jXVHX2loStJKOZqNRu0BgmlkgnY0gmlwhNRj2kKDaXA2kCoAHKALAA0CAAAAAAAAAF6Jc2VjcDI1NmsxoQMngQgKvKJR49-jugrZ_05LhAHbUlSCwZ_HyqVCb3SXYoN1ZHCCTrqEdWRwNoJOug", // nodeops-bootnode-dcl1-01
+	"enr:-KG4QJIyNiCpvXrnK8dugxmFckcIduvuQraNlX0GlKwF-XyPeZ-ZG7_yHhsr08K85X1utedECuRXhXiPYJoMogs8ai4BgmlkgnY0gmlwhIHUpj2DaXA2kCYEqIAABAHQAAAAA2GdUACJc2VjcDI1NmsxoQNQbzy36fddhPGH1I6D5rQyj8zUDGWQAkkWS37qBLB_yIN1ZHCCIyiEdWRwNoIjKA", // nodeops-bootnode-sfo3-01
+	"enr:-KG4QDU7s2q7Cl_qGr2BucsrhN1bKywwstBqMLUtR6f_pOejVAjXLAQsFBOCSgALH_Oy7eshQ2ic7CbFwRZIxZGIMMsBgmlkgnY0gmlwhJB-_BiDaXA2kCQAYYABAADQAAAAAYEgYAGJc2VjcDI1NmsxoQLACT5Njs8OjnCiL4_11wgqunT0BPxQ5PndoKoF6ICNWYN1ZHCCIyiEdWRwNoIjKA", // nodeops-bootnode-blr1-01
+	"enr:-KG4QD_qJswcSJKmI_kjUZ-QbUuLUzniIakQbJKgh4YFzluGEKikFzaVoIbS7jpbw2K9hjmWTn7Ha3zyNIm0Ysu-dSgBgmlkgnY0gmlwhLKc14yDaXA2kCoBBP8A9DxKAAAAAAAAAAGJc2VjcDI1NmsxoQOVp1YSg2ZkGenRZi4iGebFira2xZrER7F_WW55-Rd3boN1ZHCCIyiEdWRwNoIjKA", // nodeops-bootnode-ash-01
+	"enr:-KG4QIFbm7kLOmOeiDwjSxLXEN0Ms4advV742CYLpGUCndm2XvAnM9uKVdWpydb8Gpstk44eFDlZlPDyV2gX7uH7KHgBgmlkgnY0gmlwhAXfXlGDaXA2kCoBBP8C8BytAAAAAAAAAAGJc2VjcDI1NmsxoQIAizAK-MKs-s08GzGzoPVIaBmfdKqosqxSkwxUuV2UnIN1ZHCCIyiEdWRwNoIjKA", // nodeops-bootnode-sin-01
 	"enr:-LK4QA8FfhaAjlb_BXsXxSfiysR7R52Nhi9JBt4F8SPssu8hdE1BXQQEtVDC3qStCW60LSO7hEsVHv5zm8_6Vnjhcn0Bh2F0dG5ldHOIAAAAAAAAAACEZXRoMpC1MD8qAAAAAP__________gmlkgnY0gmlwhAN4aBKJc2VjcDI1NmsxoQJerDhsJ-KxZ8sHySMOCmTO6sHM3iCFQ6VMvLTe948MyYN0Y3CCI4yDdWRwgiOM",
 	"enr:-LK4QKWrXTpV9T78hNG6s8AM6IO4XH9kFT91uZtFg1GcsJ6dKovDOr1jtAAFPnS2lvNltkOGA9k29BUN7lFh_sjuc9QBh2F0dG5ldHOIAAAAAAAAAACEZXRoMpC1MD8qAAAAAP__________gmlkgnY0gmlwhANAdd-Jc2VjcDI1NmsxoQLQa6ai7y9PMN5hpLe5HmiJSlYzMuzP7ZhwRiwHvqNXdoN0Y3CCI4yDdWRwgiOM",
 	"enr:-IS4QPi-onjNsT5xAIAenhCGTDl4z-4UOR25Uq-3TmG4V3kwB9ljLTb_Kp1wdjHNj-H8VVLRBSSWVZo3GUe3z6k0E-IBgmlkgnY0gmlwhKB3_qGJc2VjcDI1NmsxoQMvAfgB4cJXvvXeM6WbCG86CstbSxbQBSGx31FAwVtOTYN1ZHCCIyg",
@@ -359,11 +395,11 @@ var mainnetCLBootnodes = []string{
 }
 
 var sepoliaCLBootnodes = []string{
-	"enr:-Ku4QDZ_rCowZFsozeWr60WwLgOfHzv1Fz2cuMvJqN5iJzLxKtVjoIURY42X_YTokMi3IGstW5v32uSYZyGUXj9Q_IECh2F0dG5ldHOIAAAAAAAAAACEZXRoMpCo_ujukAAAaf__________gmlkgnY0gmlwhIpEe5iJc2VjcDI1NmsxoQNHTpFdaNSCEWiN_QqT396nb0PzcUpLe3OVtLph-AciBYN1ZHCCIy0",
-	"enr:-Ku4QHRyRwEPT7s0XLYzJ_EeeWvZTXBQb4UCGy1F_3m-YtCNTtDlGsCMr4UTgo4uR89pv11uM-xq4w6GKfKhqU31hTgCh2F0dG5ldHOIAAAAAAAAAACEZXRoMpCo_ujukAAAaf__________gmlkgnY0gmlwhIrFM7WJc2VjcDI1NmsxoQI4diTwChN3zAAkarf7smOHCdFb1q3DSwdiQ_Lc_FdzFIN1ZHCCIy0",
-	"enr:-Ku4QOkvvf0u5Hg4-HhY-SJmEyft77G5h3rUM8VF_e-Hag5cAma3jtmFoX4WElLAqdILCA-UWFRN1ZCDJJVuEHrFeLkDh2F0dG5ldHOIAAAAAAAAAACEZXRoMpCo_ujukAAAaf__________gmlkgnY0gmlwhJK-AWeJc2VjcDI1NmsxoQLFcT5VE_NMiIC8Ll7GypWDnQ4UEmuzD7hF_Hf4veDJwIN1ZHCCIy0",
-	"enr:-Ku4QH6tYsHKITYeHUu5kdfXgEZWI18EWk_2RtGOn1jBPlx2UlS_uF3Pm5Dx7tnjOvla_zs-wwlPgjnEOcQDWXey51QCh2F0dG5ldHOIAAAAAAAAAACEZXRoMpCo_ujukAAAaf__________gmlkgnY0gmlwhIs7Mc6Jc2VjcDI1NmsxoQIET4Mlv9YzhrYhX_H9D7aWMemUrvki6W4J2Qo0YmFMp4N1ZHCCIy0",
-	"enr:-Ku4QDmz-4c1InchGitsgNk4qzorWMiFUoaPJT4G0IiF8r2UaevrekND1o7fdoftNucirj7sFFTTn2-JdC2Ej0p1Mn8Ch2F0dG5ldHOIAAAAAAAAAACEZXRoMpCo_ujukAAAaf__________gmlkgnY0gmlwhKpA-liJc2VjcDI1NmsxoQMpHP5U1DK8O_JQU6FadmWbE42qEdcGlllR8HcSkkfWq4N1ZHCCIy0",
+	"enr:-KG4QCK5YeEoL55e2hoS6nCregwx0Zd6NQ3rhVDfeg5Q8ozUNmUYTskpmuqo2WYFo3z24-cWC9qrU3yYKDSJ299lh8sBgmlkgnY0gmlwhNRj2kKDaXA2kCoAHKALAA0CAAAAAAAAAF6Jc2VjcDI1NmsxoQLzqnTxu_nlM8V_semraAjfbH9HZpcbVUCXH2qanVPsroN1ZHCCTruEdWRwNoJOuw", // nodeops-bootnode-dcl1-01
+	"enr:-KG4QF0FvRL7Eqc4oURFhOkS0V6guntLnw54dYgTruM7z9TAMWhRpCrxZ7Pd536-q4qlwdW13czht8_UEWwGyJesu1gBgmlkgnY0gmlwhIHUpj2DaXA2kCYEqIAABAHQAAAAA2GdUACJc2VjcDI1NmsxoQL5iA7gNCs4SDmnXz8Isacq0EJbJfvV_uJlccoHxHU5ZYN1ZHCCI4yEdWRwNoIjjA", // nodeops-bootnode-sfo3-01
+	"enr:-KG4QI4reJ1D_BwCwg6EKAuo2HEWoIVVNjphtOTJP2gzPVLSTYM3NFwp39TAKw-7QiQ2NVts7DK4rjJR2BEcAwh3BckBgmlkgnY0gmlwhJB-_BiDaXA2kCQAYYABAADQAAAAAYEgYAGJc2VjcDI1NmsxoQLXzHa5K0M3F4pqErIhleMByA8votAUhUXylRT6SWX2HoN1ZHCCI4yEdWRwNoIjjA", // nodeops-bootnode-blr1-01
+	"enr:-KG4QI1KOrogxK8u3Oc0QLdgkNTbAPuAMtixa6Vx05N-Bl7IOCVURUvqZ2N6JA97ts7YG1B4D3hQvZ9uQlCPYVjy1DABgmlkgnY0gmlwhLKc14yDaXA2kCoBBP8A9DxKAAAAAAAAAAGJc2VjcDI1NmsxoQLB0ZhHGRmVwXja_4o-GRN1VVJYRI11F45CTAlu1s00Q4N1ZHCCI4yEdWRwNoIjjA", // nodeops-bootnode-ash-01
+	"enr:-KG4QKU4YfXfB3_BVI7u0VvXnSJI6cqo-tCRm-Ggh3XxBImcYvrUoKUDbIjJjG9-QphuH6gzScdf69t597M0nHut4kABgmlkgnY0gmlwhAXfXlGDaXA2kCoBBP8C8BytAAAAAAAAAAGJc2VjcDI1NmsxoQL0y83XKpPgvY7XReWg9S8bdI2UUIe5dE0N7rjOIIj4xYN1ZHCCI4yEdWRwNoIjjA", // nodeops-bootnode-sin-01
 	// Lighthouse's current Sepolia Teku record is invalid under go-ethereum
 	// (duplicate ENR key), so retain its previous valid signed record until fixed.
 	"enr:-Iu4QKvMF7Ne_RSQoZGvavTuZ1QA5_Pgeb0nq_hrjhU8s0UDV3KhcMXJkGwOWhsDGZL3ISjL0CTP-hfoTjZtEtCEwR4BgmlkgnY0gmlwhAOAaySJc2VjcDI1NmsxoQNta5b_bexSSwwrGW2Re24MjfMntzFd0f2SAxQtMj3ueYN0Y3CCIyiDdWRwgiMo",
@@ -373,12 +409,11 @@ var sepoliaCLBootnodes = []string{
 }
 
 var hoodiCLBootnodes = []string{
-	"enr:-Mq4QLkmuSwbGBUph1r7iHopzRpdqE-gcm5LNZfcE-6T37OCZbRHi22bXZkaqnZ6XdIyEDTelnkmMEQB8w6NbnJUt9GGAZWaowaYh2F0dG5ldHOIABgAAAAAAACEZXRoMpDS8Zl_YAAJEAAIAAAAAAAAgmlkgnY0gmlwhNEmfKCEcXVpY4IyyIlzZWNwMjU2azGhA0hGa4jZJZYQAS-z6ZFK-m4GCFnWS8wfjO0bpSQn6hyEiHN5bmNuZXRzAIN0Y3CCIyiDdWRwgiMo",
-	"enr:-Ku4QLVumWTwyOUVS4ajqq8ZuZz2ik6t3Gtq0Ozxqecj0qNZWpMnudcvTs-4jrlwYRQMQwBS8Pvtmu4ZPP2Lx3i2t7YBh2F0dG5ldHOIAAAAAAAAAACEZXRoMpBd9cEGEAAJEP__________gmlkgnY0gmlwhNEmfKCJc2VjcDI1NmsxoQLdRlI8aCa_ELwTJhVN8k7km7IDc3pYu-FMYBs5_FiigIN1ZHCCIyk",
-	"enr:-LK4QAYuLujoiaqCAs0-qNWj9oFws1B4iy-Hff1bRB7wpQCYSS-IIMxLWCn7sWloTJzC1SiH8Y7lMQ5I36ynGV1ASj4Eh2F0dG5ldHOIYAAAAAAAAACEZXRoMpDS8Zl_YAAJEAAIAAAAAAAAgmlkgnY0gmlwhIbRilSJc2VjcDI1NmsxoQOmI5MlAu3f5WEThAYOqoygpS2wYn0XS5NV2aYq7T0a04N0Y3CCIyiDdWRwgiMo",
-	"enr:-Ku4QIC89sMC0o-irosD4_23lJJ4qCGOvdUz7SmoShWx0k6AaxCFTKviEHa-sa7-EzsiXpDp0qP0xzX6nKdXJX3X-IQBh2F0dG5ldHOIAAAAAAAAAACEZXRoMpBd9cEGEAAJEP__________gmlkgnY0gmlwhIbRilSJc2VjcDI1NmsxoQK_m0f1DzDc9Cjrspm36zuRa7072HSiMGYWLsKiVSbP34N1ZHCCIyk",
-	"enr:-Ku4QNkWjw5tNzo8DtWqKm7CnDdIq_y7xppD6c1EZSwjB8rMOkSFA1wJPLoKrq5UvA7wcxIotH6Usx3PAugEN2JMncIBh2F0dG5ldHOIAAAAAAAAAACEZXRoMpBd9cEGEAAJEP__________gmlkgnY0gmlwhIbHuBeJc2VjcDI1NmsxoQP3FwrhFYB60djwRjAoOjttq6du94DtkQuaN99wvgqaIYN1ZHCCIyk",
-	"enr:-OS4QMJGE13xEROqvKN1xnnt7U-noc51VXyM6wFMuL9LMhQDfo1p1dF_zFdS4OsnXz_vIYk-nQWnqJMWRDKvkSK6_CwDh2F0dG5ldHOIAAAAADAAAACGY2xpZW502IpMaWdodGhvdXNljDcuMC4wLWJldGEuM4RldGgykNLxmX9gAAkQAAgAAAAAAACCaWSCdjSCaXCEhse4F4RxdWljgiMqiXNlY3AyNTZrMaECef77P8k5l3PC_raLw42OAzdXfxeQ-58BJriNaqiRGJSIc3luY25ldHMAg3RjcIIjKIN1ZHCCIyg",
+	"enr:-KG4QEfvG40PslpTF5F0SAnDMHYwQu7u9dMxVmglDyR0iKEsTUr0MilWHWKPh_Cyo0cHt0muy2SsrWpiC2sC_TRPiMcBgmlkgnY0gmlwhNRj2kKDaXA2kCoAHKALAA0CAAAAAAAAAF6Jc2VjcDI1NmsxoQIM-dQNDiL8ldy7S8t_bkW9awktKz1HHSF2Qups_K5S64N1ZHCCTryEdWRwNoJOvA", // nodeops-bootnode-dcl1-01
+	"enr:-KG4QDNae3UVXdwSvWbZYotO9IpGRiBDzXr4owQ1_ONk_sOtIuZoI55Ja8EGtD-kzY5I_0bTaYpVefgRK2q2hD1T8sABgmlkgnY0gmlwhIHUpj2DaXA2kCYEqIAABAHQAAAAA2GdUACJc2VjcDI1NmsxoQMu3GRf_l288UJNQcXiLp4NbOQmigxSx14ddTal4tBp9IN1ZHCCI_CEdWRwNoIj8A", // nodeops-bootnode-sfo3-01
+	"enr:-KG4QOOHORt2Kmo3lgoRTcqJnxH07aELtuidFEuBzN8Xdbzkfb4MblrUOXJnDEJ8RzXpTXWBEqM3q0DRphMm8xOIVbIBgmlkgnY0gmlwhJB-_BiDaXA2kCQAYYABAADQAAAAAYEgYAGJc2VjcDI1NmsxoQOf6T6A1lri5bTBzvb3sAb42Ki9L1pSqQsNzqvBUr7BjoN1ZHCCI_CEdWRwNoIj8A", // nodeops-bootnode-blr1-01
+	"enr:-KG4QM0TIrjoocAJvIY2XYOa1UzeSM1c2d3rBf1QzyxchGmzJ3OPdLKUFrjBRCPDYHhq69pEB5YKmFtKOBuF63k1pB4BgmlkgnY0gmlwhLKc14yDaXA2kCoBBP8A9DxKAAAAAAAAAAGJc2VjcDI1NmsxoQNFCY3Kl3VQfYl3lqOTN8YG0598xcIrlg1mmqKzdpLm5IN1ZHCCI_CEdWRwNoIj8A", // nodeops-bootnode-ash-01
+	"enr:-KG4QLBt5eeWOp11A7l2WfR-sC5j3SYybU0PeEepotPzpt4kZE0nDFFZCy8NPjun3dcM8D4_xmYxZCB0WTnitKj7dAMBgmlkgnY0gmlwhAXfXlGDaXA2kCoBBP8C8BytAAAAAAAAAAGJc2VjcDI1NmsxoQLhrnwm2X7ZcxLideAlCmQvGkyHXMl7KXL0K-WDOdAoLIN1ZHCCI_CEdWRwNoIj8A", // nodeops-bootnode-sin-01
 	"enr:-LK4QDwhXMitMbC8xRiNL-XGMhRyMSOnxej-zGifjv9Nm5G8EF285phTU-CAsMHRRefZimNI7eNpAluijMQP7NDC8kEMh2F0dG5ldHOIAAAAAAAABgCEZXRoMpDS8Zl_YAAJEAAIAAAAAAAAgmlkgnY0gmlwhAOIT_SJc2VjcDI1NmsxoQMoHWNL4MAvh6YpQeM2SUjhUrLIPsAVPB8nyxbmckC6KIN0Y3CCIyiDdWRwgiMo",
 	"enr:-LK4QPYl2HnMPQ7b1es6Nf_tFYkyya5bj9IqAKOEj2cmoqVkN8ANbJJJK40MX4kciL7pZszPHw6vLNyeC-O3HUrLQv8Mh2F0dG5ldHOIAAAAAAAAAMCEZXRoMpDS8Zl_YAAJEAAIAAAAAAAAgmlkgnY0gmlwhAMYRG-Jc2VjcDI1NmsxoQPQ35tjr6q1qUqwAnegQmYQyfqxC_6437CObkZneI9n34N0Y3CCIyiDdWRwgiMo",
 	"enr:-KG4QKRSUi4IOAIK_xt5ERrwW_J47wmNCLWFh7Jo0hFE69drZsiZ5Pb5CEcM_njFTTLlIR6SCf67HTcSV1g6hCXdhWkCgmlkgnY0gmlwhLkvrBODaXA2kCoGxcAWAAAYAAAAAAAAABCJc2VjcDI1NmsxoQPU7g2jQGTz8BYbB2vLTb39S_PrcZAehwMM0b3bWsM5rIN1ZHCCIyiEdWRwNoIjKA",

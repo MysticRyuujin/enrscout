@@ -265,6 +265,9 @@ func newIdentityRuntime(ctx context.Context, cr *crawler, families []string, res
 					if candidate := consensusInboundCandidate(set, result); candidate != nil {
 						observed := set.ObserveAuthenticatedCL(candidate, result.Fingerprint.Network, result.Fingerprint.ForkHash, now)
 						if observed.Accepted {
+							if observed.Applied {
+								set.SetHead(result.NodeID, layerCL, result.Fingerprint.Network, result.Fingerprint.Head, result.Fingerprint.HeadAt)
+							}
 							if observed.Changed {
 								geo.Record(set, result.NodeID, candidate.IP())
 							}

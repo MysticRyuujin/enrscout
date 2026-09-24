@@ -52,6 +52,22 @@ publishes the crawler advertiser endpoints on :30303-:30311.
   current-fork view. Membership stays separate and hash-only (`Matches`/`gatherHashes`): a
   resyncing mainnet node is still mainnet, just not current. Expect `execution_stale` and
   `consensus_stale` to spike for about one snapshot interval at each transition.
+- **Fork readiness is advertised-schedule evidence, not version strings.** `netconf.ForkTargetAt` picks
+  each layer's next fork (or one activated within `ForkTrackingGrace`); `netconf.ReadinessAt` is the
+  rule: EL `fork_next` equal to the fork time, CL ENR `eth2` next version and epoch equal to the target.
+  CL reads ENR-only columns (`enr_*`) because Status overwrites `fork_hash` and `ObserveAuthenticatedCL`
+  zeroes `fork_next`. `/api/v1/forks` classifies grouped rows in Go; the `readiness=` node filter
+  mirrors the rule in SQL (`query.readinessConditionAt`), pinned by `TestReadinessMatchesSQLAndGo`.
+  `netconf/releases.go` is a hand-curated label table that readiness never depends on: one floor per
+  release line (`min_versions`), plus the `fork_time` each entry was verified against, so a rescheduled
+  fork withholds its labels. The API's `--client-releases-file` (strict YAML, so it can carry comments) replaces the whole table at runtime and
+  reloads on change; an invalid file keeps the last good table (`netconf.SetClientReleases` validates
+  before it swaps). The forks cache key includes `ClientReleasesGeneration`, so a reload is visible at once.
+  Readiness history (`<prefix>/state/readiness/<network>/<fork>.json`, `snapshot.ReadinessHistory`) is
+  written by the crawler after each manifest commit, one point per 15 minutes for 30 days, by
+  read-modify-write so restarts keep earlier points. It is not part of a generation or the manifest,
+  it is never overwritten when unreadable, and the API reads it best-effort. It cannot be backfilled:
+  ship the writer before a fork is scheduled, or the trend starts late.
 - **Advertiser ports are deterministic.** Starting at `--advertiser-port-base`, each
   network consumes three ports: EL discovery UDP/RLPx TCP, CL discovery UDP, and CL
   libp2p TCP/QUIC UDP. Identities are persistent under `--identity-dir`.
@@ -179,6 +195,9 @@ Reviewed and deliberately not fixed; re-litigate only with new information.
   minute while the timestamp is full precision. Classification stays correct via the fork-era key.
 - **One network below `--min-current-nodes` quarantines the whole publish.** Generations are
   committed atomically as a set, so partial publication is not an option.
+- **Two overlapping Status exchanges with one peer can store the older head.** `SetHead` keeps the
+  last one to finish. Ordering guards were rejected: any time-window heuristic also hides a real head
+  drop, such as a peer that restarts behind and reconnects at once, and the next Status corrects it.
 - **CORS preflight carries no `Allow-Headers` or `Max-Age`.** Only simple requests are made.
   `Vary: Origin` is unnecessary because `--cors-origin` is static and never reflected.
 - **The final publish quiesces every nodeset writer, and each new one must opt in.** `shutdown`

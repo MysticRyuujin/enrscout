@@ -234,7 +234,7 @@ func TestMigrateStagingSchemaAddsSubdivision(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer eng.Close()
-	if _, err := eng.db.Exec("CREATE TABLE nodes_staging (id VARCHAR); INSERT INTO nodes_staging VALUES ('legacy')"); err != nil {
+	if _, err := eng.db.Exec("CREATE TABLE nodes_staging (id VARCHAR, network VARCHAR, layer VARCHAR); INSERT INTO nodes_staging VALUES ('legacy', 'mainnet', 'el')"); err != nil {
 		t.Fatal(err)
 	}
 	if err := migrateStagingSchema(context.Background(), eng.db); err != nil {
@@ -258,6 +258,18 @@ func TestMigrateStagingSchemaAddsSubdivision(t *testing.T) {
 	}
 	if cgc != 0 || cgcKnown {
 		t.Fatalf("cgc defaults = (%d, %v), want (0, false)", cgc, cgcKnown)
+	}
+	// A schema-3 generation has no head or ENR schedule columns; sync state must still compute.
+	if err := computeSyncState(context.Background(), eng.db, []string{"mainnet"}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	var head, epoch uint64
+	var version, syncState string
+	if err := eng.db.QueryRow("SELECT head, enr_next_fork_epoch, enr_next_fork_version, sync_state FROM nodes_staging WHERE id = 'legacy'").Scan(&head, &epoch, &version, &syncState); err != nil {
+		t.Fatal(err)
+	}
+	if head != 0 || epoch != 0 || version != "" || syncState != "unknown" {
+		t.Fatalf("schema-4 defaults = (%d, %d, %q, %q), want (0, 0, \"\", unknown)", head, epoch, version, syncState)
 	}
 }
 
@@ -646,6 +658,9 @@ func TestEngineRejectsUnimplementedFilterValues(t *testing.T) {
 		{"dialable", Filter{Dialable: "bogus"}},
 		{"fork status", Filter{ForkStatus: "bogus"}},
 		{"membership", Filter{Membership: "bogus"}},
+		{"identified", Filter{Identified: "bogus"}},
+		{"sync", Filter{Sync: "bogus"}},
+		{"readiness", Filter{Readiness: "bogus"}},
 		{"cgc_min", Filter{CGCMin: "bogus"}},
 		{"cgc_min negative", Filter{CGCMin: "-1"}},
 		{"cgc_max", Filter{CGCMax: "99999999999"}},
@@ -669,7 +684,7 @@ func TestEngineRejectsUnimplementedFilterValues(t *testing.T) {
 	if _, err := eng.StatsForMembershipAt(ctx, "mainnet", "bogus", at); err == nil {
 		t.Error("Stats accepted an unimplemented membership")
 	}
-	if _, _, err := eng.VersionsForMembershipAt(ctx, "mainnet", "Geth", "bogus", at); err == nil {
+	if _, _, err := eng.VersionsForMembershipAt(ctx, "mainnet", "Geth", "", "bogus", at); err == nil {
 		t.Error("Versions accepted an unimplemented membership")
 	}
 }
@@ -1031,6 +1046,7 @@ func TestClientVersionsNormalizeSemverPrefix(t *testing.T) {
 		('mainnet', 'cl', 'Lighthouse', 'v8.2.0', 'ok', ?),
 		('mainnet', 'cl', 'Lighthouse', 'V8.2.0-120c3c6', 'ok', ?),
 		('mainnet', 'cl', 'Lighthouse', 'v8.2.0-beta.1', 'ok', ?),
+		('mainnet', 'cl', 'Lighthouse', 'v8.2.0+bec830cd-hp', 'ok', ?),
 		('mainnet', 'cl', 'Lighthouse', 'version8', 'ok', ?),
 		('mainnet', 'cl', 'Lighthouse', '', 'ok', ?),
 		('mainnet', 'cl', 'Lighthouse', '  ', 'ok', ?),
@@ -1041,7 +1057,7 @@ func TestClientVersionsNormalizeSemverPrefix(t *testing.T) {
 		('mainnet', 'cl', 'Lighthouse', '""', 'ok', ?),
 		('mainnet', 'cl', 'Lighthouse', NULL, 'ok', ?),
 		('mainnet', 'cl', 'Lighthouse', 'v9.9.9', 'failed', ?)`,
-		fpAt, fpAt, fpAt, fpAt, fpAt, fpAt, fpAt, fpAt, fpAt, fpAt, fpAt, fpAt, fpAt, fpAt)
+		fpAt, fpAt, fpAt, fpAt, fpAt, fpAt, fpAt, fpAt, fpAt, fpAt, fpAt, fpAt, fpAt, fpAt, fpAt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1054,13 +1070,16 @@ func TestClientVersionsNormalizeSemverPrefix(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want := map[string]int{"8.2.0": 5, "version8": 1, "Unknown": 7}
-	versions, _, err := eng.VersionsForMembershipAt(ctx, "mainnet", "Lighthouse", "", time.Now())
+	want := map[string]int{"8.2.0": 6, "Unknown": 8}
+	versions, _, err := eng.VersionsForMembershipAt(ctx, "mainnet", "Lighthouse", "", "", time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !maps.Equal(versions, want) {
 		t.Fatalf("Versions = %v, want %v", versions, want)
+	}
+	if el, _, err := eng.VersionsForMembershipAt(ctx, "mainnet", "Lighthouse", "el", "", time.Now()); err != nil || len(el) != 0 {
+		t.Fatalf("execution-layer Versions = %v, %v; want none, so a client name shared by both layers never merges", el, err)
 	}
 
 	// The version breakdown is served from its own cache entry, so it has to reapply the membership
@@ -1068,14 +1087,14 @@ func TestClientVersionsNormalizeSemverPrefix(t *testing.T) {
 	if _, err := eng.db.Exec("UPDATE nodes SET membership_source = 'enr'"); err != nil {
 		t.Fatal(err)
 	}
-	verified, _, err := eng.VersionsForMembershipAt(ctx, "mainnet", "Lighthouse", "verified", time.Now())
+	verified, _, err := eng.VersionsForMembershipAt(ctx, "mainnet", "Lighthouse", "", "verified", time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(verified) != 0 {
 		t.Fatalf("membership=verified versions = %v, want none for an all-ENR-claimed population", verified)
 	}
-	claimed, _, err := eng.VersionsForMembershipAt(ctx, "mainnet", "Lighthouse", "claimed", time.Now())
+	claimed, _, err := eng.VersionsForMembershipAt(ctx, "mainnet", "Lighthouse", "", "claimed", time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1332,5 +1351,137 @@ func TestCollapseUnrecognizedClients(t *testing.T) {
 		if _, ok := m[junk]; ok {
 			t.Errorf("%q should have collapsed into Other", junk)
 		}
+	}
+}
+
+func TestIdentifiedRecentMatchesVersionChartPopulation(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.NewFS(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	eng, err := New(st, []string{"mainnet"}, t.TempDir(), "snapshots")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Close()
+
+	now := time.Now()
+	fresh, old := now.Unix(), now.Add(-8*24*time.Hour).Unix()
+	insert := `INSERT INTO nodes (
+		id,enode,enr,seq,ip,ip6,tcp,udp,tcp6,udp6,quic,quic6,network,fork_hash,fork_next,layer,cgc,cgc_known,
+		has_v4,has_v5,score,first_seen,last_seen,last_check,client,client_version,os,lang,capabilities,
+		country,city,subdivision,lat,lon,asn,org,hosting,fp_status,fp_at,geolocated,membership_source,dialable)
+		VALUES (?,'','',1,'1.1.1.1','',0,0,0,0,0,0,'mainnet','',0,'cl',0,false,
+		false,true,1,1,1,1,'Lighthouse',?,'','','','','','',0,0,0,'',false,?,?,false,'enr',false)`
+	for _, r := range []struct {
+		id, version, status string
+		at                  int64
+	}{{"a", "v8.2.0", "ok", fresh}, {"b", "v8.1.0", "stale", fresh}, {"c", "v8.0.0", "ok", old}, {"d", "v8.2.0", "", 0}} {
+		if _, err := eng.db.Exec(insert, r.id, r.version, r.status, r.at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	clState, err := netconf.CLForkStateAt("mainnet", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := eng.db.Exec("UPDATE nodes SET fork_hash = ?", hex.EncodeToString(clState.Digest[:])); err != nil {
+		t.Fatal(err)
+	}
+
+	all, err := eng.Nodes(ctx, Filter{Network: "mainnet", Layer: "cl", Client: "Lighthouse", ForkAt: now})
+	if err != nil || all.Total != 4 {
+		t.Fatalf("unfiltered Nodes total = %d, %v; want 4", all.Total, err)
+	}
+	recent, err := eng.Nodes(ctx, Filter{Network: "mainnet", Layer: "cl", Client: "Lighthouse", Identified: "recent", ForkAt: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	versions, _, err := eng.VersionsForMembershipAt(ctx, "mainnet", "Lighthouse", "cl", "", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := 0
+	for _, n := range versions {
+		sum += n
+	}
+	if recent.Total != 2 || recent.Total != sum {
+		t.Fatalf("identified=recent total = %d, version chart sum = %d; want both 2", recent.Total, sum)
+	}
+}
+
+func TestRefreshComputesSyncStateAgainstPeerHeads(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.NewFS(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	gen := time.Now().Truncate(time.Second)
+	const tip = 24_000_000
+	row := func(id string, head uint64, observedAgo time.Duration) nodeset.Row {
+		r := nodeset.Row{ID: id, Network: "mainnet", Layer: "el", IP: "1.1.1.1", TCP: 30303, Head: head}
+		if head > 0 {
+			r.HeadObservedAt = gen.Add(-observedAgo).Unix()
+		}
+		return r
+	}
+	rows := []nodeset.Row{
+		row("synced-now", tip, 0),
+		// Observed a minute ago five blocks back: at 12s per block that is on the tip.
+		row("synced-earlier", tip-5, time.Minute),
+		row("peer-3", tip, 0), row("peer-4", tip-1, 0), row("peer-5", tip, 0),
+		row("lagging", tip-100, 0),
+		row("stale-observation", tip, 11*time.Minute),
+		row("legacy-status", 0, 0),
+		// False heads: neither may move the reference or fail the refresh.
+		row("liar-ahead", tip+1000, 0),
+		row("liar-max", math.MaxUint64, 0),
+	}
+	data, err := nodeset.ParquetFromRows(rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	layout := snapshot.Layout{}
+	key := layout.GenerationKey("mainnet", gen)
+	if err := st.Put(ctx, key, data, "application/octet-stream"); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(data)
+	m := testManifest(gen, "test-crawler", map[string]snapshot.NetworkSnapshot{
+		"mainnet": {GenerationKey: key, NodeCount: len(rows), Bytes: len(data), SHA256: hex.EncodeToString(sum[:])},
+	})
+	if err := snapshot.Write(ctx, st, layout, m); err != nil {
+		t.Fatal(err)
+	}
+	eng, err := New(st, []string{"mainnet"}, t.TempDir(), "snapshots")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Close()
+	if err := eng.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := eng.Nodes(ctx, Filter{Network: "mainnet", ForkStatus: "all", Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"synced-now": "synced", "synced-earlier": "synced", "peer-3": "synced", "peer-4": "synced", "peer-5": "synced",
+		"lagging": "lagging", "stale-observation": "unknown", "legacy-status": "unknown",
+		"liar-ahead": "unknown", "liar-max": "unknown",
+	}
+	for _, n := range res.Nodes {
+		if n.SyncState != want[n.ID] {
+			t.Errorf("%s sync_state = %q (lag %v), want %q", n.ID, n.SyncState, n.HeadLag, want[n.ID])
+		}
+	}
+	if len(res.Nodes) != len(want) {
+		t.Fatalf("got %d nodes, want %d", len(res.Nodes), len(want))
+	}
+	lagging, err := eng.Nodes(ctx, Filter{Network: "mainnet", ForkStatus: "all", Sync: "lagging"})
+	if err != nil || lagging.Total != 1 {
+		t.Fatalf("sync=lagging total = %d, %v; want 1", lagging.Total, err)
 	}
 }

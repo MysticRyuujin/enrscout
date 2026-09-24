@@ -4,7 +4,7 @@ An open Ethereum network explorer and crawler. ENRScout continuously discovers
 Ethereum nodes over the devp2p discovery protocols, **discv5 (primary) and discv4**,
 across **IPv4 and IPv6**, enriches them (network/fork classification, client
 fingerprint, geo, hosting), and publishes a current snapshot that powers a
-map-centric web explorer.
+map-centric web explorer and a [fork readiness tracker](#fork-readiness-tracker).
 
 The official public deployment is at
 **[enrscout.ethnodeops.xyz](https://enrscout.ethnodeops.xyz/)**.
@@ -90,13 +90,80 @@ where that is meaningful.
 | `GET /healthz`                    | Proxied API/data diagnostics with loaded node count, snapshot generation, and age.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | Private metrics listener          | Prometheus API/process metrics on `--metrics-addr` (default `127.0.0.1:9101`); it is not routed through the public web ingress.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `GET /api/v1/meta`                | Snapshot generation, age, loaded node count, schema/methodology version, run ID, and source revision/URL.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `GET /api/v1/nodes`               | Filter/search/sort/paginate. Text filters use case-insensitive partial matching. Params: `network, client, country, ip, layer(el\|cl), protocol(v4\|v5), ipstack(dual\|ipv6\|ipv4), hosting(yes\|no), dialable(yes\|no), membership(verified\|claimed\|all), fork(current\|stale\|all), q, cgc_min, cgc_max, sort(score\|last_seen\|first_seen\|client\|network\|cgc), order(asc\|desc), limit, offset`. Rows carry separate membership, fork, fingerprint, liveness, pin, and geolocation evidence fields. `cgc_min`/`cgc_max` bound the ENR-declared custody group count (`cgc`, consensus nodes; 128 = supernode); rows without a decodable `cgc` never match. Returns `{total,count,nodes[]}`. JSON serializes unsigned 64-bit `seq` and `fork_next` as strings to preserve exact values in JavaScript. |
+| `GET /api/v1/nodes`               | Filter/search/sort/paginate. Text filters use case-insensitive partial matching. Params: `network, client, country, ip, layer(el\|cl), protocol(v4\|v5), ipstack(dual\|ipv6\|ipv4), hosting(yes\|no), dialable(yes\|no), membership(verified\|claimed\|all), fork(current\|stale\|all), identified(recent), sync(synced\|lagging\|unknown), readiness(ready\|not_ready\|mismatch\|unknown\|stale; requires network; spans all forks unless `fork` is set), client_exact(yes), q, cgc_min, cgc_max, sort(score\|last_seen\|first_seen\|client\|network\|cgc), order(asc\|desc), limit, offset`. Rows carry separate membership, fork, fingerprint, liveness, pin, and geolocation evidence fields. `cgc_min`/`cgc_max` bound the ENR-declared custody group count (`cgc`, consensus nodes; 128 = supernode); rows without a decodable `cgc` never match. `identified=recent` keeps only nodes with a verified client handshake in the last 7 days, the population the client charts count. `sync` filters on `sync_state` (see DEFINITIONS.md "Sync state"); rows also carry `head`, `head_observed_at`, `head_lag`, and the ENR-advertised consensus schedule (`enr_fork_digest`, `enr_next_fork_version`, `enr_next_fork_epoch`). Returns `{total,count,nodes[]}`. JSON serializes unsigned 64-bit `seq` and `fork_next` as strings to preserve exact values in JavaScript. |
 | `GET /api/v1/nodes/{key}`         | One node by ID (or a hexadecimal ID prefix of at least 16 characters), IP, enode, or ENR.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `GET /api/v1/stats`               | Current-fork-only scalars (current fork ID exactly; earlier eras count as stale) including dialability and separate `execution_stale`/`consensus_stale` audit counts, plus `fork_evaluated_at`, network, EL/CL client (identifications fresher than 7 days, with `el/cl_identified_stale` exclusion counts and `by_direction_el/cl` inbound-outbound mixes), country, ASN organization, OS, layer, and optional client-version breakdowns.                                                                                                                                                                                                                                            |
+| `GET /api/v1/stats`               | Current-fork-only scalars (current fork ID exactly; earlier eras count as stale) including dialability and separate `execution_stale`/`consensus_stale` audit counts, plus `fork_evaluated_at`, network, EL/CL client (identifications fresher than 7 days, with `el/cl_identified_stale` exclusion counts and `by_direction_el/cl` inbound-outbound mixes), country, ASN organization, OS, layer, and optional client-version breakdowns (`client`, optionally narrowed by `layer(el\|cl)`; same population as the client charts).                                                                                                                                                                                                                                            |
+| `GET /api/v1/forks`              | Readiness for the network's next scheduled fork, or the one activated in the last 14 days. Requires `network`. Returns the fork target (`fork.el`: name, time, pre/post fork hash; `fork.cl`: name, epoch, version, pre/post digest), `phase(scheduled\|activated\|none)`, per-layer `counts` of `ready\|not_ready\|mismatch\|unknown\|stale`, current-fork `sync` counts, per-client and per-version splits over the client-chart population (`unidentified` holds the rest), and the curated `releases` table, plus `history`: up to 480 points of per-layer readiness counts from the crawler's 15-minute readiness history. See DEFINITIONS.md "Upcoming fork readiness". |
 | `GET /api/v1/map`                 | GeoJSON FeatureCollection of geolocated nodes. `format=compact` returns Web UI tuples `[id_prefix,lon,lat,client,country,city,layer,hosting,ipv6,verified,accuracy_km,subdivision,cgc]` (`hosting`/`ipv6`/`verified` as `0\|1`) without repeated GeoJSON keys.                                                                                                                                                                                                                                                                                                                                                                     |
 
 `--cors-origin` controls whether browser JavaScript can read cross-origin API responses;
 it is not an authorization or CSRF control.
+
+## Fork readiness tracker
+
+The **Forks** page (`/forks`, API `GET /api/v1/forks`) follows each network's next scheduled fork:
+for example Glamsterdam on Sepolia (EL Amsterdam and CL Gloas at the same instant). It shows a
+countdown, readiness per layer, an adoption trend, per-client and per-version breakdowns, and a
+table of client releases that ship the fork. After activation it shows upgraded and left-behind
+identities for 14 days, unless a later fork is already scheduled.
+
+Readiness comes from the schedule that each node advertises, not from its version string:
+
+- An execution node is ready when its EIP-2124 fork ID `Next` equals the fork time.
+- A consensus node is ready when its ENR `eth2` entry names the fork's version and epoch.
+
+The per-node state is on every node row (`fork_readiness`) and is a node filter
+(`readiness=`). [Definitions](DEFINITIONS.md#upcoming-fork-readiness) has the full rule. The fork
+schedule itself comes from the go-ethereum chain configuration and `internal/netconf/consensus.go`,
+which the [fork-upgrade runbook](docs/operations.md#fork-upgrade-runbook) already updates before
+every fork.
+
+### Client release table
+
+The release labels ("✓ 2.0.0", "no release yet") come from a hand-curated table. It never changes
+the readiness counts. The built-in table is `internal/netconf/releases.go`. Each entry lists the
+first fork-ready release of each release line, so a backport counts:
+
+- With `min_versions: ["2.0.0"]`, versions `2.0.0`, `2.0.1`, and `2.1.0` all meet the entry.
+- With `min_versions: ["1.39.4", "2.0.0"]`, `1.39.5` also meets it. `1.40.0` does not, because
+  its line has no floor of its own.
+- Release candidates, unstable builds, and development builds never meet an entry. They count only
+  by the schedule they advertise.
+
+Every entry with a release also records the fork time (`fork_time`) it was verified against. If a
+fork is rescheduled, the entry no longer matches: its labels are hidden and it shows as outdated
+until someone checks it again.
+
+To publish a newly shipped release without an ENRScout release, give the API an override file:
+
+```bash
+api --client-releases-file=/etc/enrscout/client-releases.yaml
+```
+
+```yaml
+# Replaces the built-in table as a whole: keep every entry you still want.
+updated: 2026-09-25
+releases:
+  - fork: Glamsterdam
+    network: sepolia
+    layer: el
+    client: Nethermind
+    fork_time: 1791294816 # the activation this entry was checked against
+    min_versions: ["2.0.0"] # one floor per release line; add a backport line's floor here
+    released: 2026-09-22
+    url: https://github.com/NethermindEth/nethermind/releases/tag/2.0.0
+  # No fork-ready release yet: listed so the page shows "no release yet".
+  - {fork: Glamsterdam, network: sepolia, layer: cl, client: Prysm}
+```
+
+The file is YAML, so it can carry comments; a JSON file also loads, because JSON is valid YAML.
+Unknown keys are rejected, so a misspelt field fails validation instead of being ignored. The file replaces the built-in table as a whole, so copy the built-in entries you still want. Client
+names must be the canonical names the charts show (`Geth`, `Nethermind`, `Lighthouse`, and so on).
+The API validates the file at startup and refuses to start when it is missing or invalid. After startup it
+re-reads the file on every snapshot refresh (`--refresh`) and reloads it when its contents change. A
+file that fails to decode or validate is logged and ignored, and the table already in use stays in
+place. Fold overrides back into `releases.go` at the next release, so the built-in default stays
+current.
 
 ## DNS tree publisher
 
@@ -218,7 +285,7 @@ Deployment and runtime reference lives in [docs/operations.md](docs/operations.m
 
 - [Crawler flags](docs/operations.md#crawler-flags-common): common tuning flags and ports.
 - [Production checklist](docs/operations.md#production-checklist): TLS, egress isolation, storage, schema-upgrade order.
-- [Fork-upgrade runbook](docs/operations.md#fork-upgrade-runbook): pre-activation steps before each EL/CL fork.
+- [Fork-upgrade runbook](docs/operations.md#fork-upgrade-runbook): pre-activation steps before each EL/CL fork, including the client release table.
 
 See [SECURITY.md](SECURITY.md) for the trust-boundary model and
 [docs/measurement-operations.md](docs/measurement-operations.md) for measurement methodology.
@@ -248,6 +315,10 @@ docker compose -f deploy/e2e/docker-compose.yaml up --build --force-recreate -d
 cd web && npm ci && npx playwright install chromium
 node e2e/browse.mjs        # WEB_BASE defaults to http://localhost:8081
 ```
+
+`make design` (`web/e2e/design.mjs`) renders every page at four viewports against the same
+stack, applies the layout rules in [docs/design-contract.md](docs/design-contract.md), and
+diffs each screenshot against a local baseline. It is a local check, not a CI job.
 
 Regenerate the fixtures before each run. Client charts count only fingerprints
 fresher than 7 days, so fixtures older than that render empty donuts.

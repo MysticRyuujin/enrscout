@@ -96,6 +96,55 @@ export default function About() {
           snapshot.
         </p>
 
+        <h3 id="fork-readiness">Fork readiness and sync</h3>
+        <p>
+          The Forks page reads each node's <i>own</i> schedule for the next
+          fork, not its version string. An execution node is ready when its
+          EIP-2124 fork ID names the fork time as <code>Next</code>; a consensus
+          node is ready when the <code>eth2</code> entry of its signed record
+          names the fork version and epoch. Consensus nodes seen only over
+          libp2p have no record and read as unknown. After activation, ready
+          means upgraded and not ready means left behind.
+        </p>
+        <p>
+          The bars on the Forks page split each client into these states. Before
+          activation, <b>fork scheduled</b> means the node names this fork in
+          its own schedule and <b>not scheduled</b> means it names none: the
+          fork ID
+          <code>Next</code> is 0, or the next fork epoch is far-future.{" "}
+          <b>Other schedule</b> means the node names a next fork that is not
+          this one. It is kept apart from "not scheduled" on purpose: a cluster
+          under one client points at a bug in how that client encodes its
+          schedule, and a lone node points at a custom or overridden fork time.{" "}
+          <b>No schedule advertised</b> is consensus-only: the record carries no{" "}
+          <code>eth2</code> entry, or its digest does not match the fork
+          observed over Status, so its claim cannot be read. After activation
+          the same two bars read <b>upgraded</b> and <b>left behind</b>. Nodes
+          on an older fork are counted per layer but never appear in a client
+          bar, and the Nodes page filter <i>older fork</i> lists them.
+        </p>
+        <p>
+          Release labels come from a hand-curated table and never change the
+          counts. Each client entry lists the first release of each release line
+          that ships the fork, so later releases on that line count without a
+          table change, and a backport to an older line gets its own entry.
+          Release candidates, unstable and development builds never earn the
+          label; they count only by the schedule they advertise. Each entry also
+          records the fork date it was checked against: if a fork is
+          rescheduled, its labels are hidden as outdated until the entry is
+          checked again. A node can advertise the fork while its fingerprint
+          still shows an older version, because a fingerprint can be up to seven
+          days old.
+        </p>
+        <p>
+          Sync state compares the head a node reported in its last Status with
+          the median head that other peers of the same network reported in the
+          same ten minutes. It is an observed consensus of peer reports, not a
+          trusted chain head, and it is shown for information only. Older{" "}
+          <code>eth</code> protocol versions report no block number, so those
+          nodes read as unknown.
+        </p>
+
         <h3>Enrichment</h3>
         <p>
           Client, version and OS are gathered by connecting to each node

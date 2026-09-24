@@ -228,6 +228,26 @@ for (const net of NETWORKS) {
   }
 }
 
+for (const net of NETWORKS) {
+  await goto("/forks", net);
+  const head = (await page.locator(".page-head h1").textContent()) || "";
+  const tracked = (await page.locator(".phase-badge").count()) > 0;
+  if (tracked) {
+    check(`${net} forks: header names the fork`, / on /i.test(head), head.trim());
+    check(`${net} forks: readiness tiles render`, (await page.locator(".tile").count()) >= 4);
+    check(`${net} forks: client readiness bars render`, (await page.locator(".rd-bar").count()) > 0);
+    check(
+      `${net} forks: trend chart or empty history note`,
+      (await page.locator(".trend svg path").count()) > 0 ||
+        (await page.locator(".card .empty").count()) > 0,
+    );
+    check(`${net} forks: release table lists clients`, (await page.locator(".rd-rel").count()) > 0);
+  } else {
+    check(`${net} forks: no-fork empty state`, (await page.locator(".card .empty").count()) === 1);
+  }
+  await page.screenshot({ path: `${OUT}${net}-forks.png`, fullPage: true });
+}
+
 await goto("/about");
 const aboutText = (await page.locator(".prose").textContent()) || "";
 await page.screenshot({ path: `${OUT}about.png` });

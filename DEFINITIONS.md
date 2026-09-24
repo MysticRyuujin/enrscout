@@ -49,6 +49,20 @@ the seven-day window; the excluded count is shown with each chart's coverage.
 Charts are not estimates of the full network's client share. ENR-advertised client
 metadata may still appear on node details before an active fingerprint succeeds.
 
+The client-version chart counts the same population as the client charts, for one client
+on one layer. Its bars sum to that client's chart count; versions past the first twelve are
+summed in one "Other" row. Versions are grouped by release: a leading `v` and any `-` or `+`
+build suffix are dropped, so `v2.0.0+bec830cd-hp` counts as `2.0.0`. A value that does not
+start with a version number counts as "Unknown". The node list counts a larger population by
+default: its client filter matches a substring, and it includes ENR-claimed client names and
+identifications older than seven days. Add `identified=recent` to list only the chart
+population.
+
+Some clients let the operator insert a free-text name (`--identity`) into the handshake
+string, as in `Geth/<name>/v1.17.6-stable/linux-amd64/go1.26`. The name is not stored.
+When the string has more than four `/`-separated parts, the version, OS, and runtime are
+read from the last three.
+
 ## Network membership and fork readiness
 
 Every row records how its network membership was established
@@ -91,6 +105,59 @@ request's `fork_evaluated_at` time, including the active blob-parameter era. Old
 recognized digests are counted as `consensus_stale`, match `fork=stale`, and remain
 available with `fork=all`, but are excluded from headline totals, charts, maps, and
 default node results just like stale execution observations.
+
+## Upcoming fork readiness
+
+The fork tracker evaluates each row of a network against that network's next scheduled fork.
+Each layer has its own target: the next EL fork time from the go-ethereum chain configuration,
+and the next CL fork version change from `internal/netconf/consensus.go`. When both activate at
+the same instant they share one name, such as Glamsterdam (Amsterdam and Gloas). When the two
+layers' forks fall at different instants they are different upgrades: the tracker follows the next
+scheduled one, or else the most recently activated one. A fork stays tracked for 14 days after
+activation unless a later fork is already scheduled.
+
+Readiness is taken from the fork schedule that the node itself advertises, not from its version
+string:
+
+| State | Execution row | Consensus row |
+| --- | --- | --- |
+| `ready` | current fork, and the fork ID `Next` equals the fork time | current fork, and the ENR `eth2` next fork version and epoch equal the target |
+| `not_ready` | current fork, and `Next` is 0 | current fork, and the ENR next fork epoch is FAR_FUTURE |
+| `mismatch` | current fork, and `Next` is some other value | current fork, and the ENR schedules another version or epoch |
+| `unknown` | never | no ENR `eth2` entry, or its digest differs from the row's fork digest |
+| `stale` | not on the current fork | not on the current fork |
+
+A consensus row reads its schedule from ENR-only columns (`enr_fork_digest`,
+`enr_next_fork_version`, `enr_next_fork_epoch`). A Status exchange replaces the row's fork digest
+but says nothing about the next fork, so the next-fork claim is used only while its own digest
+still matches. Consensus nodes seen only over libp2p have no ENR and read as `unknown`. A
+blob-parameter-only (BPO) transition is a consensus target too: per the Fulu p2p spec its epoch is
+advertised in `next_fork_epoch` while `next_fork_version` stays unchanged.
+
+After activation, a row on the new fork is `ready` (upgraded), a row still on the pre-fork hash or
+digest is `not_ready` (left behind), and any other row is `stale`. The tracker therefore counts
+stale-fork rows of the network, which the current-network views exclude.
+
+Client rows and the per-client split cover recognized clients with a verified handshake in the
+last 7 days; every other row is `unidentified`. The crawler's own advertiser identities (client
+`enrscout`, which announce every scheduled fork) are excluded from all readiness counts, from the
+readiness history, and from the `readiness` node filter.
+
+The release table is curated by hand: built into `internal/netconf/releases.go`, and replaceable at
+runtime with the API's `--client-releases-file`. For each client it lists the first release of
+each release line that ships the schedule (`min_versions`). A reported version is labelled:
+
+- `meets`: a release build at or above the floor of its own major.minor line, or at or above the
+  highest floor. Later releases therefore need no table change; a backport line needs its own floor.
+- `below`: a release build under those floors.
+- `dev_build`: a release candidate, unstable, or development build. It counts only by its advertised
+  schedule.
+- `mixed`: a version bucket whose raw builds disagree.
+
+An entry also records the fork time it was verified against (`fork_time`). If the tracked fork
+activates at another time, the entry is `outdated` and its labels are withheld, because releases
+checked against the old date may not carry the new one. A node can advertise the fork while its
+fingerprint still shows an older version, because the fingerprint can be up to seven days old.
 
 ## Dialability
 
@@ -150,7 +217,32 @@ and `/healthz`; `/readyz` fails once the loaded snapshot exceeds `--max-snapshot
 The UI shows "Updated N ago" and flags staleness. A dead crawler yields stale data, not
 downtime.
 
-The RLPx Status exchange is in scope and is used for fork readiness. Precise sync lag
-is not yet exposed: newer `eth` Status versions provide a latest block number, while
-older versions provide only a head hash, so a comparable head-distance metric requires
-an additional trusted head reference and explicit semantics for partial sync states.
+## Sync state
+
+Every Status exchange records the head the peer reported (`head`, `head_observed_at`):
+a block number from `eth/69` and later, or a head slot from consensus Status. `eth/66`-`68`
+Status carries only a head hash, so those peers have no head and their sync state is
+`unknown`.
+
+At each snapshot the API compares each head observed in the last 10 minutes with the heads
+that other peers of the same network and layer reported in the same window. Each head is
+projected to the snapshot time at one block or slot per slot time, so all samples compare at
+one instant. The reference is the median, which tolerates any minority of peers that report
+a false head or lag behind. It needs at least 5 samples. The state describes the node as of
+its last head observation: a node that stops answering stays `synced` until that observation
+is 10 minutes old, then reads as `unknown`.
+Execution block numbers do not advance on a missed slot, so the projection overstates an older
+execution head by the number of slots missed since it was observed. Within the 10-minute window
+that is under one block at a typical mainnet missed-slot rate, but a devnet that misses most slots
+shows it as a small negative `head_lag`.
+
+- `synced`: at most 32 blocks or slots behind the reference (`head_lag`).
+- `lagging`: more than 32 behind.
+- `unknown`: no head, a head older than 10 minutes, too few samples, more than 32 ahead, or a
+  head too large to compare.
+
+The reference is an observed consensus of peer reports, not a trusted chain head. A peer can
+report any head, just as it can report any fork ID: authentication binds a report to the node
+key, not to chain state. `sync_state` is therefore display-only, and no publish guard or DNS tree
+uses it. A current-fork node that is `unknown`
+is not therefore unsynced; it only had no recent comparable head.

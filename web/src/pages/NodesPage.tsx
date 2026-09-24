@@ -8,16 +8,14 @@ import type { NodeQuery, NodesResult } from "../types";
 const PAGE = 50;
 const FILTER_DEBOUNCE_MS = 250;
 
-type PatchFilter = (key: string, value: string) => void;
+type PatchFilter = (key: string, value: string, clear?: string[]) => void;
 type NodeSort = "last_seen" | "client" | "cgc";
 
 // Accepted custody expressions: "128" (exact), "4-8" (range), "8+" / ">=8"
 // (at least), "<=8" (at most), and strict ">8" / "<8", exact in the integer
 // domain (>8 = min 9, <8 = max 7). Returns null when the text parses as none
 // of these; "" clears both bounds.
-export function parseCustody(
-  raw: string,
-): { min: string; max: string } | null {
+export function parseCustody(raw: string): { min: string; max: string } | null {
   const s = raw.trim().replace(/\s+/g, "");
   if (!s) return { min: "", max: "" };
   let m = s.match(/^(\d{1,4})$/);
@@ -29,7 +27,8 @@ export function parseCustody(
   m = s.match(/^<=(\d{1,4})$/);
   if (m) return { min: "", max: m[1] };
   m = s.match(/^<(\d{1,4})$/);
-  if (m) return Number(m[1]) > 0 ? { min: "", max: String(Number(m[1]) - 1) } : null;
+  if (m)
+    return Number(m[1]) > 0 ? { min: "", max: String(Number(m[1]) - 1) } : null;
   m = s.match(/^(\d{1,4})-(\d{1,4})$/);
   if (m && Number(m[1]) <= Number(m[2])) return { min: m[1], max: m[2] };
   return null;
@@ -131,11 +130,16 @@ export default function NodesPage({ layer }: { layer: "el" | "cl" }) {
     q: param("q"),
     ip: param("ip"),
     client: param("client"),
+    client_exact: param("client_exact"),
     country: param("country"),
     protocol: param("protocol"),
     ipstack: param("ipstack"),
     hosting: param("hosting"),
     dialable: param("dialable"),
+    identified: param("identified"),
+    sync: param("sync"),
+    readiness: param("readiness"),
+    fork: param("fork"),
     cgc_min: layer === "cl" ? param("cgc_min") : "",
     cgc_max: layer === "cl" ? param("cgc_max") : "",
     sort,
@@ -162,17 +166,23 @@ export default function NodesPage({ layer }: { layer: "el" | "cl" }) {
   useEffect(() => {
     setSpRef.current = setSp;
   }, [setSp]);
-  const patch = useCallback((k: string, v: string) => {
+  const patch = useCallback((k: string, v: string, clear: string[] = []) => {
     setSpRef.current(
       (current) => {
         const next = new URLSearchParams(current);
+        if ((next.get(k) ?? "") === v) return current;
         if (v) next.set(k, v);
         else next.delete(k);
+        for (const key of clear) next.delete(key);
         return next;
       },
       { replace: true },
     );
   }, []);
+  const patchClient = useCallback(
+    (k: string, v: string) => patch(k, v, ["client_exact"]),
+    [patch],
+  );
 
   const changeSort = (value: NodeSort) => {
     const next = new URLSearchParams(sp);
@@ -291,7 +301,7 @@ export default function NodesPage({ layer }: { layer: "el" | "cl" }) {
         <DebouncedParamInput
           param="client"
           value={query.client ?? ""}
-          patch={patch}
+          patch={patchClient}
           className="f-in"
           placeholder="client contains…"
         />
@@ -336,6 +346,44 @@ export default function NodesPage({ layer }: { layer: "el" | "cl" }) {
           <option value="yes">dialable (TCP/QUIC)</option>
           <option value="no">discovery-only</option>
         </select>
+        <select
+          value={query.identified}
+          onChange={(e) => patch("identified", e.target.value)}
+          title="Recently identified: a verified client handshake in the last 7 days. This is the population the Overview client charts count; the default also lists ENR-claimed names and older identifications."
+        >
+          <option value="">any identification</option>
+          <option value="recent">identified in last 7 days</option>
+        </select>
+        <select
+          value={query.sync}
+          onChange={(e) => patch("sync", e.target.value)}
+          title="Sync state compares the head a node reported in its last Status with the heads other peers reported in the same ten minutes. It is peer-reported, not a trusted chain head."
+        >
+          <option value="">any sync state</option>
+          <option value="synced">synced</option>
+          <option value="lagging">lagging</option>
+          <option value="unknown">sync unknown</option>
+        </select>
+        <select
+          value={query.fork || (query.readiness ? "all" : "current")}
+          onChange={(e) => patch("fork", e.target.value)}
+        >
+          <option value="current">current fork</option>
+          <option value="stale">older fork</option>
+          <option value="all">any fork</option>
+        </select>
+        <select
+          value={query.readiness}
+          onChange={(e) => patch("readiness", e.target.value)}
+          title="Readiness for the next scheduled fork, from the fork schedule the node itself advertises. See the Forks page."
+        >
+          <option value="">any fork readiness</option>
+          <option value="ready">fork scheduled / upgraded</option>
+          <option value="not_ready">not scheduled / left behind</option>
+          <option value="mismatch">other schedule</option>
+          <option value="unknown">schedule unknown</option>
+          <option value="stale">older fork</option>
+        </select>
         {layer === "cl" && (
           <input
             className="f-in"
@@ -345,7 +393,9 @@ export default function NodesPage({ layer }: { layer: "el" | "cl" }) {
             aria-invalid={parseCustody(custodyDraft) === null}
             onChange={(e) => setCustodyDraft(e.target.value)}
             onBlur={() => patchCustodyNow(custodyDraft)}
-            onKeyDown={(e) => e.key === "Enter" && patchCustodyNow(custodyDraft)}
+            onKeyDown={(e) =>
+              e.key === "Enter" && patchCustodyNow(custodyDraft)
+            }
           />
         )}
       </div>

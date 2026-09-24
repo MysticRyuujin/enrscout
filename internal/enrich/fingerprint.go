@@ -34,7 +34,7 @@ const (
 	handshakeMsg      = 0x00
 	discMsg           = 0x01
 	baseProtoVersion  = 5
-	fingerprintName   = "enrscout"
+	fingerprintName   = clientname.Self
 	maxHandshakeBytes = 2048
 	ethStatusMsg      = 0x10
 	maxStatusBytes    = 2048
@@ -70,6 +70,12 @@ type Fingerprint struct {
 	Network  string
 	ForkHash string
 	ForkID   forkid.ID
+	// Head is the peer-reported head: an EL block number from eth/69+ Status (eth/66-68 report only
+	// a hash) or a CL head slot. Zero means unknown.
+	Head uint64
+	// HeadAt is when the Status carrying Head was received, which can precede applying it: an inbound
+	// result may wait in the pending cache until discovery registers its node.
+	HeadAt time.Time
 }
 
 func (f Fingerprint) Identity() nodeset.Fingerprint {
@@ -478,6 +484,10 @@ func decodeEthStatus(data []byte, version uint, fp *Fingerprint) error {
 	protocolVersion, networkID, genesis, fork := status.fields()
 	fp.Network = netconf.ClassifyStatus(networkID, genesis)
 	fp.ForkID = fork
+	if r, ok := status.(*ethStatusRange); ok {
+		fp.Head = r.LatestBlock
+		fp.HeadAt = time.Now()
+	}
 	if uint(protocolVersion) != version {
 		return atProbeStage("eth_status_protocol", fmt.Errorf("status protocol version %d does not match negotiated eth/%d", protocolVersion, version))
 	}
@@ -607,6 +617,11 @@ func rlpxEndpointsWithPolicy(n *enode.Node, allowPrivate bool) []string {
 func parseName(name string) (client, version, os, lang string) {
 	parts := strings.Split(name, "/")
 	client = strings.TrimSpace(parts[0])
+	// Geth and Besu insert an operator-chosen --identity after the client name, and it may itself
+	// look like a version, so a name with more than four segments is read from the end.
+	if len(parts) > 4 {
+		parts = append(parts[:1], parts[len(parts)-3:]...)
+	}
 	if len(parts) > 1 {
 		version = strings.TrimSpace(parts[1])
 	}

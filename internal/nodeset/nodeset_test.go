@@ -1363,6 +1363,7 @@ func TestExtractCLForkNextFromSpecENRForkID(t *testing.T) {
 	r.Set(enr.IPv4{5, 6, 7, 9})
 	eth2 := make([]byte, 16)
 	copy(eth2[:4], []byte{0xd2, 0xf1, 0x99, 0x7f})
+	copy(eth2[4:8], []byte{0x90, 0x00, 0x00, 0x76})
 	binary.LittleEndian.PutUint64(eth2[8:16], 2048)
 	r.Set(netconf.Eth2Entry(eth2))
 	var id enode.ID
@@ -1373,6 +1374,10 @@ func TestExtractCLForkNextFromSpecENRForkID(t *testing.T) {
 	}
 	if e.forkNext != 2048 {
 		t.Errorf("forkNext = %d, want 2048 (next_fork_epoch at bytes [8:16] of the 16-byte ENRForkID)", e.forkNext)
+	}
+	want := ENRForkSchedule{Digest: "d2f1997f", NextVersion: "90000076", NextEpoch: 2048}
+	if e.schedule != want {
+		t.Errorf("schedule = %+v, want %+v", e.schedule, want)
 	}
 }
 
@@ -2013,5 +2018,79 @@ func TestPromotedCandidateEndpointChangeIsReportedNotRecorded(t *testing.T) {
 	row = s.rows("mainnet")[0]
 	if row.IP != "8.8.9.40" || row.TCP != 30311 {
 		t.Fatalf("authenticated Status did not record the moved endpoint: %s:%d", row.IP, row.TCP)
+	}
+}
+
+func TestHeadFollowsStatusAndNetwork(t *testing.T) {
+	s := NewWithLimit(0)
+	n := elNode(t, 61)
+	now := time.Unix(1700000000, 0)
+	s.Observe(n, "v5", now)
+	s.SetHead(n.ID(), "el", "mainnet", 24_000_000, now)
+	if row := s.rows("mainnet")[0]; row.Head != 24_000_000 || row.HeadObservedAt != now.Unix() {
+		t.Fatalf("head = %d@%d, want 24000000@%d", row.Head, row.HeadObservedAt, now.Unix())
+	}
+	// A later head-less legacy Status replaces the head instead of leaving an old one current.
+	s.SetHead(n.ID(), "el", "mainnet", 0, now.Add(time.Minute))
+	if row := s.rows("mainnet")[0]; row.Head != 0 || row.HeadObservedAt != 0 {
+		t.Fatalf("head after legacy Status = %d@%d, want unknown", row.Head, row.HeadObservedAt)
+	}
+
+	s.SetHead(n.ID(), "cl", "mainnet", 7, now)
+	if row := s.rows("mainnet")[0]; row.Head != 0 {
+		t.Fatalf("a CL slot was stored on an EL row: %d", row.Head)
+	}
+	s.SetHead(n.ID(), "el", "sepolia", 7, now)
+	if row := s.rows("mainnet")[0]; row.Head != 0 {
+		t.Fatalf("a head for another network was applied: %d", row.Head)
+	}
+	s.SetHead(n.ID(), "el", "mainnet", 24_000_000, now)
+	if !s.SetExecutionStatus(n.ID(), "hoodi", forkid.ID{}) {
+		t.Fatal("Status rejected")
+	}
+	if row := s.rows("hoodi")[0]; row.Head != 0 {
+		t.Fatalf("Status moved the row to hoodi but kept the mainnet head %d", row.Head)
+	}
+	s.SetExecutionStatus(n.ID(), "mainnet", forkid.ID{})
+	s.SetHead(n.ID(), "el", "mainnet", 24_000_000, now)
+	sepolia, err := netconf.Get("sepolia")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var r enr.Record
+	r.SetSeq(n.Seq() + 1)
+	r.Set(enr.IPv4{1, 2, 3, 61})
+	r.Set(enr.TCP(30303))
+	r.Set(netconf.EthEntry{ForkID: sepolia.CurrentForkID()})
+	s.Observe(enode.SignNull(&r, n.ID()), "v5", now.Add(time.Minute))
+	rows := s.rows("sepolia")
+	if len(rows) != 1 || rows[0].Head != 0 {
+		t.Fatalf("after moving networks rows = %+v, want the mainnet head dropped", rows)
+	}
+}
+
+func TestHeadKeepsStatusReceiveTimeAndDropsOnLayerChange(t *testing.T) {
+	s := NewWithLimit(0)
+	n := elNode(t, 62)
+	now := time.Unix(1700000000, 0)
+	s.Observe(n, "v5", now)
+	// A cached inbound Status applied later keeps the time it arrived.
+	received := now.Add(-20 * time.Minute)
+	s.SetHead(n.ID(), "el", "mainnet", 24_000_000, received)
+	if row := s.rows("mainnet")[0]; row.HeadObservedAt != received.Unix() {
+		t.Fatalf("head observed at %d, want the receive time %d", row.HeadObservedAt, received.Unix())
+	}
+
+	cl, err := netconf.CLForkStateAt("mainnet", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var r enr.Record
+	r.SetSeq(n.Seq() + 1)
+	r.Set(enr.IPv4{1, 2, 3, 62})
+	r.Set(netconf.Eth2Entry(cl.ENRForkID()))
+	s.Observe(enode.SignNull(&r, n.ID()), "v5", now.Add(time.Minute))
+	if row := s.rows("mainnet")[0]; row.Layer != "cl" || row.Head != 0 {
+		t.Fatalf("after moving to CL row = %s head %d, want the EL block number dropped", row.Layer, row.Head)
 	}
 }

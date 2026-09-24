@@ -145,7 +145,7 @@ func TestMapCacheControlDoesNotCrossForkTransition(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if got := mapCacheControl(at, test.next); got != test.want {
+			if got := cacheControlUntil(at, test.next, 300); got != test.want {
 				t.Fatalf("Cache-Control = %q, want %q", got, test.want)
 			}
 		})

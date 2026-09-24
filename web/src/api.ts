@@ -1,5 +1,6 @@
 import type {
   CompactMap,
+  ForkReadiness,
   Meta,
   Node,
   NodeQuery,
@@ -26,10 +27,15 @@ async function get<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export function fetchStats(network: string, client?: string): Promise<Stats> {
+export function fetchStats(
+  network: string,
+  client?: string,
+  layer?: string,
+): Promise<Stats> {
   const p = new URLSearchParams();
   if (network) p.set("network", network);
   if (client) p.set("client", client);
+  if (layer) p.set("layer", layer);
   const qs = p.toString();
   return get<Stats>(`/api/v1/stats${qs ? `?${qs}` : ""}`);
 }
@@ -38,6 +44,12 @@ export function fetchMap(network: string): Promise<CompactMap> {
   const p = new URLSearchParams({ format: "compact" });
   if (network) p.set("network", network);
   return get<CompactMap>(`/api/v1/map?${p}`);
+}
+
+export function fetchForks(network: string): Promise<ForkReadiness> {
+  return get<ForkReadiness>(
+    `/api/v1/forks?${new URLSearchParams({ network })}`,
+  );
 }
 
 export function fetchMeta(): Promise<Meta> {

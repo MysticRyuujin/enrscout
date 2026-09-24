@@ -1,0 +1,21 @@
+# syntax=docker/dockerfile:1.7
+FROM golang:1.27@sha256:3680233e3204827fbdc66088528ae6d4b3d034f51d03a99d454f6de034888244 AS build
+ARG MINIO_VERSION=v0.0.0-20260212201848-7aac2a2c5b7c
+ARG MC_VERSION=v0.0.0-20251106162529-77f82e18b540
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOBIN=/out go install github.com/minio/minio@${MINIO_VERSION} && \
+    install -Dm644 /go/pkg/mod/github.com/minio/minio@${MINIO_VERSION}/LICENSE /out/licenses/minio/LICENSE
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOBIN=/out go install github.com/minio/mc@${MC_VERSION} && \
+    install -Dm644 /go/pkg/mod/github.com/minio/mc@${MC_VERSION}/LICENSE /out/licenses/mc/LICENSE
+RUN install -d /out/data
+
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:f5b485ea962d9bd1186b2f6b3a061191539b905b82ec395de78cbfae51f20e35
+COPY --from=build /out/minio /out/mc /usr/local/bin/
+COPY --from=build /out/licenses /licenses/
+COPY --from=build /out/data /data
+# Existing volumes were written by the official image as root.
+USER 0:0
+ENTRYPOINT ["/usr/local/bin/minio"]

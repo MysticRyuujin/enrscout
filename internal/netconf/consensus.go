@@ -1,11 +1,13 @@
 package netconf
 
 import (
+	"cmp"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +19,7 @@ type blobParams struct {
 }
 
 type clFork struct {
+	name    string
 	epoch   uint64
 	version [4]byte
 }
@@ -41,7 +44,7 @@ type clNetwork struct {
 }
 
 // CLForkState is the consensus networking state active at a wall-clock instant.
-// ENRForkID's next fields describe only regular forks; NextDigest also covers BPOs.
+// NextForkVersion changes only at regular forks; NextForkEpoch and NextDigest also cover BPOs.
 type CLForkState struct {
 	Digest          [4]byte
 	CurrentVersion  [4]byte
@@ -127,6 +130,31 @@ func (c *clNetwork) blobAt(epoch uint64) (blobParams, error) {
 	return active, nil
 }
 
+// transitions returns the regular forks plus each blob-parameter-only fork, in epoch order. A BPO
+// keeps the version active at its epoch and is numbered like geth's BPOn fields; a blob entry at a
+// regular fork's epoch is part of that fork, not a BPO.
+func (c *clNetwork) transitions() ([]clFork, error) {
+	regular := make(map[uint64]bool, len(c.forks))
+	for _, f := range c.forks {
+		regular[f.epoch] = true
+	}
+	out := slices.Clone(c.forks)
+	n := 0
+	for _, bp := range c.blobSchedule {
+		if bp.epoch < c.fuluEpoch || regular[bp.epoch] {
+			continue
+		}
+		fork, err := c.forkAt(bp.epoch)
+		if err != nil {
+			return nil, err
+		}
+		n++
+		out = append(out, clFork{name: fmt.Sprintf("BPO%d", n), epoch: bp.epoch, version: fork.version})
+	}
+	slices.SortStableFunc(out, func(a, b clFork) int { return cmp.Compare(a.epoch, b.epoch) })
+	return out, nil
+}
+
 func (c *clNetwork) rawDigest(version [4]byte) [4]byte {
 	var digest [4]byte
 	copy(digest[:], forkDataRoot(version[:], c.gvr[:]))
@@ -204,6 +232,9 @@ func (c *clNetwork) computeStateAt(epoch uint64) (CLForkState, error) {
 	for _, bp := range c.blobSchedule {
 		if bp.epoch > epoch && bp.epoch < nextEpoch {
 			nextEpoch = bp.epoch
+			// The Fulu p2p spec counts a BPO in next_fork_epoch but keeps next_fork_version.
+			state.NextForkEpoch = bp.epoch
+			state.NextForkVersion = version
 			break
 		}
 	}
@@ -247,6 +278,15 @@ func CLForkStateAt(name string, at time.Time) (CLForkState, error) {
 	return n.cl.stateAt(at)
 }
 
+// SecondsPerSlot is the network's slot time, which since the merge is also its EL block time.
+func SecondsPerSlot(name string) (uint64, error) {
+	n, err := Get(name)
+	if err != nil || n.cl == nil || n.cl.secondsPerSlot == 0 {
+		return 0, fmt.Errorf("unknown consensus network %q", name)
+	}
+	return n.cl.secondsPerSlot, nil
+}
+
 func IsCurrentCLForkAt(name, forkHash string, at time.Time) bool {
 	digest, ok := parseHash4(forkHash)
 	if !ok {
@@ -280,7 +320,7 @@ func compiledCL(name, gvr string, genesisTime uint64, forks []namedFork, bpos []
 		if err != nil {
 			panic(fmt.Sprintf("netconf: %s %s: %v", name, f.name, err))
 		}
-		c.forks = append(c.forks, clFork{epoch: f.epoch, version: version})
+		c.forks = append(c.forks, clFork{name: f.name, epoch: f.epoch, version: version})
 		switch f.name {
 		case "electra":
 			c.blobSchedule = append(c.blobSchedule, blobParams{f.epoch, electraMaxBlobs})
