@@ -129,3 +129,4 @@ time, and the crawler starts a new series on its next point.
 The trend chart reads `<prefix>/state/readiness/<network>/<fork>.json`, which the crawler appends to
 every 15 minutes. History starts when a crawler that knows the fork first publishes, so deploy the
 fork schedule early. The object inherits the single-writer rule of its prefix.
+The API caches this object for up to 15 minutes, independently of its live readiness counts.

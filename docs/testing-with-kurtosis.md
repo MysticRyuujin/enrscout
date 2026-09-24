@@ -536,7 +536,7 @@ little-endian `MarshalUint`) is correct at every level; no upstream issue is
 warranted. Note when decoding Prysm ENRs by hand: its `cgc` entry genuinely is
 an RLP big-endian integer, which is an easy source of this confusion.
 
-### Fork readiness run on 2026-09-24
+### Fork readiness run on 2026-09-24 (earlier run)
 
 Seven pairs (erigon paired with lighthouse because Caplin fails to start), Electra at genesis,
 Fulu (with EL Osaka) at epoch 5, every BPO at FAR_FUTURE_EPOCH, upstream ethereum-package and the
@@ -554,13 +554,85 @@ branch images. `/api/v1/forks?network=devnet` tracked Fusaka from the first snap
   slots, so older EL heads projected slightly ahead of the median (`head_lag` of -4). See
   DEFINITIONS.md "Sync state".
 
-### ENRScout conclusion
+### Earlier discovery findings
 
 No ENRScout code defect was found in these omissions. Every EL client that could not join
 discovery organically was still identified outbound by `/probe`, with both fingerprint
 directions represented in the persisted rows (`inbound` for geth, besu, reth and ethrex;
 `outbound` for nethermind, erigon and nimbus). Keep future client interoperability
 workarounds in this dated section rather than modifying the generic procedure.
+
+### Review validation on 2026-09-24
+
+The full seven-pair matrix runs with bootnodoor and the ENRScout services from the local ethereum-package integration.
+Caplin uses `--sentinel.quic.port=4002` because its default QUIC port conflicts with discovery UDP.
+The package uses the local MinIO image built from pinned source; its original image cannot be pulled.
+The crawler and API use revision `f122a35`; the web image includes the network initialization fix from `80c2aa4`.
+
+The mainnet preset uses 12-second slots and starts on Electra.
+Genesis is at 18:22:09 UTC, Fusaka at epoch 2 (18:34:57), and BPO1 at epoch 4 (18:47:45).
+BPO1 has a target of 10 blobs and a maximum of 15 blobs.
+Later forks remain at `FAR_FUTURE_EPOCH`.
+
+- **Discovery.** The crawler starts with an empty snapshot store and seeds only bootnodoor.
+  It discovers all seven EL clients and all seven CL clients before any direct probe.
+  The published set contains 15 identities, including the EL bootnode.
+- **Fusaka.** Before activation, EL readiness is 8/8 and CL readiness is 6/7.
+  The tracker selects BPO1 at Fusaka activation.
+  One publication hits `collapse_current`; the next publication succeeds without an override.
+  All seven CL records become current by 18:35:48.
+  Nimbus EL can return to stale because its ENR retains the earlier fork hash while Status reports the current hash.
+- **BPO1.** At 18:47:50 the tracker reports `activated`, and every identity still carries an earlier fork.
+  At 18:48:20, five EL identities and six CL identities report the new fork.
+  The ready count matches the current count; `not_ready` plus `stale` matches the stale count in each layer.
+  All seven CL records become current by 18:48:50; seven EL records become current by 18:50:51.
+  Besu temporarily retains an ENR with the Electra fork hash.
+  The final sample at 18:53:05 has all eight EL records and all seven CL records current.
+- **Caplin evidence.** The beacon API returns `eth2` bytes `1dbb761a700000380000000000000004` after Fusaka.
+  The epoch bytes encode 4 in big-endian order.
+  SSZ decodes them as `288230376151711744`, so ENRScout correctly reports `mismatch` for the scheduled BPO1.
+  The same issue affects its advertised epoch 2 before Fusaka.
+- **Restart and history.** The final crawler image restores all 15 devnet rows.
+  History retains the 18:19:17 point and adds the next point at 18:34:26, despite a restart at 18:31:41.
+  This verifies the fix for a restart that occurs before the next history point is due.
+  The crawler stores the first BPO1 point at 18:49:41.
+  The API reads it after a restart; its existing cache can delay new history for up to 15 minutes.
+- **Status heads.** Separate outbound probes target only previously discovered clients.
+  Ten of fourteen probes complete.
+  Nethermind returns an RLPx EOF; Caplin, Grandine, and Lighthouse do not complete identify.
+  Their existing inbound fingerprints remain available.
+  Persisted heads produce `synced` results for seven EL clients and six CL clients at the checked snapshot.
+  Grandine has no recorded head and remains `unknown`.
+  CL sync labels return to `unknown` when fewer than five observations remain within the ten-minute window.
+
+The local Compose deployment also runs the final images against mainnet, Hoodi, and Sepolia.
+The Sepolia check verifies readiness filters, grouped counts, release reloads, history, and snapshot restoration.
+At 18:48:38 UTC, the Sepolia audit view contains 358 identities, and all 35 API assertions pass.
+The replacement MinIO image reads a populated volume with root ownership, matching the original image.
+
+The devnet produces 61 successful API samples from 18:20:18 through 18:53:05, with 2,251 count assertions.
+Every sample retains all 15 identities and all seven client types in each layer.
+The final metrics report 15 verified identities and 15 total identities.
+
+The checks pass after the fixes:
+
+- Go tests with the race detector, compilation, vet, formatting, staticcheck, and the reachable vulnerability scan.
+- Compatibility tests for earlier snapshot schemas and tests that compare SQL readiness with the Go rule.
+- Compose validation, native ARM64 image builds, the web build, and the dependency audit.
+- Browser checks: 64/64 across the public networks, 31/31 on Sepolia, and 31/31 on the devnet.
+- Targeted browser checks for network links, fork filters, history markers, and mobile layout.
+- Activated BPO1 labels and counts match the API, and the stored history appears after the API restart.
+- Release reload checks for unchanged file size and timestamp, invalid YAML, and recovery without a restart.
+
+The devnet browser run finds initial requests for unsupported mainnet data before metadata selects the devnet.
+The web fix waits for network metadata before it mounts pages; the repeated browser run has no failed requests.
+The API monitor misses three samples when Kurtosis assigns a new port during the image update.
+It resumes before Fusaka activation.
+Docker assigns another port during the later API restart, which causes three more connection failures in the monitor.
+The final check uses the stable web proxy port and passes.
+
+Local logs, API samples, image IDs, configurations, and screenshots are retained under `/tmp/enrscout-validation`.
+AMD64 image builds remain a CI check; this local run uses ARM64.
 
 [ethpandaops/ethereum-package]: https://github.com/ethpandaops/ethereum-package
 [bootnodoor PR #41]: https://github.com/ethpandaops/bootnodoor/pull/41
