@@ -1136,8 +1136,8 @@ code.wrap {
   padding-left: 34px;
 }
 
-.rd-unidentified td {
-  color: var(--muted);
+.net-name {
+  text-transform: capitalize;
 }
 
 .trend {

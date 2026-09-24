@@ -247,7 +247,6 @@ function LayerCard({
   releases: ClientRelease[];
   activated: boolean;
 }) {
-  const unidentified = STATES.reduce((a, s) => a + data.unidentified[s], 0);
   const releaseOf = new Map(
     releases.filter((r) => r.layer === layer).map((r) => [r.client, r]),
   );
@@ -256,8 +255,8 @@ function LayerCard({
       <h3>{layerName(layer)} clients</h3>
       <p className="card-subtitle">
         {num(data.total)} identities. Client rows count recognized clients with
-        a verified handshake in the last 7 days; everything else is in the
-        last row. Ready counts link to the matching nodes.
+        a verified handshake in the last 7 days. Ready counts link to the
+        matching nodes.
       </p>
       <Legend activated={activated} />
       <div className="table-wrap">
@@ -281,17 +280,6 @@ function LayerCard({
                 activated={activated}
               />
             ))}
-            {unidentified > 0 && (
-              <tr className="rd-unidentified">
-                <td>Not recently identified</td>
-                <td />
-                <ReadinessCells
-                  counts={data.unidentified}
-                  total={unidentified}
-                  activated={activated}
-                />
-              </tr>
-            )}
           </tbody>
         </table>
       </div>
@@ -352,10 +340,11 @@ export default function Forks() {
         </div>
         <div className="card">
           <p className="empty">
-            No fork is scheduled on {network}. The tracker follows the next
-            execution fork in the go-ethereum chain configuration and the next
-            consensus fork in the crawler&apos;s schedule, and keeps a fork for
-            14 days after it activates unless a later fork is scheduled.
+            No fork is scheduled on <span className="net-name">{network}</span>.
+            The tracker follows the next execution fork in the go-ethereum chain
+            configuration and the next consensus fork in the crawler&apos;s
+            schedule, and keeps a fork for 14 days after it activates unless a
+            later fork is scheduled.
           </p>
         </div>
       </div>
@@ -508,7 +497,8 @@ export default function Forks() {
           <h3>Client releases</h3>
           <p className="card-subtitle">
             First release of each client that ships the {data.fork.name}{" "}
-            schedule for {network}. Updated {data.releases_updated}.
+            schedule for <span className="net-name">{network}</span>. Updated{" "}
+            {data.releases_updated}.
           </p>
           <div className="table-wrap">
             <table className="nodes-table">
