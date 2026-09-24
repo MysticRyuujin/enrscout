@@ -302,7 +302,7 @@ a {
 
 .tiles {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 12px;
   margin-bottom: 18px;
 }
@@ -778,35 +778,22 @@ a.bar-name:hover {
 }
 
 .filters {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   gap: 8px;
   margin-bottom: 16px;
 }
 
 .filters input,
 .filters select {
+  width: 100%;
+  min-width: 0;
   padding: 8px 10px;
   border-radius: 8px;
   border: 1px solid var(--border-2);
   background: var(--panel);
   color: var(--text);
   font-size: 13px;
-}
-
-.filters .f-search {
-  flex: 2 1 140px;
-  min-width: 140px;
-}
-
-.filters .f-ip {
-  flex: 1 1 110px;
-  min-width: 110px;
-}
-
-.filters .f-in {
-  flex: 1 1 110px;
-  min-width: 110px;
 }
 
 .filters input:focus,

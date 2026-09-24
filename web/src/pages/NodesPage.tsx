@@ -378,7 +378,7 @@ export default function NodesPage({ layer }: { layer: "el" | "cl" }) {
           title="Readiness for the next scheduled fork, from the fork schedule the node itself advertises. See the Forks page."
         >
           <option value="">any fork readiness</option>
-          <option value="ready">next fork scheduled / upgraded</option>
+          <option value="ready">fork scheduled / upgraded</option>
           <option value="not_ready">not scheduled / left behind</option>
           <option value="mismatch">other schedule</option>
           <option value="unknown">schedule unknown</option>
