@@ -5,7 +5,15 @@
 //   node e2e/design.mjs            # check against baseline, write current + diff images
 //   node e2e/design.mjs --update   # accept the current screenshots as the new baseline
 import { chromium } from "playwright";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import pixelmatch from "pixelmatch";
 import { PNG } from "pngjs";
 
@@ -54,6 +62,19 @@ const page = await ctx.newPage();
 const pageErrors = [];
 page.on("pageerror", (e) => pageErrors.push(e.message));
 
+// Ages and countdowns are relative to the wall clock, so two runs an hour apart would differ
+// without a code change. Pin the clock one minute past the snapshot the site is serving.
+const meta = await (await page.request.get(`${BASE}/api/v1/meta`)).json();
+await page.clock.setFixedTime(new Date(Date.parse(meta.generated_at) + 60_000));
+await page.route(/\/api\/v1\/(stats|meta)(\?|$)/, async (route) => {
+  const response = await route.fetch();
+  const body = await response.json();
+  for (const key of ["snapshot_age_seconds", "age_seconds"]) {
+    if (key in body) body[key] = 60;
+  }
+  await route.fulfill({ response, json: body });
+});
+
 async function goto(path) {
   const url = `${BASE}${path}${path.includes("?") ? "&" : "?"}network=${NETWORK}`;
   await page.goto(url, { waitUntil: "networkidle", timeout: 30000 });
@@ -69,14 +90,22 @@ const RULES = {
     const right = (el) => {
       const range = document.createRange();
       range.selectNodeContents(el);
-      return Math.max(el.getBoundingClientRect().right, range.getBoundingClientRect().right);
+      return Math.max(
+        el.getBoundingClientRect().right,
+        range.getBoundingClientRect().right,
+      );
     };
     const over = (el) => right(el) > limit;
     const culprits = [...document.querySelectorAll("body *")]
       .filter((el) => over(el) && ![...el.children].some(over))
       .slice(0, 3)
-      .map((el) => `${el.tagName.toLowerCase()}.${el.className} ends at ${Math.round(right(el))}px`);
-    return [`page scrolls horizontally: ${doc.scrollWidth}px in a ${window.innerWidth}px viewport (${culprits.join("; ")})`];
+      .map(
+        (el) =>
+          `${el.tagName.toLowerCase()}.${el.className} ends at ${Math.round(right(el))}px`,
+      );
+    return [
+      `page scrolls horizontally: ${doc.scrollWidth}px in a ${window.innerWidth}px viewport (${culprits.join("; ")})`,
+    ];
   },
   // A select shows only its chosen option, so a label wider than the box is silently clipped.
   selectLabelsFit() {
@@ -89,8 +118,14 @@ const RULES = {
       const label = sel.options[sel.selectedIndex]?.text ?? "";
       const text = canvas.measureText(label).width;
       const room =
-        sel.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) - 20;
-      if (text > room) out.push(`"${label}" needs ${Math.ceil(text)}px, has ${Math.floor(room)}px`);
+        sel.clientWidth -
+        parseFloat(cs.paddingLeft) -
+        parseFloat(cs.paddingRight) -
+        20;
+      if (text > room)
+        out.push(
+          `"${label}" needs ${Math.ceil(text)}px, has ${Math.floor(room)}px`,
+        );
     }
     return out;
   },
@@ -99,8 +134,13 @@ const RULES = {
     for (const grid of document.querySelectorAll(".filters, .tiles")) {
       const kids = [...grid.children].filter((k) => k.offsetParent);
       if (kids.length < 2) continue;
-      const widths = new Set(kids.map((k) => Math.round(k.getBoundingClientRect().width)));
-      if (widths.size > 1) out.push(`${grid.className}: ${widths.size} distinct widths (${[...widths].join(", ")})`);
+      const widths = new Set(
+        kids.map((k) => Math.round(k.getBoundingClientRect().width)),
+      );
+      if (widths.size > 1)
+        out.push(
+          `${grid.className}: ${widths.size} distinct widths (${[...widths].join(", ")})`,
+        );
       const rows = new Map();
       for (const k of kids) {
         const r = k.getBoundingClientRect();
@@ -108,7 +148,10 @@ const RULES = {
         rows.set(row, [...(rows.get(row) ?? []), Math.round(r.height)]);
       }
       for (const [row, heights] of rows) {
-        if (new Set(heights).size > 1) out.push(`${grid.className}: row at ${row}px has heights ${heights.join(", ")}`);
+        if (new Set(heights).size > 1)
+          out.push(
+            `${grid.className}: row at ${row}px has heights ${heights.join(", ")}`,
+          );
       }
     }
     return out;
@@ -123,7 +166,10 @@ const RULES = {
       const rows = [...new Set(tops)];
       if (rows.length < 2 || rows.length === kids.length) continue;
       const last = tops.filter((t) => t === rows[rows.length - 1]).length;
-      if (last === 1) out.push(`${grid.className}: last of ${rows.length} rows holds one control`);
+      if (last === 1)
+        out.push(
+          `${grid.className}: last of ${rows.length} rows holds one control`,
+        );
     }
     return out;
   },
@@ -131,10 +177,13 @@ const RULES = {
     const out = new Set();
     for (const el of document.querySelectorAll("body *")) {
       if (!el.offsetParent || !el.childNodes.length) continue;
-      const hasText = [...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim());
+      const hasText = [...el.childNodes].some(
+        (n) => n.nodeType === 3 && n.textContent.trim(),
+      );
       if (!hasText) continue;
       const size = parseFloat(getComputedStyle(el).fontSize);
-      if (size < 11) out.add(`${el.tagName.toLowerCase()}.${el.className}: ${size}px`);
+      if (size < 11)
+        out.add(`${el.tagName.toLowerCase()}.${el.className}: ${size}px`);
     }
     return [...out].slice(0, 5);
   },
@@ -144,7 +193,10 @@ const RULES = {
     for (const el of document.querySelectorAll("button, select, input")) {
       if (!el.offsetParent) continue;
       const h = el.getBoundingClientRect().height;
-      if (h > 0 && h < 28) out.add(`${el.tagName.toLowerCase()}.${el.className} is ${Math.round(h)}px tall`);
+      if (h > 0 && h < 28)
+        out.add(
+          `${el.tagName.toLowerCase()}.${el.className} is ${Math.round(h)}px tall`,
+        );
     }
     return [...out].slice(0, 5);
   },
@@ -153,8 +205,15 @@ const RULES = {
 async function applyRules(label) {
   for (const [rule, fn] of Object.entries(RULES)) {
     const violations = await page.evaluate(fn);
-    const soft = rule === "noOrphanRow" || rule === "readableText" || rule === "tapTargets";
-    (soft ? warn : fail)(`${label}: ${rule}`, violations.length === 0, violations.join("; "));
+    const soft =
+      rule === "noOrphanRow" ||
+      rule === "readableText" ||
+      rule === "tapTargets";
+    (soft ? warn : fail)(
+      `${label}: ${rule}`,
+      violations.length === 0,
+      violations.join("; "),
+    );
   }
 }
 
@@ -168,7 +227,9 @@ function compare(name) {
     return `size ${b.width}x${b.height} -> ${a.width}x${a.height}`;
   }
   const diff = new PNG({ width: a.width, height: a.height });
-  const changed = pixelmatch(a.data, b.data, diff.data, a.width, a.height, { threshold: PIXEL_THRESHOLD });
+  const changed = pixelmatch(a.data, b.data, diff.data, a.width, a.height, {
+    threshold: PIXEL_THRESHOLD,
+  });
   const share = changed / (a.width * a.height);
   if (share < CHANGED_SHARE) return "same";
   writeFileSync(`${DIRS.diff}${name}.png`, PNG.sync.write(diff));
@@ -190,7 +251,10 @@ async function shoot(name) {
 // The detail page needs a real node; take the first row of the execution table.
 await page.setViewportSize({ width: 1280, height: 800 });
 await goto("/nodes/execution");
-const detailHref = await page.locator(".nodes-table tbody tr a").first().getAttribute("href");
+const detailHref = await page
+  .locator(".nodes-table tbody tr a")
+  .first()
+  .getAttribute("href");
 const detailPath = detailHref ? new URL(detailHref, BASE).pathname : null;
 
 const PAGES = [
@@ -212,14 +276,23 @@ for (const vp of VIEWPORTS) {
   }
 }
 
-fail("no page errors", pageErrors.length === 0, pageErrors.slice(0, 3).join(" | "));
+fail(
+  "no page errors",
+  pageErrors.length === 0,
+  pageErrors.slice(0, 3).join(" | "),
+);
 await browser.close();
 
 if (UPDATE) {
-  for (const f of readdirSync(DIRS.current)) copyFileSync(`${DIRS.current}${f}`, `${DIRS.baseline}${f}`);
-  console.log(`\nBaseline updated: ${readdirSync(DIRS.current).length} screenshots`);
+  for (const f of readdirSync(DIRS.current))
+    copyFileSync(`${DIRS.current}${f}`, `${DIRS.baseline}${f}`);
+  console.log(
+    `\nBaseline updated: ${readdirSync(DIRS.current).length} screenshots`,
+  );
 } else if (changed.length) {
-  console.log(`\nChanged screenshots (review each against docs/design-contract.md, then --update):`);
+  console.log(
+    `\nChanged screenshots (review each against docs/design-contract.md, then --update):`,
+  );
   for (const c of changed) console.log(`  ${c}`);
   console.log(`  current: ${DIRS.current}\n  diff:    ${DIRS.diff}`);
 } else {
@@ -228,5 +301,7 @@ if (UPDATE) {
 
 const failed = results.filter((r) => !r.ok && r.level === "FAIL");
 const warned = results.filter((r) => !r.ok && r.level === "WARN");
-console.log(`\n${results.length - failed.length - warned.length} passed, ${warned.length} warnings, ${failed.length} failed`);
+console.log(
+  `\n${results.length - failed.length - warned.length} passed, ${warned.length} warnings, ${failed.length} failed`,
+);
 process.exit(failed.length === 0 ? 0 : 1);

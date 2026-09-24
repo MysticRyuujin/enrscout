@@ -54,7 +54,8 @@ cd web && npm ci && npx playwright install chromium   # once
 make design                                            # WEB_BASE overrides the site under test
 ```
 
-The fixture stack gives every run the same data, so a screenshot only changes when the code does.
+The fixture stack gives every run the same data, the check pins the page clock to the snapshot time,
+and it fixes the server-reported ages, so a screenshot only changes when the code does.
 Baselines live in `web/e2e/design/baseline/`, outside git; the first run seeds them. The check
 writes the current screenshots to `web/e2e/design/current/` and a diff image for every changed
 screenshot to `web/e2e/design/diff/`. Read each changed screenshot at each viewport against the
