@@ -61,6 +61,34 @@ function stateLabel(state: Readiness, activated: boolean): string {
   }
 }
 
+// Only the states a layer's bars can draw: stale rows never reach a client row, execution rows are
+// never unknown, and after activation a row is either upgraded or left behind.
+function legendStates(layer: "el" | "cl", activated: boolean): Readiness[] {
+  if (activated) return ["ready", "not_ready"];
+  return layer === "el"
+    ? ["ready", "not_ready", "mismatch"]
+    : ["ready", "not_ready", "mismatch", "unknown"];
+}
+
+function stateHint(state: Readiness, activated: boolean): string {
+  switch (state) {
+    case "ready":
+      return activated
+        ? "The identity advertises the new fork."
+        : "The identity names this fork in its own schedule: the execution fork ID Next field, or the consensus record's next fork version and epoch.";
+    case "not_ready":
+      return activated
+        ? "The identity still advertises the fork before this one."
+        : "The identity advertises no next fork: Next is 0, or the next fork epoch is far-future.";
+    case "mismatch":
+      return "The identity advertises a next fork that is not this one: a custom or overridden fork time, or a client bug in how it encodes the schedule.";
+    case "unknown":
+      return "The record carries no eth2 entry, or its digest does not match the fork observed over Status, so its schedule cannot be read.";
+    case "stale":
+      return "The identity is not on the current fork.";
+  }
+}
+
 function countdown(target: number, now: number): string {
   const s = target - now;
   if (s <= 0) return `activated ${durationAgo(-s)}`;
@@ -110,15 +138,22 @@ function StackedBar({
   );
 }
 
-function Legend({ activated }: { activated: boolean }) {
+function Legend({
+  layer,
+  activated,
+}: {
+  layer: "el" | "cl";
+  activated: boolean;
+}) {
   return (
     <div className="rd-legend">
-      {STATES.map((s) => (
-        <span key={s}>
+      {legendStates(layer, activated).map((s) => (
+        <span key={s} title={stateHint(s, activated)}>
           <span className="swatch" style={{ background: STATE_COLOR[s] }} />
           {stateLabel(s, activated)}
         </span>
       ))}
+      <Link to="/about#readiness-states">What these mean</Link>
     </div>
   );
 }
@@ -258,7 +293,7 @@ function LayerCard({
         a verified handshake in the last 7 days. Ready counts link to the
         matching nodes.
       </p>
-      <Legend activated={activated} />
+      <Legend layer={layer} activated={activated} />
       <div className="table-wrap">
         <table className="nodes-table">
           <thead>

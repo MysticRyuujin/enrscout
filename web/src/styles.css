@@ -1037,7 +1037,8 @@ code.wrap {
   }
 }
 
-.prose h3[id] {
+.prose h3[id],
+.prose p[id] {
   scroll-margin-top: 70px;
 }
 
