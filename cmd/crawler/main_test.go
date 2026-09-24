@@ -372,6 +372,82 @@ func TestRestorePreviousSchema(t *testing.T) {
 	}
 }
 
+func TestRestoreBackfillsENRForkScheduleFromSchema3(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.NewFS(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	layout := snapshot.Layout{}
+	state, err := netconf.CLForkStateAt("mainnet", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var r enr.Record
+	r.Set(enr.IPv4{5, 6, 7, 9})
+	r.Set(enr.TCP(9000))
+	r.Set(netconf.Eth2Entry(state.ENRForkID()))
+	if err := enode.SignV4(&r, key); err != nil {
+		t.Fatal(err)
+	}
+	n, err := enode.New(enode.ValidSchemes, &r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	set := nodeset.NewWithLimit(0)
+	set.Observe(n, "v5", time.Now())
+	rows := set.SnapshotNetworks([]string{"mainnet"})["mainnet"]
+	if len(rows) != 1 {
+		t.Fatalf("seeded %d rows, want 1", len(rows))
+	}
+	want := nodeset.CLForkScheduleOf(n)
+	rows[0].ENRForkDigest, rows[0].ENRNextForkVersion, rows[0].ENRNextForkEpoch = "", "", 0
+	data, err := nodeset.ParquetFromRows(rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gen := time.Now().Truncate(time.Second)
+	genKey := layout.GenerationKey("mainnet", gen)
+	if err := st.Put(ctx, genKey, data, ""); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(data)
+	m := &snapshot.Manifest{
+		SchemaVersion: 3, GeneratedAt: gen, CrawlerID: "test-crawler",
+		Run: snapshot.RunMetadata{
+			RunID: "test-run", SourceRevision: "test-revision", SourceURL: "https://example.com/source",
+			ConfigSHA256: hex.EncodeToString(make([]byte, sha256.Size)), CrawlerStartedAt: gen.Add(-time.Minute),
+			MethodologyStartedAt: gen.Add(-time.Minute), MethodologyVersion: snapshot.MethodologyVersion,
+			MethodologyID: "test-method",
+		},
+		Networks: map[string]snapshot.NetworkSnapshot{
+			"mainnet": {GenerationKey: genKey, NodeCount: 1, Bytes: len(data), SHA256: hex.EncodeToString(sum[:])},
+		},
+	}
+	raw, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Put(ctx, layout.ManifestKey(), raw, "application/json"); err != nil {
+		t.Fatal(err)
+	}
+	restored := nodeset.NewWithLimit(0)
+	if _, err := restore(ctx, st, layout, restored, nil, []string{"mainnet"}); err != nil {
+		t.Fatal(err)
+	}
+	got := restored.SnapshotNetworks([]string{"mainnet"})["mainnet"]
+	if len(got) != 1 || got[0].ENRForkDigest != want.Digest || got[0].ENRNextForkVersion != want.NextVersion || got[0].ENRNextForkEpoch != want.NextEpoch {
+		t.Fatalf("restored rows = %+v, want schedule %+v", got, want)
+	}
+	if want.Digest == "" {
+		t.Fatal("fixture record carries no eth2 schedule")
+	}
+}
+
 func TestRestoreSkipsUnconfiguredNetworks(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.NewFS(t.TempDir())

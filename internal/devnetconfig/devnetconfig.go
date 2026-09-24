@@ -217,7 +217,7 @@ func parseCLConfig(path string) (clConfig, error) {
 		if !ok {
 			epoch = math.MaxUint64
 		}
-		cfg.forks = append(cfg.forks, netconf.CLForkConfig{Epoch: epoch, Version: versions[name]})
+		cfg.forks = append(cfg.forks, netconf.CLForkConfig{Name: name, Epoch: epoch, Version: versions[name]})
 	}
 	cfg.fuluActive = cfg.fuluEpoch != math.MaxUint64 && cfg.fuluVersion != ""
 	// Newer ethereum-package genesis bundles publish SLOT_DURATION_MS instead of

@@ -28,6 +28,7 @@ type DevnetConfig struct {
 }
 
 type CLForkConfig struct {
+	Name    string
 	Epoch   uint64
 	Version string
 }
@@ -96,7 +97,7 @@ func RegisterDevnet(cfg DevnetConfig) error {
 		if err != nil {
 			return fmt.Errorf("invalid CL fork version %q", fv)
 		}
-		forks = append(forks, clFork{epoch: configured.Epoch, version: version})
+		forks = append(forks, clFork{name: strings.ToLower(configured.Name), epoch: configured.Epoch, version: version})
 	}
 	if len(forks) == 0 {
 		return fmt.Errorf("no CL fork versions")

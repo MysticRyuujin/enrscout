@@ -119,8 +119,8 @@ func TestMembershipIgnoresForkNext(t *testing.T) {
 // advertises: an earlier hash carrying that fork as its exact canonical Next.
 func previousEraForkID(n *Network, at time.Time) (forkid.ID, bool) {
 	var last uint64
-	for _, ft := range forkTimes(n.ChainConfig) {
-		if ft <= uint64(at.Unix()) && ft > last {
+	for _, f := range forkTimes(n.ChainConfig) {
+		if ft := f.time; ft <= uint64(at.Unix()) && ft > last {
 			last = ft
 		}
 	}

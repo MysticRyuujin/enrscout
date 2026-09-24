@@ -148,12 +148,15 @@ func TestCLStatusExchangeClassifiesForkDigest(t *testing.T) {
 	if err := client.host.Connect(ctx, peer.AddrInfo{ID: server.host.ID(), Addrs: server.host.Addrs()}); err != nil {
 		t.Fatal(err)
 	}
-	digest, err := client.exchangeStatus(ctx, server.host.ID(), entry)
+	status, err := client.exchangeStatus(ctx, server.host.ID(), entry)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if network := netconf.ClassifyCL(digest); network != "mainnet" {
-		t.Fatalf("digest %x classified as %q", digest, network)
+	if network := netconf.ClassifyCL(status.digest); network != "mainnet" {
+		t.Fatalf("digest %x classified as %q", status.digest, network)
+	}
+	if status.headSlot != testHeadSlot {
+		t.Fatalf("head slot = %d, want %d", status.headSlot, testHeadSlot)
 	}
 }
 
@@ -253,12 +256,15 @@ func TestCLInboundWatcherAcceptsInboundIdentification(t *testing.T) {
 	}
 }
 
+const testHeadSlot = 13_000_123
+
 func serveCLStatus(server *CLFingerprinter, entry []byte) {
 	server.host.SetStreamHandler(statusProtocolV2, func(s libp2pnetwork.Stream) {
 		defer s.Close()
 		_, _ = io.Copy(io.Discard, io.LimitReader(s, 1024))
 		payload := make([]byte, statusV2SSZLen)
 		copy(payload, entry[:4])
+		binary.LittleEndian.PutUint64(payload[76:84], testHeadSlot)
 		var response bytes.Buffer
 		response.WriteByte(0)
 		var prefix [binary.MaxVarintLen64]byte

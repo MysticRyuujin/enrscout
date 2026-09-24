@@ -197,9 +197,8 @@ func (f *CLFingerprinter) handleInboundIdentification(evt event.EvtPeerIdentific
 	node := inboundCLNode(pub, evt.Conn.RemoteMultiaddr(), evt.ListenAddrs, f.allowPrivate)
 	cctx, cancel := context.WithTimeout(context.Background(), f.timeout)
 	defer cancel()
-	if digest, err := f.exchangeStatus(cctx, pid, localFork); err == nil {
-		fp.Network = netconf.ClassifyCL(digest)
-		fp.ForkHash = fmt.Sprintf("%x", digest)
+	if status, err := f.exchangeStatus(cctx, pid, localFork); err == nil {
+		fp.applyCLStatus(status)
 	}
 	safeInboundCLCallback(onFP, InboundCLFingerprint{NodeID: enode.PubkeyToIDV4(pub), Node: node, Fingerprint: fp})
 }
@@ -242,8 +241,13 @@ func (f *CLFingerprinter) ProbeStatus(ctx context.Context, n *enode.Node, localF
 // Status must not delay or fail an identify-only success beyond this grace.
 const clStatusGrace = 2 * time.Second
 
+type clStatus struct {
+	digest   [4]byte
+	headSlot uint64
+}
+
 type statusOutcome struct {
-	digest [4]byte
+	status clStatus
 	err    error
 }
 
@@ -282,8 +286,8 @@ func (f *CLFingerprinter) probe(ctx context.Context, n *enode.Node, localFork []
 	statusCh := make(chan statusOutcome, 1)
 	if len(localFork) >= 4 {
 		go func() {
-			digest, err := f.exchangeStatus(cctx, pid, localFork)
-			statusCh <- statusOutcome{digest: digest, err: err}
+			status, err := f.exchangeStatus(cctx, pid, localFork)
+			statusCh <- statusOutcome{status: status, err: err}
 		}()
 	} else {
 		statusCh <- statusOutcome{err: errors.New("no consensus fork entry for status request")}
@@ -371,8 +375,7 @@ func (f *CLFingerprinter) awaitStatus(ctx context.Context, statusCh <-chan statu
 	select {
 	case r := <-statusCh:
 		if r.err == nil {
-			fp.Network = netconf.ClassifyCL(r.digest)
-			fp.ForkHash = fmt.Sprintf("%x", r.digest)
+			fp.applyCLStatus(r.status)
 		}
 	case <-time.After(clStatusGrace):
 	case <-ctx.Done():
@@ -423,14 +426,14 @@ func normalizeJVM(s string) string {
 	return "java" + ver
 }
 
-func (f *CLFingerprinter) exchangeStatus(ctx context.Context, pid peer.ID, localFork []byte) ([4]byte, error) {
-	var digest [4]byte
+func (f *CLFingerprinter) exchangeStatus(ctx context.Context, pid peer.ID, localFork []byte) (clStatus, error) {
+	var status clStatus
 	if len(localFork) < 4 {
-		return digest, errors.New("local consensus fork digest is required")
+		return status, errors.New("local consensus fork digest is required")
 	}
 	s, err := f.host.NewStream(ctx, pid, statusProtocolV2, statusProtocolV1)
 	if err != nil {
-		return digest, err
+		return status, err
 	}
 	defer s.Close()
 	_ = s.SetDeadline(time.Now().Add(f.timeout))
@@ -447,39 +450,41 @@ func (f *CLFingerprinter) exchangeStatus(ctx context.Context, pid peer.ID, local
 	req.Write(lp[:binary.PutUvarint(lp[:], uint64(statusLen))])
 	sw := snappy.NewBufferedWriter(&req)
 	if _, err := sw.Write(payload); err != nil {
-		return digest, err
+		return status, err
 	}
 	if err := sw.Close(); err != nil {
-		return digest, err
+		return status, err
 	}
 	if _, err := s.Write(req.Bytes()); err != nil {
-		return digest, err
+		return status, err
 	}
 	if err := s.CloseWrite(); err != nil {
-		return digest, err
+		return status, err
 	}
 
 	br := bufio.NewReader(io.LimitReader(s, 1024))
 	code, err := br.ReadByte()
 	if err != nil {
-		return digest, err
+		return status, err
 	}
 	if code != 0 {
-		return digest, fmt.Errorf("consensus status response code %d", code)
+		return status, fmt.Errorf("consensus status response code %d", code)
 	}
 	responseLen, err := binary.ReadUvarint(br)
 	if err != nil {
-		return digest, err
+		return status, err
 	}
 	if responseLen != uint64(statusLen) {
-		return digest, fmt.Errorf("consensus status length %d, want %d", responseLen, statusLen)
+		return status, fmt.Errorf("consensus status length %d, want %d", responseLen, statusLen)
 	}
 	response := make([]byte, statusLen)
 	if _, err := io.ReadFull(snappy.NewReader(br), response); err != nil {
-		return digest, err
+		return status, err
 	}
-	copy(digest[:], response[:4])
-	return digest, nil
+	// Status SSZ, v1 and v2: fork_digest [0:4], finalized_root, finalized_epoch, head_root, head_slot [76:84].
+	copy(status.digest[:], response[:4])
+	status.headSlot = binary.LittleEndian.Uint64(response[76:84])
+	return status, nil
 }
 
 func inboundCLNode(pub *ecdsa.PublicKey, remote ma.Multiaddr, listenAddrs []ma.Multiaddr, allowPrivate bool) *enode.Node {
@@ -550,4 +555,11 @@ func libp2pAddrsWithPolicy(n *enode.Node, allowPrivate bool) []ma.Multiaddr {
 		}
 	}
 	return addrs
+}
+
+func (fp *Fingerprint) applyCLStatus(s clStatus) {
+	fp.Network = netconf.ClassifyCL(s.digest)
+	fp.ForkHash = fmt.Sprintf("%x", s.digest)
+	fp.Head = s.headSlot
+	fp.HeadAt = time.Now()
 }

@@ -76,6 +76,12 @@ export default function Nav() {
           Nodes
         </NavLink>
         <NavLink
+          to="/forks"
+          className={({ isActive }) => (isActive ? "link active" : "link")}
+        >
+          Forks
+        </NavLink>
+        <NavLink
           to="/about"
           className={({ isActive }) => (isActive ? "link active" : "link")}
         >

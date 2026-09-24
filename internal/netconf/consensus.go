@@ -17,6 +17,7 @@ type blobParams struct {
 }
 
 type clFork struct {
+	name    string
 	epoch   uint64
 	version [4]byte
 }
@@ -247,6 +248,15 @@ func CLForkStateAt(name string, at time.Time) (CLForkState, error) {
 	return n.cl.stateAt(at)
 }
 
+// SecondsPerSlot is the network's slot time, which since the merge is also its EL block time.
+func SecondsPerSlot(name string) (uint64, error) {
+	n, err := Get(name)
+	if err != nil || n.cl == nil || n.cl.secondsPerSlot == 0 {
+		return 0, fmt.Errorf("unknown consensus network %q", name)
+	}
+	return n.cl.secondsPerSlot, nil
+}
+
 func IsCurrentCLForkAt(name, forkHash string, at time.Time) bool {
 	digest, ok := parseHash4(forkHash)
 	if !ok {
@@ -280,7 +290,7 @@ func compiledCL(name, gvr string, genesisTime uint64, forks []namedFork, bpos []
 		if err != nil {
 			panic(fmt.Sprintf("netconf: %s %s: %v", name, f.name, err))
 		}
-		c.forks = append(c.forks, clFork{epoch: f.epoch, version: version})
+		c.forks = append(c.forks, clFork{name: f.name, epoch: f.epoch, version: version})
 		switch f.name {
 		case "electra":
 			c.blobSchedule = append(c.blobSchedule, blobParams{f.epoch, electraMaxBlobs})

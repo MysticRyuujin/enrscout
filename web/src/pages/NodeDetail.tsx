@@ -4,10 +4,11 @@ import { ApiError, fetchNode } from "../api";
 import {
   layerName as layerLabel,
   networkColor,
+  num,
   relTime,
   SUPERNODE_CGC,
 } from "../theme";
-import type { Node } from "../types";
+import type { Node, Readiness } from "../types";
 
 function Row({
   label,
@@ -26,6 +27,24 @@ function Row({
       <span className={mono ? "v mono" : "v"}>{display}</span>
     </div>
   );
+}
+
+const READINESS_TEXT: Record<Readiness, string> = {
+  ready: "Scheduled / upgraded",
+  not_ready: "Not scheduled / left behind",
+  mismatch: "Advertises another schedule",
+  unknown: "No schedule advertised",
+  stale: "On an older fork",
+};
+
+function syncText(node: Node) {
+  const unit = node.layer === "cl" ? "slots" : "blocks";
+  const lag = num(Math.max(0, node.head_lag ?? 0));
+  if (node.sync_state === "synced")
+    return `Synced (${lag} ${unit} behind the observed tip)`;
+  if (node.sync_state === "lagging")
+    return `Lagging: ${lag} ${unit} behind the observed tip`;
+  return "Unknown: no recent head, or too few peer heads to compare";
 }
 
 function discoveryHistory(score: number) {
@@ -157,7 +176,7 @@ export default function NodeDetail() {
             value={relTime(node.membership_verified_at)}
           />
           <Row
-            label="Fork readiness"
+            label="Fork currency"
             value={node.fork_compatible ? "Current" : "Stale / incompatible"}
           />
           <Row
@@ -173,6 +192,21 @@ export default function NodeDetail() {
           <Row label="Fork observed" value={relTime(node.fork_observed_at)} />
           <Row label="Fork hash" value={node.fork_hash} mono />
           <Row label="Fork next" value={node.fork_next || "0"} />
+          {node.fork_readiness && (
+            <Row
+              label="Next fork"
+              value={<Link to="/forks">{READINESS_TEXT[node.fork_readiness]}</Link>}
+            />
+          )}
+          <Row
+            label={node.layer === "cl" ? "Head slot" : "Head block"}
+            value={
+              node.head
+                ? `${num(node.head)} · ${relTime(node.head_observed_at)}`
+                : "unknown (no head in the last Status)"
+            }
+          />
+          <Row label="Sync" value={syncText(node)} />
           {node.layer === "cl" && (
             <Row
               label="Custody groups"

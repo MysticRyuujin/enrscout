@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math"
 	"strings"
 	"time"
 
@@ -44,6 +45,9 @@ func run(out string) error {
 		rows, err := currentRows(network, gen)
 		if err != nil {
 			return fmt.Errorf("%s rows: %w", network, err)
+		}
+		if err := withForkReadiness(ctx, st, layout, network, rows, gen); err != nil {
+			return fmt.Errorf("%s readiness: %w", network, err)
 		}
 		data, err := nodeset.ParquetFromRows(rows)
 		if err != nil {
@@ -151,4 +155,49 @@ func currentRows(network string, gen time.Time) ([]nodeset.Row, error) {
 		})
 	}
 	return rows, nil
+}
+
+// withForkReadiness gives a network with a tracked fork a mix of readiness states and a short
+// history, so the /forks page has every section to render whichever phase the fork is in.
+func withForkReadiness(ctx context.Context, st store.Store, layout snapshot.Layout, network string, rows []nodeset.Row, gen time.Time) error {
+	target, err := netconf.ForkTargetAt(network, gen)
+	if err != nil || target.Name == "" {
+		return err
+	}
+	ts := gen.Unix()
+	for i := range rows {
+		r := &rows[i]
+		r.Head, r.HeadObservedAt = uint64(24_000_000+i), ts
+		switch {
+		case r.Layer == "el" && target.EL != nil && target.EL.Phase == netconf.PhaseScheduled && (r.Client == "Geth" || r.Client == "Nethermind"):
+			r.ForkNext = target.EL.Time
+		case r.Layer == "cl" && target.CL != nil && r.Client != "Teku":
+			r.ENRForkDigest = r.ForkHash
+			r.ENRNextForkVersion, r.ENRNextForkEpoch = target.CL.Version, target.CL.Epoch
+			if r.Client == "Prysm" {
+				r.ENRNextForkVersion, r.ENRNextForkEpoch = "", math.MaxUint64
+			}
+		}
+	}
+	h := &snapshot.ReadinessHistory{Version: snapshot.ReadinessHistoryVersion, Network: network, Fork: target.Name}
+	if target.EL != nil {
+		h.ELTime = target.EL.Time
+	}
+	if target.CL != nil {
+		h.CLEpoch = target.CL.Epoch
+	}
+	for i := range 24 {
+		at := gen.Add(-time.Duration(23-i) * snapshot.ReadinessInterval)
+		ready := i / 8
+		h.Points = append(h.Points, snapshot.ReadinessPoint{
+			At: at.Unix(),
+			EL: map[string]int{"ready": ready, "not_ready": 4 - ready},
+			CL: map[string]int{"ready": min(ready, 1), "not_ready": 2 - min(ready, 1), "unknown": 1},
+		})
+	}
+	data, err := h.Encode()
+	if err != nil {
+		return err
+	}
+	return st.Put(ctx, layout.ReadinessHistoryKey(network, target.Name), data, "application/json")
 }

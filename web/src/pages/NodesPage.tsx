@@ -131,11 +131,16 @@ export default function NodesPage({ layer }: { layer: "el" | "cl" }) {
     q: param("q"),
     ip: param("ip"),
     client: param("client"),
+    client_exact: param("client_exact"),
     country: param("country"),
     protocol: param("protocol"),
     ipstack: param("ipstack"),
     hosting: param("hosting"),
     dialable: param("dialable"),
+    identified: param("identified"),
+    sync: param("sync"),
+    readiness: param("readiness"),
+    fork: param("fork"),
     cgc_min: layer === "cl" ? param("cgc_min") : "",
     cgc_max: layer === "cl" ? param("cgc_max") : "",
     sort,
@@ -168,6 +173,19 @@ export default function NodesPage({ layer }: { layer: "el" | "cl" }) {
         const next = new URLSearchParams(current);
         if (v) next.set(k, v);
         else next.delete(k);
+        return next;
+      },
+      { replace: true },
+    );
+  }, []);
+  const patchClient = useCallback((k: string, v: string) => {
+    setSpRef.current(
+      (current) => {
+        const next = new URLSearchParams(current);
+        if ((next.get(k) ?? "") === v) return current;
+        if (v) next.set(k, v);
+        else next.delete(k);
+        next.delete("client_exact");
         return next;
       },
       { replace: true },
@@ -291,7 +309,7 @@ export default function NodesPage({ layer }: { layer: "el" | "cl" }) {
         <DebouncedParamInput
           param="client"
           value={query.client ?? ""}
-          patch={patch}
+          patch={patchClient}
           className="f-in"
           placeholder="client contains…"
         />
@@ -335,6 +353,46 @@ export default function NodesPage({ layer }: { layer: "el" | "cl" }) {
           <option value="">any reachability</option>
           <option value="yes">dialable (TCP/QUIC)</option>
           <option value="no">discovery-only</option>
+        </select>
+        <select
+          value={query.identified}
+          onChange={(e) => patch("identified", e.target.value)}
+          title="Recently identified: a verified client handshake in the last 7 days. This is the population the Overview client charts count; the default also lists ENR-claimed names and older identifications."
+        >
+          <option value="">any identification</option>
+          <option value="recent">identified in last 7 days</option>
+        </select>
+        <select
+          value={query.sync}
+          onChange={(e) => patch("sync", e.target.value)}
+          title="Sync state compares the head a node reported in its last Status with the heads other peers reported in the same ten minutes. It is peer-reported, not a trusted chain head."
+        >
+          <option value="">any sync state</option>
+          <option value="synced">synced</option>
+          <option value="lagging">lagging</option>
+          <option value="unknown">sync unknown</option>
+        </select>
+        <select
+          value={query.fork}
+          onChange={(e) => patch("fork", e.target.value)}
+        >
+          <option value="">
+            {query.readiness ? "any fork" : "current fork"}
+          </option>
+          <option value="stale">older fork</option>
+          <option value="all">any fork</option>
+        </select>
+        <select
+          value={query.readiness}
+          onChange={(e) => patch("readiness", e.target.value)}
+          title="Readiness for the next scheduled fork, from the fork schedule the node itself advertises. See the Forks page."
+        >
+          <option value="">any fork readiness</option>
+          <option value="ready">next fork scheduled / upgraded</option>
+          <option value="not_ready">not scheduled / left behind</option>
+          <option value="mismatch">other schedule</option>
+          <option value="unknown">schedule unknown</option>
+          <option value="stale">older fork</option>
         </select>
         {layer === "cl" && (
           <input

@@ -50,6 +50,7 @@ type publisher struct {
 	final              bool
 	distinctSavedAt    time.Time
 	aggregatesPrunedAt time.Time
+	readinessAt        time.Time
 }
 
 type generation struct {
@@ -284,6 +285,7 @@ func (p *publisher) recordPublished(ctx context.Context, m *snapshot.Manifest, g
 		pruneAggregates(ctx, p.store, p.statePrefix, p.cfg.keepAggregates, now)
 		p.aggregatesPrunedAt = time.Now()
 	}
+	p.recordReadiness(ctx, byNet, now)
 	mLastPublish.Set(float64(now.Unix()))
 	for _, g := range gens {
 		mSnapshotNodes.WithLabelValues(g.network).Set(float64(g.count))

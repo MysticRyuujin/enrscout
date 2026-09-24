@@ -81,6 +81,12 @@ type Node struct {
 	LastCheck    time.Time
 	LastResolved time.Time
 
+	// ENRSchedule changes only with the signed record it came from.
+	ENRSchedule ENRForkSchedule
+	// Head is the last Status-reported head (EL block or CL slot); zero is unknown.
+	Head           uint64
+	HeadObservedAt time.Time
+
 	Client        string
 	ClientVersion string
 	OS            string
@@ -301,6 +307,7 @@ func (s *Set) ObserveAuthenticatedEL(n *enode.Node, via, network, forkHash strin
 		}
 		if cur.Seq == 0 {
 			cur.ENR = ""
+			cur.ENRSchedule = ENRForkSchedule{}
 		}
 	}
 	return observed
@@ -329,6 +336,7 @@ func (s *Set) ObserveAuthenticatedCL(n *enode.Node, network, forkHash string, no
 		}
 		if cur.Seq == 0 {
 			cur.ENR = ""
+			cur.ENRSchedule = ENRForkSchedule{}
 		}
 	}
 	return observed
@@ -499,6 +507,7 @@ func (s *Set) observe(n *enode.Node, via string, now time.Time, forceNetwork, fo
 	cur.IP, cur.IP6, cur.TCP, cur.UDP = e.ip, e.ip6, e.tcp, e.udp
 	cur.TCP6, cur.UDP6, cur.QUIC, cur.QUIC6 = e.tcp6, e.udp6, e.quic, e.quic6
 	cur.CGC, cur.CGCKnown = e.cgc, e.cgcKnown
+	cur.ENRSchedule = e.schedule
 	// A later, less-informative observation must not downgrade an established classification.
 	if e.forkHash != "" && (cur.ForkHash != e.forkHash || cur.ForkNext != e.forkNext || cur.ForkSource == "") {
 		cur.ForkHash, cur.ForkNext = e.forkHash, e.forkNext
@@ -509,6 +518,7 @@ func (s *Set) observe(n *enode.Node, via string, now time.Time, forceNetwork, fo
 		if cur.Network != e.network {
 			cur.MembershipSource = "enr"
 			cur.MembershipVerifiedAt = time.Time{}
+			cur.Head, cur.HeadObservedAt = 0, time.Time{}
 		}
 		cur.Network = e.network
 		if cur.MembershipSource == "" {
@@ -516,6 +526,10 @@ func (s *Set) observe(n *enode.Node, via string, now time.Time, forceNetwork, fo
 		}
 	}
 	if e.layer != "unknown" {
+		// An EL head is a block number and a CL head a slot, so a layer change invalidates it.
+		if cur.Layer != e.layer {
+			cur.Head, cur.HeadObservedAt = 0, time.Time{}
+		}
 		cur.Layer = e.layer
 	}
 	if cur.Client == "" && e.client != "" {
@@ -927,6 +941,7 @@ func (s *Set) SetExecutionStatusAt(id enode.ID, network string, fork forkid.ID, 
 	// Authenticated live Status is authoritative over discovery metadata, which
 	// may outlive an operator repurposing the same node key on another network.
 	s.trackCandidateLocked(n.isELCandidate(), false)
+	clearHeadOnNetworkChangeLocked(n, network)
 	n.Network = network
 	n.ForkHash = hex.EncodeToString(fork.Hash[:])
 	n.ForkNext = fork.Next
@@ -936,6 +951,32 @@ func (s *Set) SetExecutionStatusAt(id enode.ID, network string, fork forkid.ID, 
 	n.ForkObservedAt = now
 	n.LastResolved = now
 	return true
+}
+
+// SetHead records the head reported by the Status exchange just applied, stamped with when that Status
+// arrived (observedAt), not when it is applied. Every Status replaces it, so a
+// peer that falls back to a head-less eth/66-68 Status reads as unknown rather than keeping an old head.
+// The Status and the head are two calls, so layer and network guard against a concurrent
+// reclassification assigning one network's head, or a CL slot as an EL block, to the wrong row.
+func (s *Set) SetHead(id enode.ID, layer, network string, head uint64, observedAt time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := s.m[id]
+	if n == nil || n.Layer != layer || n.Network != network {
+		return
+	}
+	n.Head, n.HeadObservedAt = head, time.Time{}
+	if head > 0 {
+		n.HeadObservedAt = observedAt
+	}
+}
+
+// clearHeadOnNetworkChangeLocked drops a head in the same locked step that moves a row to another
+// network, so no snapshot can pair the new network with the old network's head before SetHead runs.
+func clearHeadOnNetworkChangeLocked(n *Node, network string) {
+	if n.Network != network {
+		n.Head, n.HeadObservedAt = 0, time.Time{}
+	}
 }
 
 // creditStatusSightingLocked counts a repeated authenticated Status for the same
@@ -966,6 +1007,7 @@ func (s *Set) SetConsensusStatus(id enode.ID, network, forkHash string) bool {
 		return false
 	}
 	creditStatusSightingLocked(n, network, now)
+	clearHeadOnNetworkChangeLocked(n, network)
 	n.Network = network
 	if forkHash != "" {
 		n.ForkHash = forkHash
@@ -1167,6 +1209,30 @@ type extracted struct {
 	cgc               uint32
 	cgcKnown          bool
 	client, version   string
+	schedule          ENRForkSchedule
+}
+
+// ENRForkSchedule is a consensus record's own eth2 fork schedule. It is kept apart from ForkHash and
+// ForkNext, which a Status exchange overwrites, so the next-fork claim always pairs with the digest
+// the same record advertised.
+type ENRForkSchedule struct {
+	Digest      string
+	NextVersion string
+	NextEpoch   uint64
+}
+
+// CLForkScheduleOf returns the eth2 schedule a record advertises, or the zero value without one.
+func CLForkScheduleOf(n *enode.Node) ENRForkSchedule {
+	var eth2 netconf.Eth2Entry
+	if n.Load(&eth2) != nil || len(eth2) < 16 {
+		return ENRForkSchedule{}
+	}
+	// SSZ ENRForkID: fork_digest [0:4], next_fork_version [4:8], next_fork_epoch [8:16].
+	return ENRForkSchedule{
+		Digest:      hex.EncodeToString(eth2[:4]),
+		NextVersion: hex.EncodeToString(eth2[4:8]),
+		NextEpoch:   binary.LittleEndian.Uint64(eth2[8:16]),
+	}
 }
 
 // Inspect classifies a node's ENR as Observe does but records nothing; routable
@@ -1248,10 +1314,8 @@ func extract(n *enode.Node) extracted {
 			var d [4]byte
 			copy(d[:], eth2[:4])
 			e.forkHash = hex.EncodeToString(eth2[:4])
-			// SSZ ENRForkID: fork_digest [0:4], next_fork_version [4:8], next_fork_epoch [8:16].
-			if len(eth2) >= 16 {
-				e.forkNext = binary.LittleEndian.Uint64(eth2[8:16])
-			}
+			e.schedule = CLForkScheduleOf(n)
+			e.forkNext = e.schedule.NextEpoch
 			if nw := netconf.ClassifyCL(d); nw != "" {
 				e.network = nw
 			}
@@ -1326,6 +1390,11 @@ type Row struct {
 	ForkObservedAt       int64   `parquet:"fork_observed_at"`
 	FPDirection          string  `parquet:"fp_direction"`
 	Pinned               bool    `parquet:"pinned"`
+	Head                 uint64  `parquet:"head"`
+	HeadObservedAt       int64   `parquet:"head_observed_at"`
+	ENRForkDigest        string  `parquet:"enr_fork_digest"`
+	ENRNextForkVersion   string  `parquet:"enr_next_fork_version"`
+	ENRNextForkEpoch     uint64  `parquet:"enr_next_fork_epoch"`
 }
 
 func (s *Set) rows(network string) []Row {
@@ -1378,6 +1447,8 @@ func (n *Node) row() Row {
 		FPStatus: n.fpStatus(), FPAttempts: int32(attempts), FPAt: unixOrZero(n.fpAt), FPNext: unixOrZero(n.fpNext),
 		MembershipSource: n.MembershipSource, MembershipVerifiedAt: unixOrZero(n.MembershipVerifiedAt),
 		ForkSource: n.ForkSource, ForkObservedAt: unixOrZero(n.ForkObservedAt), FPDirection: n.FPDirection, Pinned: n.pinned,
+		Head: n.Head, HeadObservedAt: unixOrZero(n.HeadObservedAt),
+		ENRForkDigest: n.ENRSchedule.Digest, ENRNextForkVersion: n.ENRSchedule.NextVersion, ENRNextForkEpoch: n.ENRSchedule.NextEpoch,
 	}
 }
 
@@ -1449,6 +1520,8 @@ func (s *Set) Ingest(rows []Row) (dropped, evicted int) {
 			ForkSource: r.ForkSource, ForkObservedAt: timeOrZero(r.ForkObservedAt), FPDirection: r.FPDirection,
 			Country: r.Country, City: r.City, Subdivision: r.Subdivision, Lat: r.Lat, Lon: r.Lon, ASN: uint(r.ASN), Org: r.Org, Hosting: r.Hosting, HostingKnown: r.HostingKnown,
 			Geolocated: r.Geolocated, GeoAccuracyRadiusKM: r.GeoAccuracyRadiusKM, pinned: r.Pinned,
+			Head: r.Head, HeadObservedAt: timeOrZero(r.HeadObservedAt),
+			ENRSchedule:  ENRForkSchedule{Digest: r.ENRForkDigest, NextVersion: r.ENRNextForkVersion, NextEpoch: r.ENRNextForkEpoch},
 			fpDone:       verifiedFingerprint,
 			fpRefreshDue: verifiedFingerprint && r.FPStatus == "stale",
 			fpAttempts:   restoredAttempts(r),

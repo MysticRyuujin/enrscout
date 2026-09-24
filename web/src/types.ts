@@ -90,6 +90,14 @@ export interface Node {
   pinned: boolean;
   geolocated: boolean;
   geo_accuracy_radius_km: number;
+  head: number;
+  head_observed_at: number;
+  sync_state: "synced" | "lagging" | "unknown";
+  head_lag?: number;
+  enr_fork_digest?: string;
+  enr_next_fork_version?: string;
+  enr_next_fork_epoch?: string;
+  fork_readiness?: Readiness;
 }
 
 export interface NodesResult {
@@ -144,6 +152,7 @@ export interface CompactMap {
 export interface NodeQuery {
   network?: string;
   client?: string;
+  client_exact?: string;
   country?: string;
   layer?: string;
   protocol?: string;
@@ -151,6 +160,9 @@ export interface NodeQuery {
   hosting?: string;
   dialable?: string;
   fork?: string;
+  identified?: string;
+  sync?: string;
+  readiness?: string;
   ip?: string;
   q?: string;
   cgc_min?: string;
@@ -159,4 +171,80 @@ export interface NodeQuery {
   order?: "asc" | "desc";
   limit?: number;
   offset?: number;
+}
+
+export type Readiness = "ready" | "not_ready" | "mismatch" | "unknown" | "stale";
+export type ReadinessCounts = Record<Readiness, number>;
+
+export interface VersionReadiness {
+  version: string;
+  total: number;
+  counts: ReadinessCounts;
+  release?: "meets" | "below" | "dev_build" | "unparsable" | "mixed";
+}
+
+export interface ClientRelease {
+  layer: "el" | "cl";
+  client: string;
+  min_versions?: string[];
+  fork_time?: number;
+  outdated?: boolean;
+  prerelease?: string;
+  released?: string;
+  url?: string;
+}
+
+export interface ClientReadiness {
+  client: string;
+  total: number;
+  counts: ReadinessCounts;
+  release?: ClientRelease;
+  versions: VersionReadiness[];
+}
+
+export interface LayerReadiness {
+  total: number;
+  counts: ReadinessCounts;
+  sync: Record<string, number>;
+  unidentified: ReadinessCounts;
+  clients: ClientReadiness[] | null;
+}
+
+export interface ReadinessPoint {
+  at: number;
+  el?: Partial<ReadinessCounts>;
+  cl?: Partial<ReadinessCounts>;
+  clients_el?: Record<string, [number, number]>;
+  clients_cl?: Record<string, [number, number]>;
+}
+
+export interface ForkReadiness {
+  network: string;
+  fork_evaluated_at: string;
+  snapshot_generated_at?: string;
+  fingerprint_window_seconds: number;
+  phase: "scheduled" | "activated" | "none";
+  fork: {
+    name: string;
+    el?: {
+      name: string;
+      time: number;
+      phase: string;
+      pre_hash: string;
+      post_hash: string;
+    };
+    cl?: {
+      name: string;
+      epoch: number;
+      version: string;
+      phase: string;
+      time: string;
+      pre_digest: string;
+      post_digest: string;
+    };
+  };
+  releases_updated: string;
+  releases: ClientRelease[] | null;
+  layers: Partial<Record<"el" | "cl", LayerReadiness>>;
+  history?: { points: ReadinessPoint[] | null };
 }

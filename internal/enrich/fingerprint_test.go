@@ -464,9 +464,10 @@ func TestDecodeEthStatusClassifiesLegacyAndRange(t *testing.T) {
 	cases := []struct {
 		version uint
 		status  any
+		head    uint64
 	}{
-		{68, &ethStatusLegacy{ProtocolVersion: 68, NetworkID: mainnet.NetworkID, TD: new(big.Int), Head: mainnet.GenesisHash(), Genesis: mainnet.GenesisHash(), ForkID: fork}},
-		{71, &ethStatusRange{ProtocolVersion: 71, NetworkID: mainnet.NetworkID, Genesis: mainnet.GenesisHash(), ForkID: fork, LatestBlockHash: mainnet.GenesisHash()}},
+		{68, &ethStatusLegacy{ProtocolVersion: 68, NetworkID: mainnet.NetworkID, TD: new(big.Int), Head: mainnet.GenesisHash(), Genesis: mainnet.GenesisHash(), ForkID: fork}, 0},
+		{71, &ethStatusRange{ProtocolVersion: 71, NetworkID: mainnet.NetworkID, Genesis: mainnet.GenesisHash(), ForkID: fork, LatestBlock: 24_000_000, LatestBlockHash: mainnet.GenesisHash()}, 24_000_000},
 	}
 	for _, tc := range cases {
 		data, err := rlp.EncodeToBytes(tc.status)
@@ -477,8 +478,8 @@ func TestDecodeEthStatusClassifiesLegacyAndRange(t *testing.T) {
 		if err := decodeEthStatus(data, tc.version, &fp); err != nil {
 			t.Fatal(err)
 		}
-		if fp.Network != "mainnet" || fp.ForkID != fork {
-			t.Fatalf("decoded status = %+v", fp)
+		if fp.Network != "mainnet" || fp.ForkID != fork || fp.Head != tc.head || (tc.head > 0) != !fp.HeadAt.IsZero() {
+			t.Fatalf("decoded status = %+v, want head %d", fp, tc.head)
 		}
 	}
 }
@@ -567,6 +568,10 @@ func TestParseName(t *testing.T) {
 		{"Geth/v1.16.7-stable-b9f3a3d9/linux-amd64/go1.24", "Geth", "v1.16.7-stable-b9f3a3d9", "linux/x86_64", "go1.24"},
 		{"erigon/v3.3.9/linux/go1.23", "erigon", "v3.3.9", "linux", "go1.23"},
 		{"reth/v0.2.0", "reth", "v0.2.0", "", ""},
+		{"Geth/cashcow/v1.17.5-stable-9621c6ad/linux-amd64/go1.26", "Geth", "v1.17.5-stable-9621c6ad", "linux/x86_64", "go1.26"},
+		{"Geth/1.2-prod/v1.17.6/linux-amd64/go1.26", "Geth", "v1.17.6", "linux/x86_64", "go1.26"},
+		{"Geth/a/b/v1.17.6/linux-amd64/go1.26", "Geth", "v1.17.6", "linux/x86_64", "go1.26"},
+		{"besu/myid/v26.8.1/linux-x86_64/openjdk-java-21", "besu", "v26.8.1", "linux/x86_64", "openjdk-java-21"},
 		{"solo", "solo", "", "", ""},
 		{"", "", "", "", ""},
 	}

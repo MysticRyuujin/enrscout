@@ -46,6 +46,7 @@ func run() error {
 		corsOrigin  = flag.String("cors-origin", "", "Access-Control-Allow-Origin response value (empty disables cross-origin response sharing; not an authorization control)")
 		pprofAddr   = flag.String("pprof", "", "serve net/http/pprof on this address (empty = off)")
 		metricsAddr = flag.String("metrics-addr", "127.0.0.1:9101", "serve Prometheus metrics on this private listener (empty = disabled)")
+		releasesF   = flag.String("client-releases-file", "", "YAML (or JSON) client release table that replaces the built-in one; reloaded when it changes (empty = built-in)")
 		storeFlags  = store.BindFlags(flag.CommandLine, "data", "filesystem snapshot dir")
 	)
 	flag.Parse()
@@ -69,6 +70,13 @@ func run() error {
 	}
 	if err := validateCORSOrigin(*corsOrigin); err != nil {
 		return fmt.Errorf("--cors-origin: %w", err)
+	}
+	var releases *releasesFile
+	if *releasesF != "" {
+		releases = &releasesFile{path: *releasesF}
+		if err := releases.load(); err != nil {
+			return fmt.Errorf("--client-releases-file: %w", err)
+		}
 	}
 	if err := metricsrv.StartPprof(*pprofAddr); err != nil {
 		return err
@@ -100,7 +108,7 @@ func run() error {
 	refreshDone := make(chan struct{})
 	go func() {
 		defer close(refreshDone)
-		refreshLoop(ctx, eng, *refresh)
+		refreshLoop(ctx, eng, releases, *refresh)
 	}()
 
 	srv := &http.Server{
@@ -133,7 +141,7 @@ func run() error {
 	return serveErr
 }
 
-func refreshLoop(ctx context.Context, eng *query.Engine, every time.Duration) {
+func refreshLoop(ctx context.Context, eng *query.Engine, releases *releasesFile, every time.Duration) {
 	t := time.NewTicker(every)
 	defer t.Stop()
 	for {
@@ -141,6 +149,11 @@ func refreshLoop(ctx context.Context, eng *query.Engine, every time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
+			if releases != nil {
+				if err := releases.load(); err != nil {
+					slog.Warn("client release table not reloaded; keeping the current one", "err", err)
+				}
+			}
 			err := eng.Refresh(ctx)
 			recordRefresh(eng, err)
 			if err != nil {
@@ -276,8 +289,9 @@ func routes(eng *query.Engine, cors string, maxAge time.Duration, networks []str
 		// on a trimmed value while querying an untrimmed one lets " Geth " cache an empty breakdown
 		// under Geth's key.
 		client := strings.TrimSpace(q.Get("client"))
+		layer := q.Get("layer")
 		membership := q.Get("membership")
-		if err := (query.Filter{Membership: membership}).Validate(); err != nil {
+		if err := (query.Filter{Membership: membership, Layer: layer}).Validate(); err != nil {
 			writeClientErr(w, err)
 			return
 		}
@@ -288,7 +302,7 @@ func routes(eng *query.Engine, cors string, maxAge time.Duration, networks []str
 			writeErr(w, err)
 			return
 		}
-		result, err := loadStats(r.Context(), eng, stats, versions, key, client, membership, era, at)
+		result, err := loadStats(r.Context(), eng, stats, versions, key, client, layer, membership, era, at)
 		if err != nil {
 			writeErr(w, err)
 			return
@@ -353,6 +367,68 @@ func routes(eng *query.Engine, cors string, maxAge time.Duration, networks []str
 		_, _ = w.Write(body)
 	}))
 
+	forks := newLRU[[]byte](32)
+	mux.HandleFunc("GET /api/v1/forks", instrument("/api/v1/forks", func(w http.ResponseWriter, r *http.Request) {
+		network := r.URL.Query().Get("network")
+		if network == "" {
+			writeClientErr(w, errors.New("network is required"))
+			return
+		}
+		if err := validateNetwork(network, known); err != nil {
+			writeClientErr(w, err)
+			return
+		}
+		at := time.Now()
+		era, nextTransition, err := forkEra(at, network)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		// Tracking ends when the grace period expires, which no fork era boundary marks, so the tracked
+		// fork is part of the cache key and the cache lifetime must not outlast it.
+		target, err := netconf.ForkTargetAt(network, at)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		if target.Phase() == netconf.PhaseActivated {
+			var activation time.Time
+			if target.EL != nil {
+				activation = time.Unix(int64(target.EL.Time), 0)
+			} else if target.CL != nil {
+				activation = target.CL.Time
+			}
+			if end := activation.Add(netconf.ForkTrackingGrace); nextTransition.IsZero() || end.Before(nextTransition) {
+				nextTransition = end
+			}
+		}
+		minute := strconv.FormatInt(at.Truncate(time.Minute).Unix(), 10)
+		key := network + "\x00" + eng.State().LastRefresh.UTC().Format(time.RFC3339Nano) + "\x00" + era + "\x00" + minute + "\x00" + target.Name + "\x00" + target.Phase() +
+			"\x00" + strconv.FormatUint(netconf.ClientReleasesGeneration(), 10)
+		body, err := forks.load(r.Context(), key, func() ([]byte, error) {
+			result, err := eng.ForkReadinessAt(r.Context(), network, at)
+			if err != nil {
+				return nil, err
+			}
+			if result.Phase != "none" {
+				// History is a side output; a bad object must not hide the live counts.
+				if history, err := eng.ReadinessHistoryFor(r.Context(), network, result.Fork); err != nil {
+					slog.Warn("read readiness history", "network", network, "err", err)
+				} else {
+					result.History = history
+				}
+			}
+			return json.Marshal(result)
+		})
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		w.Header().Set("Cache-Control", mapCacheControl(at, nextTransition))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
+	}))
+
 	return securityHeaders(withCORS(cors, mux))
 }
 
@@ -413,7 +489,7 @@ type cachedVersions struct {
 // separate cache entries so an arbitrary client filter cannot re-run every aggregate. They are two
 // queries under two publication barriers, so a refresh can land between them; pairing on the
 // generation each ran against detects that and one retry lands both on the newer table.
-func loadStats(ctx context.Context, eng *query.Engine, aggregates *lru[query.Stats], versions *lru[cachedVersions], network, client, membership, era string, at time.Time) (query.Stats, error) {
+func loadStats(ctx context.Context, eng *query.Engine, aggregates *lru[query.Stats], versions *lru[cachedVersions], network, client, layer, membership, era string, at time.Time) (query.Stats, error) {
 	minute := strconv.FormatInt(at.Truncate(time.Minute).Unix(), 10)
 	normalized := strings.ToLower(client)
 	// The aggregate's key space is server-derived and small, so its loads really are shared and must
@@ -430,8 +506,8 @@ func loadStats(ctx context.Context, eng *query.Engine, aggregates *lru[query.Sta
 		if err != nil || client == "" {
 			return result, err
 		}
-		cached, err := versions.load(ctx, network+"\x00"+normalized+"\x00"+generation, func() (cachedVersions, error) {
-			byVersion, ranAgainst, err := eng.VersionsForMembershipAt(ctx, network, client, membership, at)
+		cached, err := versions.load(ctx, network+"\x00"+normalized+"\x00"+layer+"\x00"+generation, func() (cachedVersions, error) {
+			byVersion, ranAgainst, err := eng.VersionsForMembershipAt(ctx, network, client, layer, membership, at)
 			return cachedVersions{byVersion: byVersion, generation: ranAgainst}, err
 		})
 		if err != nil {
@@ -714,12 +790,17 @@ func nodeFilter(q url.Values, known map[string]bool) (query.Filter, error) {
 	if err != nil {
 		return query.Filter{}, err
 	}
+	clientExact := q.Get("client_exact")
+	if clientExact != "" && clientExact != "yes" {
+		return query.Filter{}, fmt.Errorf("invalid client_exact %q", clientExact)
+	}
 	f := query.Filter{
 		Network: q.Get("network"), Client: q.Get("client"), Country: q.Get("country"),
-		Layer: q.Get("layer"), Protocol: q.Get("protocol"), IPStack: q.Get("ipstack"), Hosting: q.Get("hosting"),
+		ClientExact: clientExact == "yes",
+		Layer:       q.Get("layer"), Protocol: q.Get("protocol"), IPStack: q.Get("ipstack"), Hosting: q.Get("hosting"),
 		Dialable: q.Get("dialable"), ForkStatus: q.Get("fork"),
-		Membership: q.Get("membership"),
-		IP:         q.Get("ip"), Q: q.Get("q"), CGCMin: q.Get("cgc_min"), CGCMax: q.Get("cgc_max"),
+		Membership: q.Get("membership"), Identified: q.Get("identified"), Sync: q.Get("sync"), Readiness: q.Get("readiness"),
+		IP: q.Get("ip"), Q: q.Get("q"), CGCMin: q.Get("cgc_min"), CGCMax: q.Get("cgc_max"),
 		Sort: q.Get("sort"), Order: q.Get("order"),
 		Limit: limit, Offset: offset,
 	}

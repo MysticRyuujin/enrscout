@@ -16,6 +16,7 @@ const Overview = lazy(() => import("./pages/Overview"));
 const NodesPage = lazy(() => import("./pages/NodesPage"));
 const NodeDetail = lazy(() => import("./pages/NodeDetail"));
 const About = lazy(() => import("./pages/About"));
+const Forks = lazy(() => import("./pages/Forks"));
 
 function NodesRedirect() {
   const { search } = useLocation();
@@ -112,6 +113,7 @@ export default function App() {
                 element={<NodesPage layer="cl" />}
               />
               <Route path="/nodes/:key" element={<NodeDetail />} />
+              <Route path="/forks" element={<Forks />} />
               <Route path="/about" element={<About />} />
             </Routes>
           </Suspense>

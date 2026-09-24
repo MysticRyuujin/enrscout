@@ -29,7 +29,9 @@ const columns = `id, enode, enr, seq, ip, ip6, tcp, udp, tcp6, udp6, quic, quic6
 	client, client_version, os, lang, capabilities, country, city, coalesce(subdivision, ''), lat, lon, asn, org, hosting, coalesce(hosting_known, false), fp_status, coalesce(fp_at, 0),
 	coalesce(geolocated, false), coalesce(geo_accuracy_radius_km, 0),
 	coalesce(membership_source, ''), coalesce(membership_verified_at, 0), coalesce(fork_source, ''), coalesce(fork_observed_at, 0),
-	coalesce(fp_direction, ''), coalesce(pinned, false), dialable`
+	coalesce(fp_direction, ''), coalesce(pinned, false), dialable,
+	coalesce(head, 0), coalesce(head_observed_at, 0), coalesce(sync_state, 'unknown'), head_lag,
+	coalesce(enr_fork_digest, ''), coalesce(enr_next_fork_version, ''), coalesce(enr_next_fork_epoch, 0)`
 
 const verifiedFingerprintCondition = "fp_status IN ('ok', 'stale')"
 
@@ -85,6 +87,9 @@ var filterEnums = []struct {
 	{"dialable", func(f Filter) string { return f.Dialable }, map[string]bool{"": true, "yes": true, "no": true}},
 	{"fork status", func(f Filter) string { return f.ForkStatus }, map[string]bool{"": true, "current": true, "stale": true, "all": true}},
 	{"membership", func(f Filter) string { return f.Membership }, map[string]bool{"": true, "verified": true, "claimed": true, "all": true}},
+	{"identified", func(f Filter) string { return f.Identified }, map[string]bool{"": true, "recent": true}},
+	{"sync", func(f Filter) string { return f.Sync }, map[string]bool{"": true, "synced": true, "lagging": true, "unknown": true}},
+	{"readiness", func(f Filter) string { return f.Readiness }, map[string]bool{"": true, "ready": true, "not_ready": true, "mismatch": true, "unknown": true, "stale": true}},
 }
 
 // Validate rejects every filter value the engine cannot implement, so callers can report a
@@ -100,6 +105,9 @@ func (f Filter) Validate() error {
 		if value := e.get(f); !e.values[value] {
 			return fmt.Errorf("invalid %s %q", e.name, value)
 		}
+	}
+	if f.Readiness != "" && f.Network == "" {
+		return errors.New("readiness filter requires a network")
 	}
 	for name, value := range map[string]string{"cgc_min": f.CGCMin, "cgc_max": f.CGCMax} {
 		if value == "" {
@@ -187,6 +195,17 @@ type Node struct {
 	Pinned               bool    `json:"pinned"`
 	Geolocated           bool    `json:"geolocated"`
 	GeoAccuracyRadiusKM  uint16  `json:"geo_accuracy_radius_km"`
+
+	Head           uint64 `json:"head"`
+	HeadObservedAt int64  `json:"head_observed_at"`
+	SyncState      string `json:"sync_state"`
+	HeadLag        *int64 `json:"head_lag,omitempty"`
+
+	ENRForkDigest      string `json:"enr_fork_digest,omitempty"`
+	ENRNextForkVersion string `json:"enr_next_fork_version,omitempty"`
+	ENRNextForkEpoch   uint64 `json:"enr_next_fork_epoch,omitempty,string"`
+	// ForkReadiness is the row's state against its network's tracked fork, empty when none is tracked.
+	ForkReadiness netconf.Readiness `json:"fork_readiness,omitempty"`
 }
 
 type Filter struct {
@@ -201,6 +220,9 @@ type Filter struct {
 	Dialable    string
 	ForkStatus  string
 	Membership  string
+	Identified  string
+	Sync        string
+	Readiness   string
 	IP          string
 	Q           string
 	CGCMin      string
@@ -270,6 +292,9 @@ type Stats struct {
 	ByOS      map[string]int `json:"by_os"`
 	ByLayer   map[string]int `json:"by_layer"`
 	ByVersion map[string]int `json:"by_version"`
+	// BySyncEL and BySyncCL count current-fork identities by sync_state (synced, lagging, unknown).
+	BySyncEL map[string]int `json:"by_sync_el"`
+	BySyncCL map[string]int `json:"by_sync_cl"`
 }
 
 type Point struct {
@@ -362,7 +387,9 @@ const emptyTableDDL = `CREATE TABLE IF NOT EXISTS nodes (
 	country VARCHAR, city VARCHAR, subdivision VARCHAR, lat DOUBLE, lon DOUBLE, asn UINTEGER, org VARCHAR, hosting BOOLEAN, hosting_known BOOLEAN,
 	fp_status VARCHAR, fp_at BIGINT, geolocated BOOLEAN, geo_accuracy_radius_km USMALLINT,
 	membership_source VARCHAR, membership_verified_at BIGINT, fork_source VARCHAR, fork_observed_at BIGINT,
-	fp_direction VARCHAR, pinned BOOLEAN, dialable BOOLEAN
+	fp_direction VARCHAR, pinned BOOLEAN, dialable BOOLEAN,
+	head UBIGINT, head_observed_at BIGINT, sync_state VARCHAR, head_lag BIGINT,
+	enr_fork_digest VARCHAR, enr_next_fork_version VARCHAR, enr_next_fork_epoch UBIGINT
 )`
 
 // migrateStagingSchema supplies defaults for additive columns that older,
@@ -376,6 +403,14 @@ func migrateStagingSchema(ctx context.Context, db *sql.DB) error {
 	}
 	if _, err := db.ExecContext(ctx, "ALTER TABLE nodes_staging ADD COLUMN IF NOT EXISTS cgc_known BOOLEAN DEFAULT false"); err != nil {
 		return fmt.Errorf("add cgc_known snapshot column: %w", err)
+	}
+	for _, column := range []string{
+		"head UBIGINT DEFAULT 0", "head_observed_at BIGINT DEFAULT 0",
+		"enr_fork_digest VARCHAR DEFAULT ''", "enr_next_fork_version VARCHAR DEFAULT ''", "enr_next_fork_epoch UBIGINT DEFAULT 0",
+	} {
+		if _, err := db.ExecContext(ctx, "ALTER TABLE nodes_staging ADD COLUMN IF NOT EXISTS "+column); err != nil {
+			return fmt.Errorf("add %s snapshot column: %w", strings.Fields(column)[0], err)
+		}
 	}
 	return nil
 }
@@ -465,6 +500,9 @@ func (e *Engine) Refresh(ctx context.Context) error {
 		}
 	}()
 	if err := migrateStagingSchema(ctx, e.db); err != nil {
+		return err
+	}
+	if err := computeSyncState(ctx, e.db, e.networks, m.GeneratedAt); err != nil {
 		return err
 	}
 
@@ -631,6 +669,34 @@ func (f Filter) where(networks []string) (string, []any, error) {
 		conds = append(conds, condition)
 		args = append(args, currentArgs...)
 	}
+	if f.Readiness != "" {
+		if f.Network == "" {
+			return "", nil, errors.New("readiness filter requires a network")
+		}
+		at := f.ForkAt
+		if at.IsZero() {
+			at = time.Now()
+		}
+		condition, readinessArgs, err := readinessConditionAt(f.Network, f.Readiness, at)
+		if err != nil {
+			return "", nil, err
+		}
+		conds = append(conds, condition)
+		args = append(args, readinessArgs...)
+	}
+	if f.Sync != "" {
+		conds = append(conds, "coalesce(sync_state, 'unknown') = ?")
+		args = append(args, f.Sync)
+	}
+	if f.Identified == "recent" {
+		at := f.ForkAt
+		if at.IsZero() {
+			at = time.Now()
+		}
+		condition, cutoff := chartFingerprintConditionAt(at)
+		conds = append(conds, "("+condition+")")
+		args = append(args, cutoff)
+	}
 	if f.IP != "" {
 		pattern := "%" + escapeLike(f.IP) + "%"
 		conds = append(conds, "(lower(ip) LIKE lower(?) ESCAPE '$' OR lower(ip6) LIKE lower(?) ESCAPE '$')")
@@ -716,7 +782,8 @@ func (e *Engine) Nodes(ctx context.Context, f Filter) (NodesResult, error) {
 	if f.ForkAt.IsZero() {
 		f.ForkAt = time.Now()
 	}
-	if f.ForkStatus == "" {
+	// Readiness spans forks: after activation the left-behind rows are on the previous one.
+	if f.ForkStatus == "" && f.Readiness == "" {
 		f.ForkStatus = "current"
 	}
 	if f.Limit <= 0 || f.Limit > 1000 {
@@ -806,6 +873,7 @@ func (e *Engine) StatsForMembershipAt(ctx context.Context, network, membership s
 		ByNetwork: map[string]int{}, ByClient: map[string]int{}, ByClientEL: map[string]int{}, ByClientCL: map[string]int{},
 		ByDirectionEL: map[string]int{}, ByDirectionCL: map[string]int{},
 		ByCountry: map[string]int{}, ByOrg: map[string]int{}, ByOS: map[string]int{}, ByLayer: map[string]int{}, ByVersion: map[string]int{},
+		BySyncEL: map[string]int{}, BySyncCL: map[string]int{},
 	}
 	if !generatedAt.IsZero() {
 		s.SnapshotGeneratedAt = generatedAt.UTC().Format(time.RFC3339Nano)
@@ -887,6 +955,31 @@ func (e *Engine) StatsForMembershipAt(ctx context.Context, network, membership s
 		return s, err
 	}
 
+	syncs := `SELECT layer, coalesce(sync_state, 'unknown'), count(*) FROM ` + flagged + ` WHERE cur AND layer IN ('el', 'cl') GROUP BY ALL`
+	syncRows, err := tx.QueryContext(ctx, syncs, flaggedArgs...)
+	if err != nil {
+		return s, err
+	}
+	for syncRows.Next() {
+		var layer, state string
+		var c int
+		if err := syncRows.Scan(&layer, &state, &c); err != nil {
+			syncRows.Close()
+			return s, err
+		}
+		if layer == "el" {
+			s.BySyncEL[state] += c
+		} else {
+			s.BySyncCL[state] += c
+		}
+	}
+	if err := syncRows.Close(); err != nil {
+		return s, err
+	}
+	if err := syncRows.Err(); err != nil {
+		return s, err
+	}
+
 	clients := `SELECT layer, client, fp_direction, os, count(*)
 		FROM ` + flagged + ` WHERE cur AND chart AND (client <> '' OR os <> '') GROUP BY ALL`
 	rows, err := tx.QueryContext(ctx, clients, flaggedArgs...)
@@ -956,12 +1049,12 @@ func appendArgs(args []any, extra ...any) []any {
 // caller-supplied client filter cannot force the whole aggregate to be recomputed per value. It
 // must apply the same membership filter as StatsForMembershipAt or the breakdown would count a
 // population the aggregate excluded.
-func (e *Engine) VersionsForMembershipAt(ctx context.Context, network, client, membership string, at time.Time) (map[string]int, time.Time, error) {
+func (e *Engine) VersionsForMembershipAt(ctx context.Context, network, client, layer, membership string, at time.Time) (map[string]int, time.Time, error) {
 	e.publishMu.RLock()
 	defer e.publishMu.RUnlock()
 	generation := e.State().LastRefresh
 	out := map[string]int{}
-	f := Filter{Network: network, Client: client, ClientExact: true, ForkStatus: "current", ForkAt: at, Membership: membership}
+	f := Filter{Network: network, Client: client, ClientExact: true, Layer: layer, ForkStatus: "current", ForkAt: at, Membership: membership}
 	if err := f.Validate(); err != nil {
 		return nil, generation, err
 	}
@@ -991,7 +1084,8 @@ func (e *Engine) VersionsForMembershipAt(ctx context.Context, network, client, m
 // ENR client metadata commonly reports semver without a leading "v", while
 // libp2p Identify agent strings from the same client include it. Keep the raw
 // value on each node, but fold the two spellings together in version charts and
-// collapse missing or placeholder build metadata into one "Unknown" bucket.
+// collapse missing or placeholder build metadata into one "Unknown" bucket. A value that does not
+// start with a version number is an operator label parsed before the fix for inserted identities.
 // The suffix collapse also groups commit and prerelease decorations.
 const normalizedClientVersionSQL = `CASE
 	WHEN client_version IS NULL
@@ -999,10 +1093,9 @@ const normalizedClientVersionSQL = `CASE
 		OR lower(trim(client_version)) = lower(trim(client))
 		OR lower(trim(client_version)) IN ('unknown', '<unknown>', 'v<unknown>', 'null', 'nil', 'n/a', 'na', '?', '""', '''')
 		OR regexp_matches(lower(trim(client_version)), '^v?unknown($|[-+])')
+		OR NOT regexp_matches(trim(client_version), '^[vV]?[0-9]')
 	THEN 'Unknown'
-	WHEN regexp_matches(split_part(trim(client_version), '-', 1), '^[vV][0-9]')
-	THEN substr(split_part(trim(client_version), '-', 1), 2)
-	ELSE split_part(trim(client_version), '-', 1)
+	ELSE regexp_replace(regexp_replace(trim(client_version), '^[vV]', ''), '[-+].*$', '')
 END`
 
 // MaxMapPoints bounds one map response. The non-compact encoding allocates a nested map per
@@ -1107,6 +1200,7 @@ func collapseUnrecognizedClients(m map[string]int) {
 
 func scanNodes(rows *sql.Rows, at time.Time) ([]Node, error) {
 	out := []Node{}
+	targets := map[string]*netconf.ForkTarget{}
 	for rows.Next() {
 		var n Node
 		if err := rows.Scan(
@@ -1116,11 +1210,84 @@ func scanNodes(rows *sql.Rows, at time.Time) ([]Node, error) {
 			&n.LastResolved, &n.Client, &n.ClientVersion, &n.OS, &n.Lang, &n.Capabilities, &n.Country, &n.City, &n.Subdivision, &n.Lat, &n.Lon, &n.ASN, &n.Org, &n.Hosting, &n.HostingKnown, &n.FPStatus, &n.FingerprintAt,
 			&n.Geolocated, &n.GeoAccuracyRadiusKM, &n.MembershipSource, &n.MembershipVerifiedAt, &n.ForkSource, &n.ForkObservedAt,
 			&n.FPDirection, &n.Pinned, &n.Dialable,
+			&n.Head, &n.HeadObservedAt, &n.SyncState, &n.HeadLag,
+			&n.ENRForkDigest, &n.ENRNextForkVersion, &n.ENRNextForkEpoch,
 		); err != nil {
 			return nil, err
 		}
 		n.ForkCompatible = netconf.RowForkCurrentAt(n.Layer, n.Network, n.ForkHash, n.ForkNext, at)
+		target, ok := targets[n.Network]
+		if !ok {
+			if t, err := netconf.ForkTargetAt(n.Network, at); err == nil && t.Phase() != "" {
+				target = &t
+			}
+			targets[n.Network] = target
+		}
+		if target != nil {
+			n.ForkReadiness = netconf.ReadinessAt(*target, n.Network, netconf.ReadinessEvidence{
+				Layer: n.Layer, ForkHash: n.ForkHash, ForkNext: n.ForkNext,
+				ENRForkDigest: n.ENRForkDigest, ENRNextForkVersion: n.ENRNextForkVersion, ENRNextForkEpoch: n.ENRNextForkEpoch,
+			}, at)
+		}
 		out = append(out, n)
 	}
 	return out, rows.Err()
+}
+
+// Sync state compares a Status-reported head with the heads other peers of the same network and
+// layer reported at about the same time. The reference is peer-reported, so it is an observed
+// consensus rather than a trusted head, and it is display-only: no guard or tree depends on it.
+const (
+	syncWindow     = 10 * time.Minute
+	syncMinSamples = 5
+	syncMaxLag     = 32
+)
+
+// computeSyncState projects each head observed in the window to the generation time at one block or
+// slot per slot time, which compares every sample at the same instant; it never carries an
+// observation forward past the window, so a node that stopped reads as unknown once its last
+// observation leaves it. The median reference tolerates any minority of peers that lie about their
+// head or lag behind; a head too far out to cast, such as a claimed MaxUint64, reads as unknown
+// rather than failing the refresh.
+func computeSyncState(ctx context.Context, db *sql.DB, networks []string, generatedAt time.Time) error {
+	for _, column := range []string{"sync_state VARCHAR DEFAULT 'unknown'", "head_lag BIGINT"} {
+		if _, err := db.ExecContext(ctx, "ALTER TABLE nodes_staging ADD COLUMN "+column); err != nil {
+			return fmt.Errorf("add %s column: %w", strings.Fields(column)[0], err)
+		}
+	}
+	var slots []string
+	var args []any
+	for _, network := range networks {
+		seconds, err := netconf.SecondsPerSlot(network)
+		if err != nil {
+			continue
+		}
+		slots = append(slots, "(?, ?)")
+		args = append(args, network, float64(seconds))
+	}
+	if len(slots) == 0 {
+		return nil
+	}
+	at := generatedAt.Unix()
+	args = append(args, at, at-int64(syncWindow.Seconds()), at)
+	// DuckDB binds an UPDATE's FROM parameters before its SET parameters, so the constants are inlined.
+	q := fmt.Sprintf(`UPDATE nodes_staging SET head_lag = sync_calc.lag,
+		sync_state = CASE WHEN sync_calc.lag IS NULL OR sync_calc.lag < -%[1]d THEN 'unknown' WHEN sync_calc.lag > %[1]d THEN 'lagging' ELSE 'synced' END
+		FROM (WITH slot(network, seconds) AS (VALUES `+strings.Join(slots, ", ")+`),
+		samples AS (
+			SELECT id, network, layer, CAST(head AS DOUBLE) + (? - head_observed_at) / seconds AS projected
+			FROM nodes_staging JOIN slot USING (network)
+			WHERE head > 0 AND head_observed_at > ? AND head_observed_at <= ?
+		),
+		refs AS (
+			SELECT network, layer, median(projected) AS ref
+			FROM samples GROUP BY network, layer HAVING count(*) >= %[2]d
+		)
+		SELECT id, CASE WHEN abs(ref - projected) < 1e15 THEN CAST(round(ref - projected) AS BIGINT) END AS lag
+		FROM samples JOIN refs USING (network, layer)
+		) AS sync_calc WHERE nodes_staging.id = sync_calc.id`, syncMaxLag, syncMinSamples)
+	if _, err := db.ExecContext(ctx, q, args...); err != nil {
+		return fmt.Errorf("compute sync state: %w", err)
+	}
+	return nil
 }

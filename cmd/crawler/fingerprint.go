@@ -49,6 +49,9 @@ func (c *crawler) applyLegacyFingerprint(n *enode.Node, via, direction string, r
 		mInvalidRecords.WithLabelValues(rejectReason(observed)).Inc()
 		return false
 	}
+	if observed.Applied {
+		c.set.SetHead(n.ID(), layerEL, r.Network, r.Head, r.HeadAt)
+	}
 	if observed.Changed {
 		c.geo.Record(c.set, n.ID(), n.IP())
 	}
@@ -84,10 +87,14 @@ func (c *crawler) applyInbound(nid enode.ID, layer string, r enrich.Fingerprint)
 		slog.Info("fingerprint recovered from inbound connection", "node", nid, "layer", layer, "prior-failures", failures, "client", r.Client)
 	}
 	if layer == layerEL && r.Network != "" {
-		c.set.SetExecutionStatus(nid, r.Network, r.ForkID)
+		if c.set.SetExecutionStatus(nid, r.Network, r.ForkID) {
+			c.set.SetHead(nid, layer, r.Network, r.Head, r.HeadAt)
+		}
 	}
 	if layer == layerCL && r.Network != "" {
-		c.set.SetConsensusStatus(nid, r.Network, r.ForkHash)
+		if c.set.SetConsensusStatus(nid, r.Network, r.ForkHash) {
+			c.set.SetHead(nid, layer, r.Network, r.Head, r.HeadAt)
+		}
 	}
 	if layer == layerEL && prev == "" && r.Network != "" && c.set.NetworkOf(nid) == r.Network {
 		mLegacyIdentified.WithLabelValues(r.Network, "inbound").Inc()
@@ -216,6 +223,7 @@ func (c *crawler) finishCandidateFingerprint(n *enode.Node, r enrich.Fingerprint
 		if !applied {
 			return
 		}
+		c.set.SetHead(n.ID(), layerEL, r.Network, r.Head, r.HeadAt)
 		if observed.Changed {
 			c.geo.Record(c.set, n.ID(), n.IP())
 		}
@@ -247,10 +255,14 @@ func (c *crawler) finishFingerprint(layer string, n *enode.Node, r enrich.Finger
 	if probeErr == nil {
 		failures, applied := c.set.SetClaimedFingerprint(n.ID(), r.Identity(), "outbound")
 		if applied && layer == layerEL && r.Network != "" {
-			c.set.SetExecutionStatus(n.ID(), r.Network, r.ForkID)
+			if c.set.SetExecutionStatus(n.ID(), r.Network, r.ForkID) {
+				c.set.SetHead(n.ID(), layer, r.Network, r.Head, r.HeadAt)
+			}
 		}
 		if applied && layer == layerCL && r.Network != "" {
-			c.set.SetConsensusStatus(n.ID(), r.Network, r.ForkHash)
+			if c.set.SetConsensusStatus(n.ID(), r.Network, r.ForkHash) {
+				c.set.SetHead(n.ID(), layer, r.Network, r.Head, r.HeadAt)
+			}
 		}
 		if failures > 0 {
 			mFingerprintRecoveries.WithLabelValues(layer).Inc()

@@ -4,7 +4,7 @@ import { useNetwork } from "../network";
 import StatTiles, { type TileFilter } from "../components/StatTiles";
 import BarList from "../components/BarList";
 import Donut from "../components/Donut";
-import ClientVersions from "../components/ClientVersions";
+import ClientVersions, { type LayerClient } from "../components/ClientVersions";
 import {
   clientColor,
   durationAgo,
@@ -248,11 +248,27 @@ export default function Overview() {
     stats && stats.total
       ? ((stats.hosting / stats.total) * 100).toFixed(0) + "%"
       : undefined;
-  const clients = stats
-    ? topN(stats.by_client, 20)
-        .map(([n]) => n)
-        .filter((n) => n !== "Other")
-    : [];
+  const clients = useMemo<LayerClient[]>(
+    () =>
+      stats
+        ? [
+            ...topN(stats.by_client_el, 20).map(([client, n]) => ({
+              client,
+              layer: "el" as const,
+              n,
+            })),
+            ...topN(stats.by_client_cl, 20).map(([client, n]) => ({
+              client,
+              layer: "cl" as const,
+              n,
+            })),
+          ]
+            .filter((c) => c.client !== "Other")
+            .sort((a, b) => b.n - a.n)
+            .map(({ client, layer }) => ({ client, layer }))
+        : [],
+    [stats],
+  );
   const executionCaption = stats
     ? identifiedCoverage(
         stats.el_identified,

@@ -536,6 +536,24 @@ little-endian `MarshalUint`) is correct at every level; no upstream issue is
 warranted. Note when decoding Prysm ENRs by hand: its `cgc` entry genuinely is
 an RLP big-endian integer, which is an easy source of this confusion.
 
+### Fork readiness run on 2026-09-24
+
+Seven pairs (erigon paired with lighthouse because Caplin fails to start), Electra at genesis,
+Fulu (with EL Osaka) at epoch 5, every BPO at FAR_FUTURE_EPOCH, upstream ethereum-package and the
+branch images. `/api/v1/forks?network=devnet` tracked Fusaka from the first snapshot:
+
+- **Scheduled.** EL 8/8 and CL 7/7 `ready` for the whole pre-fork window. EL heads read `synced`
+  (7 of 8; the eighth is an ENR-only row with no Status head).
+- **Activation.** The first sample after 15:59:08 read `activated` with every row `not_ready` (left
+  behind). Thirty seconds later EL was 4/8 and CL 5/7 upgraded; CL was 7/7 within a minute and the
+  last EL row flipped after five minutes. `upgraded` equalled `/stats` `execution`/`consensus` and
+  `left behind` equalled `execution_stale`/`consensus_stale` at every sample.
+- **History and restore.** The history object gained points on its 15-minute cadence across a
+  crawler restart (restored 15 rows; the stored point was kept).
+- **Sparse chains show the lag projection limit.** The devnet produced about one block per ten
+  slots, so older EL heads projected slightly ahead of the median (`head_lag` of -4). See
+  DEFINITIONS.md "Sync state".
+
 ### ENRScout conclusion
 
 No ENRScout code defect was found in these omissions. Every EL client that could not join

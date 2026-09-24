@@ -82,6 +82,7 @@ type Network struct {
 	once    sync.Once
 	genesis *types.Block
 	times   []uint64
+	elForks []elForkTime
 	hashMu  sync.RWMutex
 	hashes  map[[4]byte]struct{}
 	hashAt  time.Time
@@ -97,7 +98,10 @@ type forkMemo struct {
 func (n *Network) load() {
 	n.once.Do(func() {
 		n.genesis = n.genesisFn().ToBlock()
-		n.times = forkTimes(n.ChainConfig)
+		n.elForks = forkTimes(n.ChainConfig)
+		for _, f := range n.elForks {
+			n.times = append(n.times, f.time)
+		}
 	})
 }
 
@@ -150,17 +154,24 @@ func (n *Network) RefreshClassifyWindowAt(at time.Time) {
 	n.hashMu.Unlock()
 }
 
-// Reflection over *Time fields, not a hand-kept list, so geth upgrades add forks for free.
-func forkTimes(cfg *params.ChainConfig) []uint64 {
+type elForkTime struct {
+	name string
+	time uint64
+}
+
+// Reflection over *Time fields, not a hand-kept list, so geth upgrades add forks for free. Fields are
+// in activation order, and the name is the field name without "Time", such as "Amsterdam".
+func forkTimes(cfg *params.ChainConfig) []elForkTime {
 	v := reflect.ValueOf(cfg).Elem()
 	t := v.Type()
-	var out []uint64
+	var out []elForkTime
 	for i := 0; i < t.NumField(); i++ {
-		if !strings.HasSuffix(t.Field(i).Name, "Time") {
+		name, ok := strings.CutSuffix(t.Field(i).Name, "Time")
+		if !ok {
 			continue
 		}
 		if p, ok := v.Field(i).Interface().(*uint64); ok && p != nil {
-			out = append(out, *p)
+			out = append(out, elForkTime{name: name, time: *p})
 		}
 	}
 	return out
