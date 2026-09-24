@@ -357,7 +357,7 @@ func routes(eng *query.Engine, cors string, maxAge time.Duration, networks []str
 			writeErr(w, err)
 			return
 		}
-		w.Header().Set("Cache-Control", mapCacheControl(at, nextTransition))
+		w.Header().Set("Cache-Control", mapCacheControl(at, nextTransition, 300))
 		w.Header().Set("ETag", etag)
 		if etagMatches(r.Header.Get("If-None-Match"), etag) {
 			w.WriteHeader(http.StatusNotModified)
@@ -367,6 +367,8 @@ func routes(eng *query.Engine, cors string, maxAge time.Duration, networks []str
 		_, _ = w.Write(body)
 	}))
 
+	// The Forks page polls every minute and the body key buckets to the minute.
+	const forksMaxAge = 60
 	forks := newLRU[[]byte](32)
 	mux.HandleFunc("GET /api/v1/forks", instrument("/api/v1/forks", func(w http.ResponseWriter, r *http.Request) {
 		network := r.URL.Query().Get("network")
@@ -424,7 +426,7 @@ func routes(eng *query.Engine, cors string, maxAge time.Duration, networks []str
 			writeErr(w, err)
 			return
 		}
-		w.Header().Set("Cache-Control", mapCacheControl(at, nextTransition))
+		w.Header().Set("Cache-Control", mapCacheControl(at, nextTransition, forksMaxAge))
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(body)
 	}))
@@ -447,8 +449,7 @@ func forkEra(at time.Time, network string) (string, time.Time, error) {
 	return netconf.ForkEraTokenAt(at, network)
 }
 
-func mapCacheControl(at, nextTransition time.Time) string {
-	maxAge := 300
+func mapCacheControl(at, nextTransition time.Time, maxAge int) string {
 	if !nextTransition.IsZero() {
 		remaining := nextTransition.Sub(at)
 		if remaining <= 0 {

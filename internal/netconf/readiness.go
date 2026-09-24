@@ -73,8 +73,8 @@ var combinedForkNames = map[[2]string]string{
 }
 
 // ForkTargetAt picks each layer's next scheduled fork, or else the one activated within
-// ForkTrackingGrace. A CL target covers regular forks only: a blob-parameter-only transition
-// changes the digest but not the ENR's next_fork fields, so its readiness is not advertised.
+// ForkTrackingGrace. A CL target includes blob-parameter-only forks, because the ENR's
+// next_fork_epoch advertises them (Fulu p2p spec) while next_fork_version stays unchanged.
 func ForkTargetAt(network string, at time.Time) (ForkTarget, error) {
 	n, err := Get(network)
 	if err != nil {
@@ -106,6 +106,9 @@ func ForkTargetAt(network string, at time.Time) (ForkTarget, error) {
 	switch {
 	case t.EL != nil && t.CL != nil:
 		t.Name = combinedForkNames[[2]string{strings.ToLower(t.EL.Name), strings.ToLower(t.CL.Name)}]
+		if t.Name == "" && strings.EqualFold(t.EL.Name, t.CL.Name) {
+			t.Name = t.EL.Name
+		}
 		if t.Name == "" {
 			t.Name = t.EL.Name + "/" + capitalize(t.CL.Name)
 		}
@@ -157,22 +160,26 @@ func (n *Network) elTargetAt(at time.Time) (ELForkTarget, bool) {
 
 func (c *clNetwork) targetAt(at time.Time) (CLForkTarget, bool, error) {
 	epoch := c.epochAt(at)
+	forks, err := c.transitions()
+	if err != nil {
+		return CLForkTarget{}, false, err
+	}
 	var chosen *clFork
 	phase := PhaseScheduled
-	for i := range c.forks {
-		if c.forks[i].epoch > epoch && c.forks[i].epoch != math.MaxUint64 {
-			chosen = &c.forks[i]
+	for i := range forks {
+		if forks[i].epoch > epoch && forks[i].epoch != math.MaxUint64 {
+			chosen = &forks[i]
 			// Forks sharing an epoch resolve to the last one, the same fork the activated branch below
 			// picks, so the target name and its history key do not change at activation.
-			for j := i + 1; j < len(c.forks) && c.forks[j].epoch == chosen.epoch; j++ {
-				chosen = &c.forks[j]
+			for j := i + 1; j < len(forks) && forks[j].epoch == chosen.epoch; j++ {
+				chosen = &forks[j]
 			}
 			break
 		}
 	}
 	if chosen == nil {
-		for i := len(c.forks) - 1; i >= 0; i-- {
-			f := &c.forks[i]
+		for i := len(forks) - 1; i >= 0; i-- {
+			f := &forks[i]
 			if f.epoch == 0 || f.epoch > epoch {
 				continue
 			}

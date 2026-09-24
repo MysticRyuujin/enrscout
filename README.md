@@ -105,7 +105,7 @@ The **Forks** page (`/forks`, API `GET /api/v1/forks`) follows each network's ne
 for example Glamsterdam on Sepolia (EL Amsterdam and CL Gloas at the same instant). It shows a
 countdown, readiness per layer, an adoption trend, per-client and per-version breakdowns, and a
 table of client releases that ship the fork. After activation it shows upgraded and left-behind
-identities for 14 days.
+identities for 14 days, unless a later fork is already scheduled.
 
 Readiness comes from the schedule that each node advertises, not from its version string:
 

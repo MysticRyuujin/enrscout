@@ -131,8 +131,8 @@ A consensus row reads its schedule from ENR-only columns (`enr_fork_digest`,
 `enr_next_fork_version`, `enr_next_fork_epoch`). A Status exchange replaces the row's fork digest
 but says nothing about the next fork, so the next-fork claim is used only while its own digest
 still matches. Consensus nodes seen only over libp2p have no ENR and read as `unknown`. A
-blob-parameter-only transition changes the digest but not the ENR next-fork fields, so it has no
-consensus target.
+blob-parameter-only (BPO) transition is a consensus target too: per the Fulu p2p spec its epoch is
+advertised in `next_fork_epoch` while `next_fork_version` stays unchanged.
 
 After activation, a row on the new fork is `ready` (upgraded), a row still on the pre-fork hash or
 digest is `not_ready` (left behind), and any other row is `stale`. The tracker therefore counts

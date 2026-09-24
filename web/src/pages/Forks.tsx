@@ -301,7 +301,7 @@ export default function Forks() {
   }, [network]);
 
   const color = networkColor(network);
-  if (err)
+  if (err && !data)
     return (
       <div className="page">
         <div className="error">API unreachable: {err}</div>
@@ -328,7 +328,7 @@ export default function Forks() {
             No fork is scheduled on {network}. The tracker follows the next
             execution fork in the go-ethereum chain configuration and the next
             consensus fork in the crawler&apos;s schedule, and keeps a fork for
-            14 days after it activates.
+            14 days after it activates unless a later fork is scheduled.
           </p>
         </div>
       </div>
@@ -378,11 +378,12 @@ export default function Forks() {
       hint: "no ENR eth2 entry",
     });
   const lagging = data.layers.el?.sync.lagging ?? 0;
-  tiles.push({
-    label: "EL lagging",
-    value: lagging,
-    hint: "behind the observed tip",
-  });
+  if (data.layers.el)
+    tiles.push({
+      label: "EL lagging",
+      value: lagging,
+      hint: "behind the observed tip",
+    });
   const releases = data.releases ?? [];
   const released = releases.filter(hasRelease).length;
   if (releases.length)
@@ -411,7 +412,7 @@ export default function Forks() {
           {data.fork.el && (
             <>
               {" "}
-              · EL {data.fork.el.name} at {data.fork.el.time}
+              · EL {data.fork.el.name} at timestamp {data.fork.el.time}
             </>
           )}
           {data.fork.cl && (
@@ -429,6 +430,8 @@ export default function Forks() {
           )}
         </p>
       </div>
+
+      {err && <div className="error">API unreachable: {err}</div>}
 
       <section className="disclaimer-banner" aria-label="Methodology">
         <span>

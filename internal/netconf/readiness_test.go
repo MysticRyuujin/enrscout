@@ -1,7 +1,10 @@
 package netconf
 
 import (
+	"encoding/hex"
 	"math"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -110,23 +113,58 @@ func TestReadinessAt(t *testing.T) {
 	}
 }
 
-func TestForkTargetNeverPairsDifferentInstants(t *testing.T) {
-	// A day after mainnet Fusaka: CL Fulu is recently activated while EL already schedules BPO1.
+func TestForkTargetPairsBPOsAtTheSameInstant(t *testing.T) {
+	// A day after mainnet Fusaka, both layers schedule BPO1 at the same instant.
 	fulu := mainnetCL.timeAtEpoch(411392)
 	target, err := ForkTargetAt("mainnet", fulu.Add(24*time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if target.CL != nil || target.EL == nil || target.EL.Phase != PhaseScheduled || target.Name != target.EL.Name {
-		t.Fatalf("target = %+v (EL %+v, CL %+v), want the scheduled EL fork alone", target, target.EL, target.CL)
+	if target.Name != "BPO1" || target.EL == nil || target.CL == nil || target.CL.Epoch != 412672 || target.CL.Version != "06000000" {
+		t.Fatalf("target = %+v (EL %+v, CL %+v), want EL and CL BPO1 paired", target, target.EL, target.CL)
 	}
-	// Just before it, both layers schedule the same instant and share the combined name.
+	if target.CL.Time.Unix() != int64(target.EL.Time) {
+		t.Fatalf("paired BPO1 at different instants: EL %d, CL %s", target.EL.Time, target.CL.Time)
+	}
 	at, err := ForkTargetAt("mainnet", fulu.Add(-time.Second))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if at.Name != "Fusaka" || at.EL == nil || at.CL == nil {
 		t.Fatalf("at Fusaka target = %+v", at)
+	}
+}
+
+func TestForkTargetNeverPairsDifferentInstants(t *testing.T) {
+	cfg := devnetConfig()
+	cfg.ELGenesisJSON = []byte(strings.Replace(devnetGenesisJSON, `"osakaTime": 0`, `"osakaTime": 0, "bpo1Time": 1700050000`, 1))
+	cfg.BlobSchedule = append(cfg.BlobSchedule, BlobParams{Epoch: 100, MaxBlobs: 21})
+	t.Cleanup(func() {
+		registry = slices.DeleteFunc(registry, func(n *Network) bool { return n.Name == "devnet" })
+	})
+	if err := RegisterDevnet(cfg); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Unix(1700000000+50*384, 0)
+	target, err := ForkTargetAt("devnet", at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target.EL != nil || target.CL == nil || target.Name != "BPO1" || target.CL.Epoch != 100 || target.CL.Version != "70000038" {
+		t.Fatalf("target = %+v (EL %+v, CL %+v), want the earlier CL BPO1 alone", target, target.EL, target.CL)
+	}
+	// A spec-compliant record advertises the BPO epoch with the unchanged version, and is ready.
+	state, err := CLForkStateAt("devnet", at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.NextForkEpoch != 100 || state.NextForkVersion != state.CurrentVersion {
+		t.Fatalf("ENR next fork = %x@%d, want the current version at the BPO epoch", state.NextForkVersion, state.NextForkEpoch)
+	}
+	digest := hex.EncodeToString(state.Digest[:])
+	ev := ReadinessEvidence{Layer: "cl", ForkHash: digest, ENRForkDigest: digest, ENRNextForkVersion: hex.EncodeToString(state.NextForkVersion[:]), ENRNextForkEpoch: state.NextForkEpoch}
+	if got := ReadinessAt(target, "devnet", ev, at); got != Ready {
+		t.Fatalf("spec-compliant BPO record = %q, want ready", got)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -53,7 +54,6 @@ type LayerReadiness struct {
 
 type ForkReadiness struct {
 	Network             string                     `json:"network"`
-	Generation          time.Time                  `json:"-"`
 	ForkEvaluatedAt     string                     `json:"fork_evaluated_at"`
 	SnapshotGeneratedAt string                     `json:"snapshot_generated_at,omitempty"`
 	FingerprintWindow   int64                      `json:"fingerprint_window_seconds"`
@@ -74,7 +74,7 @@ func (e *Engine) ForkReadinessAt(ctx context.Context, network string, at time.Ti
 	defer e.publishMu.RUnlock()
 	state := e.State()
 	out := ForkReadiness{
-		Network: network, Generation: state.LastRefresh, ForkEvaluatedAt: at.UTC().Format(time.RFC3339Nano),
+		Network: network, ForkEvaluatedAt: at.UTC().Format(time.RFC3339Nano),
 		FingerprintWindow: int64(chartMaxFingerprintAge.Seconds()),
 		Layers:            map[string]*LayerReadiness{},
 	}
@@ -285,11 +285,19 @@ func readinessConditionAt(network, want string, at time.Time) (string, []any, er
 
 const maxHistoryPoints = 480
 
+var (
+	historyNetwork  = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
+	historyForkName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9/-]*$`)
+)
+
 // ReadinessHistoryFor reads the crawler's rolling history without the publication lock, since it is a
 // store read that does not depend on the served table. A missing object is an empty history, and so
 // is one recorded against another schedule: after a reschedule it holds measurements of the old
 // date until an updated crawler starts a new series.
 func (e *Engine) ReadinessHistoryFor(ctx context.Context, network string, target netconf.ForkTarget) (*snapshot.ReadinessHistory, error) {
+	if !historyNetwork.MatchString(network) || !historyForkName.MatchString(target.Name) {
+		return nil, fmt.Errorf("invalid readiness history key %q/%q", network, target.Name)
+	}
 	data, err := e.store.Get(ctx, e.layout.ReadinessHistoryKey(network, target.Name))
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, nil

@@ -15,9 +15,7 @@ type NodeSort = "last_seen" | "client" | "cgc";
 // (at least), "<=8" (at most), and strict ">8" / "<8", exact in the integer
 // domain (>8 = min 9, <8 = max 7). Returns null when the text parses as none
 // of these; "" clears both bounds.
-export function parseCustody(
-  raw: string,
-): { min: string; max: string } | null {
+export function parseCustody(raw: string): { min: string; max: string } | null {
   const s = raw.trim().replace(/\s+/g, "");
   if (!s) return { min: "", max: "" };
   let m = s.match(/^(\d{1,4})$/);
@@ -29,7 +27,8 @@ export function parseCustody(
   m = s.match(/^<=(\d{1,4})$/);
   if (m) return { min: "", max: m[1] };
   m = s.match(/^<(\d{1,4})$/);
-  if (m) return Number(m[1]) > 0 ? { min: "", max: String(Number(m[1]) - 1) } : null;
+  if (m)
+    return Number(m[1]) > 0 ? { min: "", max: String(Number(m[1]) - 1) } : null;
   m = s.match(/^(\d{1,4})-(\d{1,4})$/);
   if (m && Number(m[1]) <= Number(m[2])) return { min: m[1], max: m[2] };
   return null;
@@ -379,8 +378,9 @@ export default function NodesPage({ layer }: { layer: "el" | "cl" }) {
           <option value="">
             {query.readiness ? "any fork" : "current fork"}
           </option>
+          {query.readiness && <option value="current">current fork</option>}
           <option value="stale">older fork</option>
-          <option value="all">any fork</option>
+          {!query.readiness && <option value="all">any fork</option>}
         </select>
         <select
           value={query.readiness}
@@ -403,7 +403,9 @@ export default function NodesPage({ layer }: { layer: "el" | "cl" }) {
             aria-invalid={parseCustody(custodyDraft) === null}
             onChange={(e) => setCustodyDraft(e.target.value)}
             onBlur={() => patchCustodyNow(custodyDraft)}
-            onKeyDown={(e) => e.key === "Enter" && patchCustodyNow(custodyDraft)}
+            onKeyDown={(e) =>
+              e.key === "Enter" && patchCustodyNow(custodyDraft)
+            }
           />
         )}
       </div>

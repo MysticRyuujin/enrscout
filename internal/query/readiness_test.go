@@ -17,9 +17,8 @@ import (
 const sepoliaAmsterdam = 1791294816
 
 type readinessRow struct {
-	id  string
-	ev  netconf.ReadinessEvidence
-	raw string
+	id string
+	ev netconf.ReadinessEvidence
 }
 
 func readinessCorpus(t *testing.T) []readinessRow {
@@ -72,6 +71,14 @@ func TestReadinessMatchesSQLAndGo(t *testing.T) {
 	if _, err := eng.db.Exec("INSERT INTO nodes (id, network, layer, fork_hash, fork_next, enr_fork_digest, enr_next_fork_version, enr_next_fork_epoch) VALUES "+
 		strings.Join(tuples, ", "), args...); err != nil {
 		t.Fatal(err)
+	}
+	// NULL columns reach Go as zero values, so they must classify the same as the empty evidence.
+	for _, layer := range []string{"el", "cl"} {
+		id := "null-" + layer
+		if _, err := eng.db.Exec("INSERT INTO nodes (id, network, layer, fork_hash, fork_next, enr_fork_digest, enr_next_fork_version, enr_next_fork_epoch) VALUES (?, 'sepolia', ?, NULL, NULL, NULL, NULL, NULL)", id, layer); err != nil {
+			t.Fatal(err)
+		}
+		rows = append(rows, readinessRow{id: id, ev: netconf.ReadinessEvidence{Layer: layer}})
 	}
 
 	activation := time.Unix(sepoliaAmsterdam, 0)

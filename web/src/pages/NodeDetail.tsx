@@ -195,7 +195,11 @@ export default function NodeDetail() {
           {node.fork_readiness && (
             <Row
               label="Next fork"
-              value={<Link to="/forks">{READINESS_TEXT[node.fork_readiness]}</Link>}
+              value={
+                <Link to={`/forks?network=${encodeURIComponent(node.network)}`}>
+                  {READINESS_TEXT[node.fork_readiness]}
+                </Link>
+              }
             />
           )}
           <Row

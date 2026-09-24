@@ -3,6 +3,7 @@ package netconf
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -93,10 +94,14 @@ func (t ClientReleaseTable) Validate() error {
 	var errs []error
 	seen := map[string]bool{}
 	for _, r := range t.Releases {
-		key := r.Network + "/" + r.Fork + "/" + r.Layer + "/" + r.Client
+		key := r.Network + "/" + strings.ToLower(r.Fork) + "/" + r.Layer + "/" + r.Client
 		switch {
 		case r.Network == "" || r.Fork == "":
 			errs = append(errs, fmt.Errorf("%s: network and fork are required", key))
+		case !knownNetwork(r.Network):
+			errs = append(errs, fmt.Errorf("%s: unknown network %q", key, r.Network))
+		case r.URL != "" && !httpURL(r.URL):
+			errs = append(errs, fmt.Errorf("%s: url %q is not an http(s) URL", key, r.URL))
 		case r.Layer != "el" && r.Layer != "cl":
 			errs = append(errs, fmt.Errorf("%s: layer %q", key, r.Layer))
 		case clientname.CanonicalVersion(r.Layer, r.Client, "") != r.Client || !clientname.Recognized(r.Client):
@@ -116,13 +121,23 @@ func (t ClientReleaseTable) Validate() error {
 	return errors.Join(errs...)
 }
 
+func knownNetwork(name string) bool {
+	_, err := Get(name)
+	return err == nil
+}
+
+func httpURL(s string) bool {
+	u, err := url.Parse(s)
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
+}
+
 // ClientReleasesAt returns the entries for a network's tracked fork, marking any verified against a
 // fork time the target no longer has. The generation changes whenever the table is replaced.
 func ClientReleasesAt(network string, target ForkTarget) (updated string, generation uint64, out []ClientRelease) {
 	releasesMu.RLock()
 	defer releasesMu.RUnlock()
 	for _, r := range clientReleases.Releases {
-		if r.Network != network || r.Fork != target.Name {
+		if r.Network != network || !strings.EqualFold(r.Fork, target.Name) {
 			continue
 		}
 		if r.ForkTime != 0 {
@@ -152,7 +167,7 @@ var (
 	// Tokens clients use for builds that are not a tagged release. Geth's "-stable-<commit>" and
 	// Nethermind's "+<commit>[-hp|-f]" decorate real releases, so a strict semver prerelease check
 	// would wrongly reject them.
-	devBuildToken = regexp.MustCompile(`(?i)(^|[-+._/])(rc|alpha|beta|unstable|dev|develop|nightly|main|master|pre|snapshot)(\d*|$|[-+._/])`)
+	devBuildToken = regexp.MustCompile(`(?i)(^|[-+._/])(rc|alpha|beta|unstable|dev|develop|nightly|main|master|pre|snapshot)\d*($|[-+._/])`)
 )
 
 func versionSuffix(v string) string {

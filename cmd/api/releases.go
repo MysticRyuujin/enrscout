@@ -2,12 +2,12 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
-	"time"
 
 	"go.yaml.in/yaml/v3"
 
@@ -34,28 +34,23 @@ func decodeReleases(data []byte) (netconf.ClientReleaseTable, error) {
 const maxReleasesFileBytes = 1 << 20
 
 // releasesFile overrides the built-in client release table, so an operator can publish a newly
-// shipped fork-ready release without an ENRScout release. It is reloaded when it changes; a file
-// that fails to read or validate keeps the table already in use.
+// shipped fork-ready release without an ENRScout release. It is reloaded when its content changes,
+// compared by hash because a copy that preserves mtime and size would otherwise be missed; a file that
+// fails to read or validate keeps the table already in use.
 type releasesFile struct {
-	path    string
-	modTime time.Time
-	size    int64
+	path   string
+	sum    [sha256.Size]byte
+	loaded bool
 }
 
 func (f *releasesFile) load() error {
-	info, err := os.Stat(f.path)
+	data, err := readBounded(f.path)
 	if err != nil {
 		return err
 	}
-	if info.ModTime().Equal(f.modTime) && info.Size() == f.size {
+	sum := sha256.Sum256(data)
+	if f.loaded && sum == f.sum {
 		return nil
-	}
-	if info.Size() > maxReleasesFileBytes {
-		return fmt.Errorf("%s is %d bytes, over the %d-byte limit", f.path, info.Size(), maxReleasesFileBytes)
-	}
-	data, err := os.ReadFile(f.path)
-	if err != nil {
-		return err
 	}
 	table, err := decodeReleases(data)
 	if err != nil {
@@ -64,7 +59,24 @@ func (f *releasesFile) load() error {
 	if err := netconf.SetClientReleases(table); err != nil {
 		return fmt.Errorf("validate %s: %w", f.path, err)
 	}
-	f.modTime, f.size = info.ModTime(), info.Size()
+	f.sum, f.loaded = sum, true
 	slog.Info("client release table loaded", "file", f.path, "updated", table.Updated, "entries", len(table.Releases))
 	return nil
+}
+
+// readBounded re-applies the size limit while reading, since the file can grow after the Stat.
+func readBounded(path string) ([]byte, error) {
+	fh, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer fh.Close()
+	data, err := io.ReadAll(io.LimitReader(fh, maxReleasesFileBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxReleasesFileBytes {
+		return nil, fmt.Errorf("%s is over the %d-byte limit", path, maxReleasesFileBytes)
+	}
+	return data, nil
 }

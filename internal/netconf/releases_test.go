@@ -22,6 +22,8 @@ func TestReleaseStatus(t *testing.T) {
 		{[]string{"2.0.0"}, "v1.39.3+28cbe2a0", ReleaseBelow},
 		{[]string{"28.0.0"}, "v27.0.0-main-39497ecb72a72307c0d61521c019ce6bb03291f9", ReleaseDevBuild},
 		{[]string{"28.0.0"}, "v28.0.0-rc.1", ReleaseDevBuild},
+		{[]string{"2.0.0"}, "v2.0.0-mainnet", ReleaseMeets},
+		{[]string{"2.0.0"}, "v2.0.0-rc1", ReleaseDevBuild},
 		{[]string{"1.17.6"}, "cashcow", ReleaseUnparsable},
 		// A backport line: 1.39.4 carries the fork alongside 2.0.0.
 		{[]string{"1.39.4", "2.0.0"}, "v1.39.4+aa", ReleaseMeets},
@@ -71,6 +73,8 @@ func TestClientReleaseTableValidate(t *testing.T) {
 		"missing fork time":    {func(r *ClientRelease) { r.ForkTime = 0 }, "fork_time"},
 		"dev build floor":      {func(r *ClientRelease) { r.MinVersions = []string{"1.18.0-rc.1"} }, "not a release"},
 		"unparsable floor":     {func(r *ClientRelease) { r.MinVersions = []string{"latest"} }, "not a release"},
+		"unknown network":      {func(r *ClientRelease) { r.Network = "sepoila" }, "unknown network"},
+		"script url":           {func(r *ClientRelease) { r.URL = "javascript:alert(1)" }, "http(s)"},
 	} {
 		r := good
 		tc.mutate(&r)
@@ -80,6 +84,11 @@ func TestClientReleaseTableValidate(t *testing.T) {
 	}
 	if err := (ClientReleaseTable{Releases: []ClientRelease{good, good}}).Validate(); err == nil {
 		t.Error("duplicate entry accepted")
+	}
+	lower := good
+	lower.Fork = "glamsterdam"
+	if err := (ClientReleaseTable{Releases: []ClientRelease{good, lower}}).Validate(); err == nil {
+		t.Error("duplicate entry differing only in fork case accepted")
 	}
 }
 

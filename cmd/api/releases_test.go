@@ -61,6 +61,11 @@ func TestReleasesFileLoadsReloadsAndKeepsLastGood(t *testing.T) {
 	if err := f.load(); err != nil || updated() != "2026-09-27" {
 		t.Fatalf("corrected file not reloaded: %v, updated %q", err, updated())
 	}
+	// Same size and mtime, as `cp -p` leaves it: only the content changed.
+	write(`{"updated":"2026-09-28","releases":[]}`, start.Add(3*time.Minute))
+	if err := f.load(); err != nil || updated() != "2026-09-28" {
+		t.Fatalf("same-size, same-mtime edit not reloaded: %v, updated %q", err, updated())
+	}
 }
 
 func TestDecodeReleasesYAMLWithComments(t *testing.T) {

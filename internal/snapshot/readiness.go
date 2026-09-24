@@ -39,7 +39,7 @@ type ReadinessHistory struct {
 
 // ReadinessHistoryKey keeps history out of NetworkPrefix, which generation pruning owns.
 func (l Layout) ReadinessHistoryKey(network, fork string) string {
-	return fmt.Sprintf("%s/state/readiness/%s/%s.json", strings.TrimSuffix(l.prefix(), "/"), network, strings.ToLower(fork))
+	return fmt.Sprintf("%s/state/readiness/%s/%s.json", strings.TrimSuffix(l.prefix(), "/"), network, strings.ReplaceAll(strings.ToLower(fork), "/", "-"))
 }
 
 func DecodeReadinessHistory(data []byte) (*ReadinessHistory, error) {
