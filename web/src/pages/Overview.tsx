@@ -13,6 +13,7 @@ import {
   OTHER_COLOR,
   SUPERNODE_CGC,
   topN,
+  whileVisible,
 } from "../theme";
 import {
   pointCGC,
@@ -166,10 +167,6 @@ export default function Overview() {
         if (live) setErrMap(e instanceof Error ? e.message : String(e));
       }
     };
-    const whileVisible = (load: () => Promise<void>) => () => {
-      if (document.visibilityState === "visible") void load();
-    };
-
     void loadSummary();
     void loadMap();
     const summaryTimer = setInterval(
@@ -304,8 +301,7 @@ export default function Overview() {
           ) : (
             "No snapshot yet"
           )}{" "}
-          ·{" "}
-          {locatedCaption} · a typical full node contributes one EL and one CL
+          · {locatedCaption} · a typical full node contributes one EL and one CL
           identity
         </p>
       </div>

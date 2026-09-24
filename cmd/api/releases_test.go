@@ -30,7 +30,7 @@ func TestReleasesFileLoadsReloadsAndKeepsLastGood(t *testing.T) {
 		t.Fatal(err)
 	}
 	updated := func() string {
-		u, _, _ := netconf.ClientReleasesAt("sepolia", target)
+		u, _ := netconf.ClientReleasesAt("sepolia", target)
 		return u
 	}
 

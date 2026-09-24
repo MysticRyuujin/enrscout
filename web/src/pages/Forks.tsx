@@ -1,13 +1,24 @@
 import { useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import { Link } from "react-router";
 import { fetchForks } from "../api";
 import { useNetwork } from "../network";
 import StatTiles from "../components/StatTiles";
 import ReadinessTrend, {
+  readyPool,
   readyShare,
   TREND_COLOR,
 } from "../components/ReadinessTrend";
-import { durationAgo, layerName, networkColor, num } from "../theme";
+import {
+  CATEGORICAL,
+  durationAgo,
+  layerName,
+  networkColor,
+  nodesPath,
+  num,
+  OTHER_COLOR,
+  whileVisible,
+} from "../theme";
 import type {
   ClientReadiness,
   ClientRelease,
@@ -15,7 +26,6 @@ import type {
   LayerReadiness,
   Readiness,
   ReadinessCounts,
-  VersionReadiness,
 } from "../types";
 
 const REFRESH_MS = 60_000;
@@ -29,10 +39,10 @@ const STATES: Readiness[] = [
 
 // Validated as a set against the dark panel surface; unknown and stale are deliberately neutral.
 const STATE_COLOR: Record<Readiness, string> = {
-  ready: "#199e70",
-  not_ready: "#d95926",
-  mismatch: "#9085e9",
-  unknown: "#5f6b7e",
+  ready: CATEGORICAL[1],
+  not_ready: CATEGORICAL[5],
+  mismatch: CATEGORICAL[4],
+  unknown: OTHER_COLOR,
   stale: "#2a3547",
 };
 
@@ -134,18 +144,44 @@ const VERSION_BADGE: Record<string, string> = {
 
 function nodesLink(layer: "el" | "cl", params: Record<string, string>) {
   return {
-    pathname: layer === "el" ? "/nodes/execution" : "/nodes/consensus",
+    pathname: nodesPath(layer),
     search: new URLSearchParams({ ...params, fork: "all" }).toString(),
   };
+}
+
+function ReadinessCells({
+  counts,
+  total,
+  activated,
+  ready,
+}: {
+  counts: ReadinessCounts;
+  total: number;
+  activated: boolean;
+  ready?: ReactNode;
+}) {
+  return (
+    <>
+      <td className="rd-bar-cell">
+        <StackedBar counts={counts} activated={activated} total={total} />
+      </td>
+      <td className="num">
+        {ready ?? num(counts.ready)} / {num(total)}
+      </td>
+      <td className="num">{pct(counts.ready, total)}</td>
+    </>
+  );
 }
 
 function ClientRow({
   layer,
   c,
+  release,
   activated,
 }: {
   layer: "el" | "cl";
   c: ClientReadiness;
+  release?: ClientRelease;
   activated: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -161,47 +197,39 @@ function ClientRow({
             {open ? "▾" : "▸"} {c.client}
           </button>
         </td>
-        <td className={hasRelease(c.release) ? "rd-rel ok" : "rd-rel"}>
-          {releaseText(c.release)}
+        <td className={hasRelease(release) ? "rd-rel ok" : "rd-rel"}>
+          {releaseText(release)}
         </td>
-        <td className="rd-bar-cell">
-          <StackedBar counts={c.counts} activated={activated} total={c.total} />
-        </td>
-        <td className="num">
-          {c.client === "Other" ? (
-            num(c.counts.ready)
-          ) : (
-            <Link
-              to={nodesLink(layer, {
-                client: c.client,
-                client_exact: "yes",
-                identified: "recent",
-                readiness: "ready",
-              })}
-            >
-              {num(c.counts.ready)}
-            </Link>
-          )}{" "}
-          / {num(c.total)}
-        </td>
-        <td className="num">{pct(c.counts.ready, c.total)}</td>
+        <ReadinessCells
+          counts={c.counts}
+          total={c.total}
+          activated={activated}
+          ready={
+            c.client === "Other" ? undefined : (
+              <Link
+                to={nodesLink(layer, {
+                  client: c.client,
+                  client_exact: "yes",
+                  identified: "recent",
+                  readiness: "ready",
+                })}
+              >
+                {num(c.counts.ready)}
+              </Link>
+            )
+          }
+        />
       </tr>
       {open &&
-        c.versions.map((v: VersionReadiness) => (
+        c.versions.map((v) => (
           <tr key={v.version} className="rd-version">
             <td className="mono">{v.version}</td>
             <td>{v.release ? (VERSION_BADGE[v.release] ?? "") : ""}</td>
-            <td className="rd-bar-cell">
-              <StackedBar
-                counts={v.counts}
-                activated={activated}
-                total={v.total}
-              />
-            </td>
-            <td className="num">
-              {num(v.counts.ready)} / {num(v.total)}
-            </td>
-            <td className="num">{pct(v.counts.ready, v.total)}</td>
+            <ReadinessCells
+              counts={v.counts}
+              total={v.total}
+              activated={activated}
+            />
           </tr>
         ))}
     </>
@@ -211,13 +239,18 @@ function ClientRow({
 function LayerCard({
   layer,
   data,
+  releases,
   activated,
 }: {
   layer: "el" | "cl";
   data: LayerReadiness;
+  releases: ClientRelease[];
   activated: boolean;
 }) {
   const unidentified = STATES.reduce((a, s) => a + data.unidentified[s], 0);
+  const releaseOf = new Map(
+    releases.filter((r) => r.layer === layer).map((r) => [r.client, r]),
+  );
   return (
     <div className="card">
       <h3>{layerName(layer)} clients</h3>
@@ -228,7 +261,7 @@ function LayerCard({
       </p>
       <Legend activated={activated} />
       <div className="table-wrap">
-        <table className="rd-table">
+        <table className="nodes-table">
           <thead>
             <tr>
               <th>Client</th>
@@ -239,11 +272,12 @@ function LayerCard({
             </tr>
           </thead>
           <tbody>
-            {(data.clients ?? []).map((c) => (
+            {data.clients.map((c) => (
               <ClientRow
                 key={c.client}
                 layer={layer}
                 c={c}
+                release={releaseOf.get(c.client)}
                 activated={activated}
               />
             ))}
@@ -251,19 +285,11 @@ function LayerCard({
               <tr className="rd-unidentified">
                 <td>Not recently identified</td>
                 <td />
-                <td className="rd-bar-cell">
-                  <StackedBar
-                    counts={data.unidentified}
-                    activated={activated}
-                    total={unidentified}
-                  />
-                </td>
-                <td className="num">
-                  {num(data.unidentified.ready)} / {num(unidentified)}
-                </td>
-                <td className="num">
-                  {pct(data.unidentified.ready, unidentified)}
-                </td>
+                <ReadinessCells
+                  counts={data.unidentified}
+                  total={unidentified}
+                  activated={activated}
+                />
               </tr>
             )}
           </tbody>
@@ -290,9 +316,10 @@ export default function Forks() {
           (e) => live && setErr(e instanceof Error ? e.message : String(e)),
         );
     void load();
+    const tick = whileVisible(load);
     const timer = window.setInterval(() => {
       setNow(Date.now() / 1000);
-      if (document.visibilityState === "visible") void load();
+      tick();
     }, REFRESH_MS);
     return () => {
       live = false;
@@ -342,7 +369,7 @@ export default function Forks() {
   const layers = (["el", "cl"] as const).filter((l) => data.layers[l]);
   const tiles = layers.flatMap((l) => {
     const c = data.layers[l]!.counts;
-    const pool = c.ready + c.not_ready + c.mismatch + c.unknown;
+    const pool = readyPool(c);
     const share = readyShare(c);
     return [
       {
@@ -384,7 +411,7 @@ export default function Forks() {
       value: lagging,
       hint: "behind the observed tip",
     });
-  const releases = data.releases ?? [];
+  const releases = data.releases;
   const released = releases.filter(hasRelease).length;
   if (releases.length)
     tiles.push({
@@ -471,6 +498,7 @@ export default function Forks() {
           key={l}
           layer={l}
           data={data.layers[l]!}
+          releases={releases}
           activated={activated}
         />
       ))}
@@ -483,7 +511,7 @@ export default function Forks() {
             schedule for {network}. Updated {data.releases_updated}.
           </p>
           <div className="table-wrap">
-            <table className="rd-table">
+            <table className="nodes-table">
               <thead>
                 <tr>
                   <th>Client</th>

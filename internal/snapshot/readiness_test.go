@@ -41,12 +41,26 @@ func TestReadinessHistoryDecodeRejectsUnknownVersionAndFields(t *testing.T) {
 	if _, err := DecodeReadinessHistory([]byte(`{"version":1,"points":[],"extra":1}`)); err == nil {
 		t.Fatal("unknown field accepted")
 	}
+	legacy := []byte(`{"version":1,"network":"sepolia","fork":"Glamsterdam","points":[{"at":1,"el":{"ready":1},"clients_el":{"Geth":[1,1]}}]}`)
+	got, err := DecodeReadinessHistory(legacy)
+	if err != nil {
+		t.Fatalf("pre-release per-client fields rejected: %v", err)
+	}
+	if data, err := got.Encode(); err != nil || strings.Contains(string(data), "clients_el") {
+		t.Fatalf("legacy fields re-encoded: %s, %v", data, err)
+	}
 }
 
 func TestReadinessHistoryKeyStaysOutOfGenerationPrefix(t *testing.T) {
 	l := Layout{}
-	key := l.ReadinessHistoryKey("sepolia", "Glamsterdam")
-	if strings.HasPrefix(key, l.NetworkPrefix("sepolia")) || key != "snapshots/state/readiness/sepolia/glamsterdam.json" {
-		t.Fatalf("key = %q", key)
+	key, err := l.ReadinessHistoryKey("sepolia", "Glamsterdam")
+	if err != nil || strings.HasPrefix(key, l.NetworkPrefix("sepolia")) || key != "snapshots/state/readiness/sepolia/glamsterdam.json" {
+		t.Fatalf("key = %q, %v", key, err)
+	}
+	if slashed, err := (Layout{Prefix: "snapshots/"}).ReadinessHistoryKey("sepolia", "Glamsterdam"); err != nil || slashed != key {
+		t.Fatalf("trailing-slash prefix key = %q, %v, want %q", slashed, err, key)
+	}
+	if _, err := l.ReadinessHistoryKey("sepolia", "../manifest"); err == nil {
+		t.Fatal("path segment accepted")
 	}
 }

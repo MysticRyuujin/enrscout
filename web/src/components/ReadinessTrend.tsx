@@ -1,19 +1,25 @@
 import { useEffect, useRef, useState } from "react";
+import { ACCENT, CATEGORICAL } from "../theme";
 import type { ReadinessCounts, ReadinessPoint } from "../types";
 
-export const TREND_COLOR = { el: "#3987e5", cl: "#d55181" } as const;
+export const TREND_COLOR = { el: ACCENT, cl: CATEGORICAL[2] } as const;
 
 const H = 220;
 const PAD = { top: 12, right: 64, bottom: 28, left: 40 };
 
 // Stale rows are off the current fork before activation and long gone after it, so they are not
 // part of the population a fork can be ready in.
+export function readyPool(c: Partial<ReadinessCounts>): number {
+  return (
+    (c.ready ?? 0) + (c.not_ready ?? 0) + (c.mismatch ?? 0) + (c.unknown ?? 0)
+  );
+}
+
 export function readyShare(
   c: Partial<ReadinessCounts> | undefined,
 ): number | null {
   if (!c) return null;
-  const pool =
-    (c.ready ?? 0) + (c.not_ready ?? 0) + (c.mismatch ?? 0) + (c.unknown ?? 0);
+  const pool = readyPool(c);
   return pool ? (c.ready ?? 0) / pool : null;
 }
 

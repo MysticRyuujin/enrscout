@@ -4,6 +4,7 @@ import { ApiError, fetchNode } from "../api";
 import {
   layerName as layerLabel,
   networkColor,
+  nodesPath,
   num,
   relTime,
   SUPERNODE_CGC,
@@ -90,8 +91,7 @@ export default function NodeDetail() {
   if (!node) return <div className="page error">Failed to load node.</div>;
 
   const layerName = layerLabel(node.layer, node.layer);
-  const layerPath =
-    node.layer === "cl" ? "/nodes/consensus" : "/nodes/execution";
+  const layerPath = nodesPath(node.layer);
   const dialTransports = [
     (node.tcp || node.tcp6) && "TCP",
     (node.quic || node.quic6) && "QUIC",

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -35,11 +34,10 @@ type VersionReadiness struct {
 }
 
 type ClientReadiness struct {
-	Client   string                 `json:"client"`
-	Total    int                    `json:"total"`
-	Counts   ReadinessCounts        `json:"counts"`
-	Release  *netconf.ClientRelease `json:"release,omitempty"`
-	Versions []VersionReadiness     `json:"versions"`
+	Client   string             `json:"client"`
+	Total    int                `json:"total"`
+	Counts   ReadinessCounts    `json:"counts"`
+	Versions []VersionReadiness `json:"versions"`
 }
 
 type LayerReadiness struct {
@@ -86,22 +84,20 @@ func (e *Engine) ForkReadinessAt(ctx context.Context, network string, at time.Ti
 		return out, err
 	}
 	out.Fork, out.Phase = target, target.Phase()
-	if out.Phase == "" {
-		out.Phase = "none"
+	if out.Phase == netconf.PhaseNone {
 		return out, nil
 	}
-	out.ReleasesUpdated, _, out.Releases = netconf.ClientReleasesAt(network, target)
-	releases := map[string]*netconf.ClientRelease{}
+	out.ReleasesUpdated, out.Releases = netconf.ClientReleasesAt(network, target)
+	releases := map[[2]string]*netconf.ClientRelease{}
 	for i := range out.Releases {
 		r := &out.Releases[i]
-		releases[r.Layer+"\x00"+r.Client] = r
+		releases[[2]string{r.Layer, r.Client}] = r
 	}
 
 	chartCond, chartCutoff := chartFingerprintConditionAt(at)
-	q := fmt.Sprintf(`SELECT layer, coalesce(fork_hash, ''), coalesce(fork_next, 0),
-		coalesce(enr_fork_digest, ''), coalesce(enr_next_fork_version, ''), coalesce(enr_next_fork_epoch, 0),
-		coalesce(%s, false), coalesce(client, ''), coalesce(client_version, ''), %s, coalesce(sync_state, 'unknown'), count(*)
-		FROM nodes WHERE network = ? AND layer IN ('el', 'cl') GROUP BY ALL`, chartCond, normalizedClientVersionSQL)
+	q := fmt.Sprintf(`SELECT layer, coalesce(fork_hash, ''), coalesce(fork_next, 0), %s,
+		coalesce(%s, false), coalesce(client, ''), coalesce(client_version, ''), %s, %s, count(*)
+		FROM nodes WHERE network = ? AND layer IN ('el', 'cl') GROUP BY ALL`, enrScheduleColumns, chartCond, normalizedClientVersionSQL, syncStateColumn)
 	rows, err := e.db.QueryContext(ctx, q, chartCutoff, network)
 	if err != nil {
 		return out, err
@@ -125,7 +121,7 @@ func (e *Engine) ForkReadinessAt(ctx context.Context, network string, at time.Ti
 		}
 		layer := out.Layers[ev.Layer]
 		if layer == nil {
-			layer = &LayerReadiness{Counts: newReadinessCounts(), Unidentified: newReadinessCounts(), Sync: map[string]int{}}
+			layer = &LayerReadiness{Counts: newReadinessCounts(), Unidentified: newReadinessCounts(), Sync: map[string]int{}, Clients: []ClientReadiness{}}
 			out.Layers[ev.Layer] = layer
 		}
 		readiness := netconf.ReadinessAt(target, network, ev, at)
@@ -144,12 +140,12 @@ func (e *Engine) ForkReadinessAt(ctx context.Context, network string, at time.Ti
 			continue
 		}
 		if !clientname.Recognized(client) {
-			client = "Other"
+			client = clientname.Other
 		}
 		ck := [2]string{ev.Layer, client}
 		c := clients[ck]
 		if c == nil {
-			c = &ClientReadiness{Client: client, Counts: newReadinessCounts(), Release: releases[ev.Layer+"\x00"+client]}
+			c = &ClientReadiness{Client: client, Counts: newReadinessCounts()}
 			clients[ck] = c
 		}
 		c.Total += count
@@ -162,8 +158,8 @@ func (e *Engine) ForkReadinessAt(ctx context.Context, network string, at time.Ti
 		}
 		v.Total += count
 		v.Counts[readiness] += count
-		if c.Release != nil && !c.Release.Outdated && len(c.Release.MinVersions) > 0 {
-			status := netconf.ReleaseStatus(c.Release.MinVersions, rawVersion)
+		if rel := releases[ck]; rel != nil && !rel.Outdated && len(rel.MinVersions) > 0 {
+			status := netconf.ReleaseStatus(rel.MinVersions, rawVersion)
 			if v.Release == "" {
 				v.Release = status
 			} else if v.Release != status {
@@ -222,21 +218,20 @@ func readinessConditionAt(network, want string, at time.Time) (string, []any, er
 	if err != nil {
 		return "", nil, err
 	}
-	cur := func() []any { return append([]any(nil), currentArgs...) }
 	var parts []string
 	var args []any
-	add := func(cond string, a ...any) {
-		parts = append(parts, "("+cond+")")
-		args = append(args, a...)
+	add := func(layer, cond string, a ...any) {
+		parts = append(parts, "(layer = '"+layer+"' AND "+cond+")")
+		args = append(append(args, currentArgs...), a...)
 	}
 	activated := func(layer, pre string) {
 		switch netconf.Readiness(want) {
 		case netconf.Ready:
-			add("layer = '"+layer+"' AND "+current, cur()...)
+			add(layer, current)
 		case netconf.NotReady:
-			add("layer = '"+layer+"' AND NOT "+current+" AND lower(fork_hash) = ?", append(cur(), pre)...)
+			add(layer, "NOT "+current+" AND lower(fork_hash) = ?", pre)
 		case netconf.Stale:
-			add("layer = '"+layer+"' AND NOT "+current+" AND lower(coalesce(fork_hash, '')) <> ?", append(cur(), pre)...)
+			add(layer, "NOT "+current+" AND lower(coalesce(fork_hash, '')) <> ?", pre)
 		}
 	}
 	if el := target.EL; el != nil {
@@ -245,13 +240,13 @@ func readinessConditionAt(network, want string, at time.Time) (string, []any, er
 		} else {
 			switch netconf.Readiness(want) {
 			case netconf.Ready:
-				add("layer = 'el' AND "+current+" AND coalesce(fork_next, 0) = ?", append(cur(), el.Time)...)
+				add("el", current+" AND coalesce(fork_next, 0) = ?", el.Time)
 			case netconf.NotReady:
-				add("layer = 'el' AND "+current+" AND coalesce(fork_next, 0) = 0", cur()...)
+				add("el", current+" AND coalesce(fork_next, 0) = 0")
 			case netconf.Mismatch:
-				add("layer = 'el' AND "+current+" AND coalesce(fork_next, 0) NOT IN (0, ?)", append(cur(), el.Time)...)
+				add("el", current+" AND coalesce(fork_next, 0) NOT IN (0, ?)", el.Time)
 			case netconf.Stale:
-				add("layer = 'el' AND NOT "+current, cur()...)
+				add("el", "NOT "+current)
 			}
 		}
 	}
@@ -265,15 +260,15 @@ func readinessConditionAt(network, want string, at time.Time) (string, []any, er
 			notReady := fmt.Sprintf("coalesce(enr_next_fork_epoch, 0) = %d", uint64(math.MaxUint64))
 			switch netconf.Readiness(want) {
 			case netconf.Ready:
-				add("layer = 'cl' AND "+current+" AND "+matched+" AND "+ready, append(cur(), cl.Epoch, cl.Version)...)
+				add("cl", current+" AND "+matched+" AND "+ready, cl.Epoch, cl.Version)
 			case netconf.NotReady:
-				add("layer = 'cl' AND "+current+" AND "+matched+" AND "+notReady, cur()...)
+				add("cl", current+" AND "+matched+" AND "+notReady)
 			case netconf.Mismatch:
-				add("layer = 'cl' AND "+current+" AND "+matched+" AND NOT ("+ready+") AND NOT ("+notReady+")", append(cur(), cl.Epoch, cl.Version)...)
+				add("cl", current+" AND "+matched+" AND NOT ("+ready+") AND NOT ("+notReady+")", cl.Epoch, cl.Version)
 			case netconf.Unknown:
-				add("layer = 'cl' AND "+current+" AND NOT ("+matched+")", cur()...)
+				add("cl", current+" AND NOT ("+matched+")")
 			case netconf.Stale:
-				add("layer = 'cl' AND NOT "+current, cur()...)
+				add("cl", "NOT "+current)
 			}
 		}
 	}
@@ -285,20 +280,16 @@ func readinessConditionAt(network, want string, at time.Time) (string, []any, er
 
 const maxHistoryPoints = 480
 
-var (
-	historyNetwork  = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
-	historyForkName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9/-]*$`)
-)
-
 // ReadinessHistoryFor reads the crawler's rolling history without the publication lock, since it is a
 // store read that does not depend on the served table. A missing object is an empty history, and so
 // is one recorded against another schedule: after a reschedule it holds measurements of the old
 // date until an updated crawler starts a new series.
 func (e *Engine) ReadinessHistoryFor(ctx context.Context, network string, target netconf.ForkTarget) (*snapshot.ReadinessHistory, error) {
-	if !historyNetwork.MatchString(network) || !historyForkName.MatchString(target.Name) {
-		return nil, fmt.Errorf("invalid readiness history key %q/%q", network, target.Name)
+	key, err := e.layout.ReadinessHistoryKey(network, target.Name)
+	if err != nil {
+		return nil, err
 	}
-	data, err := e.store.Get(ctx, e.layout.ReadinessHistoryKey(network, target.Name))
+	data, err := e.store.Get(ctx, key)
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, nil
 	}
@@ -309,14 +300,7 @@ func (e *Engine) ReadinessHistoryFor(ctx context.Context, network string, target
 	if err != nil {
 		return nil, err
 	}
-	var elTime, clEpoch uint64
-	if target.EL != nil {
-		elTime = target.EL.Time
-	}
-	if target.CL != nil {
-		clEpoch = target.CL.Epoch
-	}
-	if h.ELTime != elTime || h.CLEpoch != clEpoch {
+	if elTime, clEpoch := target.Schedule(); h.ELTime != elTime || h.CLEpoch != clEpoch {
 		return nil, nil
 	}
 	if n := len(h.Points); n > maxHistoryPoints {

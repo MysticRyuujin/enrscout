@@ -12,10 +12,8 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 )
 
-const sepoliaAmsterdam = 1791294816
-
 func TestForkTargetSepoliaGlamsterdam(t *testing.T) {
-	before := time.Unix(sepoliaAmsterdam-86400, 0)
+	before := time.Unix(sepoliaGlamsterdam-86400, 0)
 	target, err := ForkTargetAt("sepolia", before)
 	if err != nil {
 		t.Fatal(err)
@@ -23,15 +21,15 @@ func TestForkTargetSepoliaGlamsterdam(t *testing.T) {
 	if target.Name != "Glamsterdam" || target.Phase() != PhaseScheduled {
 		t.Fatalf("target = %q phase %q, want Glamsterdam scheduled", target.Name, target.Phase())
 	}
-	if el := target.EL; el == nil || el.Name != "Amsterdam" || el.Time != sepoliaAmsterdam || el.PreHash != "268956b6" || el.PostHash != "6c1d9423" {
+	if el := target.EL; el == nil || el.Name != "Amsterdam" || el.Time != sepoliaGlamsterdam || el.PreHash != "268956b6" || el.PostHash != "6c1d9423" {
 		t.Fatalf("EL target = %+v", target.EL)
 	}
 	if cl := target.CL; cl == nil || cl.Name != "gloas" || cl.Epoch != 353024 || cl.Version != "90000076" ||
-		cl.PreDigest != "74d01459" || cl.PostDigest != "669e6c11" || cl.Time.Unix() != sepoliaAmsterdam {
+		cl.PreDigest != "74d01459" || cl.PostDigest != "669e6c11" || cl.Time.Unix() != sepoliaGlamsterdam {
 		t.Fatalf("CL target = %+v", target.CL)
 	}
 
-	after, err := ForkTargetAt("sepolia", time.Unix(sepoliaAmsterdam, 0))
+	after, err := ForkTargetAt("sepolia", time.Unix(sepoliaGlamsterdam, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +37,7 @@ func TestForkTargetSepoliaGlamsterdam(t *testing.T) {
 		t.Fatalf("at activation target = %+v", after)
 	}
 
-	expired, err := ForkTargetAt("sepolia", time.Unix(sepoliaAmsterdam, 0).Add(ForkTrackingGrace))
+	expired, err := ForkTargetAt("sepolia", time.Unix(sepoliaGlamsterdam, 0).Add(ForkTrackingGrace))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,13 +52,13 @@ func TestForkTargetNoneScheduled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if target.EL != nil || target.CL != nil || target.Phase() != "" {
+	if target.EL != nil || target.CL != nil || target.Phase() != PhaseNone {
 		t.Fatalf("mainnet target = %+v, want none", target)
 	}
 }
 
 func TestReadinessAt(t *testing.T) {
-	before := time.Unix(sepoliaAmsterdam-86400, 0)
+	before := time.Unix(sepoliaGlamsterdam-86400, 0)
 	target, err := ForkTargetAt("sepolia", before)
 	if err != nil {
 		t.Fatal(err)
@@ -73,10 +71,10 @@ func TestReadinessAt(t *testing.T) {
 		at   time.Time
 		want Readiness
 	}{
-		{"el scheduled", ReadinessEvidence{Layer: "el", ForkHash: cur, ForkNext: sepoliaAmsterdam}, before, Ready},
+		{"el scheduled", ReadinessEvidence{Layer: "el", ForkHash: cur, ForkNext: sepoliaGlamsterdam}, before, Ready},
 		{"el not scheduled", ReadinessEvidence{Layer: "el", ForkHash: cur}, before, NotReady},
-		{"el other future time", ReadinessEvidence{Layer: "el", ForkHash: cur, ForkNext: sepoliaAmsterdam + 1}, before, Mismatch},
-		{"el older fork", ReadinessEvidence{Layer: "el", ForkHash: "deadbeef", ForkNext: sepoliaAmsterdam}, before, Stale},
+		{"el other future time", ReadinessEvidence{Layer: "el", ForkHash: cur, ForkNext: sepoliaGlamsterdam + 1}, before, Mismatch},
+		{"el older fork", ReadinessEvidence{Layer: "el", ForkHash: "deadbeef", ForkNext: sepoliaGlamsterdam}, before, Stale},
 		{"cl scheduled", ReadinessEvidence{Layer: "cl", ForkHash: digest, ENRForkDigest: digest, ENRNextForkVersion: "90000076", ENRNextForkEpoch: 353024}, before, Ready},
 		{"cl right epoch wrong version", ReadinessEvidence{Layer: "cl", ForkHash: digest, ENRForkDigest: digest, ENRNextForkVersion: "90000077", ENRNextForkEpoch: 353024}, before, Mismatch},
 		{"cl not scheduled", ReadinessEvidence{Layer: "cl", ForkHash: digest, ENRForkDigest: digest, ENRNextForkVersion: "90000075", ENRNextForkEpoch: math.MaxUint64}, before, NotReady},
@@ -91,7 +89,7 @@ func TestReadinessAt(t *testing.T) {
 		}
 	}
 
-	activation := time.Unix(sepoliaAmsterdam, 0)
+	activation := time.Unix(sepoliaGlamsterdam, 0)
 	activated, err := ForkTargetAt("sepolia", activation)
 	if err != nil {
 		t.Fatal(err)
@@ -170,21 +168,21 @@ func TestForkTargetNeverPairsDifferentInstants(t *testing.T) {
 
 func TestReadinessUntrackedLayerHasNoState(t *testing.T) {
 	target := ForkTarget{Name: "Gloas", CL: &CLForkTarget{Name: "gloas", Epoch: 1, Phase: PhaseScheduled}}
-	if got := ReadinessAt(target, "sepolia", ReadinessEvidence{Layer: "el", ForkHash: "268956b6"}, time.Unix(sepoliaAmsterdam-86400, 0)); got != "" {
+	if got := ReadinessAt(target, "sepolia", ReadinessEvidence{Layer: "el", ForkHash: "268956b6"}, time.Unix(sepoliaGlamsterdam-86400, 0)); got != "" {
 		t.Fatalf("EL row under a CL-only target = %q, want no state", got)
 	}
 }
 
 func TestELTargetKeepsOneNameAcrossTiedActivation(t *testing.T) {
 	cfg := *params.SepoliaChainConfig
-	tied := uint64(sepoliaAmsterdam)
+	tied := uint64(sepoliaGlamsterdam)
 	cfg.BogotaTime = &tied
 	n := &Network{Name: "tied", ChainConfig: &cfg, genesisFn: core.DefaultSepoliaGenesisBlock}
-	before, ok := n.elTargetAt(time.Unix(sepoliaAmsterdam-60, 0))
+	before, ok := n.elTargetAt(time.Unix(sepoliaGlamsterdam-60, 0))
 	if !ok {
 		t.Fatal("no scheduled target")
 	}
-	after, ok := n.elTargetAt(time.Unix(sepoliaAmsterdam, 0))
+	after, ok := n.elTargetAt(time.Unix(sepoliaGlamsterdam, 0))
 	if !ok {
 		t.Fatal("no activated target")
 	}

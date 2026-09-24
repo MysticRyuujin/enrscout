@@ -13,6 +13,7 @@ import (
 const ForkTrackingGrace = 14 * 24 * time.Hour
 
 const (
+	PhaseNone      = "none"
 	PhaseScheduled = "scheduled"
 	PhaseActivated = "activated"
 )
@@ -62,7 +63,30 @@ func (t ForkTarget) Phase() string {
 	if t.EL != nil || t.CL != nil {
 		return PhaseActivated
 	}
-	return ""
+	return PhaseNone
+}
+
+// Schedule identifies the tracked activation by each layer's own coordinate, so a rescheduled fork
+// reads as a different series.
+func (t ForkTarget) Schedule() (elTime, clEpoch uint64) {
+	if t.EL != nil {
+		elTime = t.EL.Time
+	}
+	if t.CL != nil {
+		clEpoch = t.CL.Epoch
+	}
+	return elTime, clEpoch
+}
+
+// Activation is the tracked instant; ForkTargetAt keeps only layers that share it.
+func (t ForkTarget) Activation() time.Time {
+	switch {
+	case t.EL != nil:
+		return time.Unix(int64(t.EL.Time), 0).UTC()
+	case t.CL != nil:
+		return t.CL.Time
+	}
+	return time.Time{}
 }
 
 var combinedForkNames = map[[2]string]string{
@@ -106,11 +130,11 @@ func ForkTargetAt(network string, at time.Time) (ForkTarget, error) {
 	switch {
 	case t.EL != nil && t.CL != nil:
 		t.Name = combinedForkNames[[2]string{strings.ToLower(t.EL.Name), strings.ToLower(t.CL.Name)}]
-		if t.Name == "" && strings.EqualFold(t.EL.Name, t.CL.Name) {
+		if t.Name == "" && t.EL.Name == t.CL.Name {
 			t.Name = t.EL.Name
 		}
 		if t.Name == "" {
-			t.Name = t.EL.Name + "/" + capitalize(t.CL.Name)
+			t.Name = t.EL.Name + "-" + capitalize(t.CL.Name)
 		}
 	case t.EL != nil:
 		t.Name = t.EL.Name

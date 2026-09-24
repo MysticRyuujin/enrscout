@@ -30,10 +30,14 @@ const columns = `id, enode, enr, seq, ip, ip6, tcp, udp, tcp6, udp6, quic, quic6
 	coalesce(geolocated, false), coalesce(geo_accuracy_radius_km, 0),
 	coalesce(membership_source, ''), coalesce(membership_verified_at, 0), coalesce(fork_source, ''), coalesce(fork_observed_at, 0),
 	coalesce(fp_direction, ''), coalesce(pinned, false), dialable,
-	coalesce(head, 0), coalesce(head_observed_at, 0), coalesce(sync_state, 'unknown'), head_lag,
-	coalesce(enr_fork_digest, ''), coalesce(enr_next_fork_version, ''), coalesce(enr_next_fork_epoch, 0)`
+	coalesce(head, 0), coalesce(head_observed_at, 0), ` + syncStateColumn + `, head_lag,
+	` + enrScheduleColumns
 
 const verifiedFingerprintCondition = "fp_status IN ('ok', 'stale')"
+
+const syncStateColumn = "coalesce(sync_state, 'unknown')"
+
+const enrScheduleColumns = "coalesce(enr_fork_digest, ''), coalesce(enr_next_fork_version, ''), coalesce(enr_next_fork_epoch, 0)"
 
 // chartMaxFingerprintAge bounds how old a verified fingerprint may be and still count toward client charts; older identifications remain on node detail as last-known state.
 const chartMaxFingerprintAge = 7 * 24 * time.Hour
@@ -292,9 +296,6 @@ type Stats struct {
 	ByOS      map[string]int `json:"by_os"`
 	ByLayer   map[string]int `json:"by_layer"`
 	ByVersion map[string]int `json:"by_version"`
-	// BySyncEL and BySyncCL count current-fork identities by sync_state (synced, lagging, unknown).
-	BySyncEL map[string]int `json:"by_sync_el"`
-	BySyncCL map[string]int `json:"by_sync_cl"`
 }
 
 type Point struct {
@@ -652,13 +653,13 @@ func (f Filter) where(networks []string) (string, []any, error) {
 	case "claimed":
 		conds = append(conds, "membership_source = 'enr'")
 	}
+	at := f.ForkAt
+	if at.IsZero() {
+		at = time.Now()
+	}
 	// Only current and stale need the predicate; building it for "all" would make the
 	// audit view fail exactly when fork configuration is broken.
 	if f.ForkStatus == "current" || f.ForkStatus == "stale" {
-		at := f.ForkAt
-		if at.IsZero() {
-			at = time.Now()
-		}
 		condition, currentArgs, err := currentForkConditionAt(at, f.forkNetworks(networks))
 		if err != nil {
 			return "", nil, err
@@ -670,13 +671,6 @@ func (f Filter) where(networks []string) (string, []any, error) {
 		args = append(args, currentArgs...)
 	}
 	if f.Readiness != "" {
-		if f.Network == "" {
-			return "", nil, errors.New("readiness filter requires a network")
-		}
-		at := f.ForkAt
-		if at.IsZero() {
-			at = time.Now()
-		}
 		condition, readinessArgs, err := readinessConditionAt(f.Network, f.Readiness, at)
 		if err != nil {
 			return "", nil, err
@@ -685,14 +679,10 @@ func (f Filter) where(networks []string) (string, []any, error) {
 		args = append(args, readinessArgs...)
 	}
 	if f.Sync != "" {
-		conds = append(conds, "coalesce(sync_state, 'unknown') = ?")
+		conds = append(conds, syncStateColumn+" = ?")
 		args = append(args, f.Sync)
 	}
 	if f.Identified == "recent" {
-		at := f.ForkAt
-		if at.IsZero() {
-			at = time.Now()
-		}
 		condition, cutoff := chartFingerprintConditionAt(at)
 		conds = append(conds, "("+condition+")")
 		args = append(args, cutoff)
@@ -873,7 +863,6 @@ func (e *Engine) StatsForMembershipAt(ctx context.Context, network, membership s
 		ByNetwork: map[string]int{}, ByClient: map[string]int{}, ByClientEL: map[string]int{}, ByClientCL: map[string]int{},
 		ByDirectionEL: map[string]int{}, ByDirectionCL: map[string]int{},
 		ByCountry: map[string]int{}, ByOrg: map[string]int{}, ByOS: map[string]int{}, ByLayer: map[string]int{}, ByVersion: map[string]int{},
-		BySyncEL: map[string]int{}, BySyncCL: map[string]int{},
 	}
 	if !generatedAt.IsZero() {
 		s.SnapshotGeneratedAt = generatedAt.UTC().Format(time.RFC3339Nano)
@@ -952,31 +941,6 @@ func (e *Engine) StatsForMembershipAt(ctx context.Context, network, membership s
 	groups := `SELECT network, country, org, layer, grouping(network), grouping(country), grouping(org), count(*)
 		FROM ` + flagged + ` WHERE cur GROUP BY GROUPING SETS ((network), (country), (org), (layer))`
 	if err := scanGroupingSets(ctx, tx, groups, flaggedArgs, s.ByNetwork, s.ByCountry, s.ByOrg, s.ByLayer); err != nil {
-		return s, err
-	}
-
-	syncs := `SELECT layer, coalesce(sync_state, 'unknown'), count(*) FROM ` + flagged + ` WHERE cur AND layer IN ('el', 'cl') GROUP BY ALL`
-	syncRows, err := tx.QueryContext(ctx, syncs, flaggedArgs...)
-	if err != nil {
-		return s, err
-	}
-	for syncRows.Next() {
-		var layer, state string
-		var c int
-		if err := syncRows.Scan(&layer, &state, &c); err != nil {
-			syncRows.Close()
-			return s, err
-		}
-		if layer == "el" {
-			s.BySyncEL[state] += c
-		} else {
-			s.BySyncCL[state] += c
-		}
-	}
-	if err := syncRows.Close(); err != nil {
-		return s, err
-	}
-	if err := syncRows.Err(); err != nil {
 		return s, err
 	}
 
@@ -1218,7 +1182,7 @@ func scanNodes(rows *sql.Rows, at time.Time) ([]Node, error) {
 		n.ForkCompatible = netconf.RowForkCurrentAt(n.Layer, n.Network, n.ForkHash, n.ForkNext, at)
 		target, ok := targets[n.Network]
 		if !ok {
-			if t, err := netconf.ForkTargetAt(n.Network, at); err == nil && t.Phase() != "" {
+			if t, err := netconf.ForkTargetAt(n.Network, at); err == nil && t.Phase() != netconf.PhaseNone {
 				target = &t
 			}
 			targets[n.Network] = target

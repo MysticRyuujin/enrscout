@@ -24,6 +24,16 @@ export function layerName(layer: string, unknown = "Unknown layer"): string {
   return layer === "el" ? "Execution" : layer === "cl" ? "Consensus" : unknown;
 }
 
+export function nodesPath(layer: string): string {
+  return layer === "cl" ? "/nodes/consensus" : "/nodes/execution";
+}
+
+export function whileVisible(load: () => unknown): () => void {
+  return () => {
+    if (document.visibilityState === "visible") void load();
+  };
+}
+
 // A supernode custodies every PeerDAS custody group.
 export const SUPERNODE_CGC = 128;
 

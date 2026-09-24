@@ -32,7 +32,10 @@ func TestRecordReadinessAppendsAcrossRestartsAndKeepsUnreadable(t *testing.T) {
 		{ID: "b", Layer: "el", ForkHash: hex.EncodeToString(hash[:]), Client: "Geth", FPStatus: "ok", FPAt: at.Unix()},
 		{ID: "c", Layer: "el", ForkHash: hex.EncodeToString(hash[:])},
 	}}
-	key := layout.ReadinessHistoryKey("sepolia", "Glamsterdam")
+	key, err := layout.ReadinessHistoryKey("sepolia", "Glamsterdam")
+	if err != nil {
+		t.Fatal(err)
+	}
 	read := func() *snapshot.ReadinessHistory {
 		t.Helper()
 		data, err := st.Get(ctx, key)
@@ -54,7 +57,7 @@ func TestRecordReadinessAppendsAcrossRestartsAndKeepsUnreadable(t *testing.T) {
 		t.Fatalf("history = %+v, want one point for the Amsterdam time", h)
 	}
 	p := h.Points[0]
-	if p.EL["ready"] != 1 || p.EL["not_ready"] != 2 || p.ClientsEL["Geth"] != [2]int{1, 2} {
+	if p.EL["ready"] != 1 || p.EL["not_ready"] != 2 {
 		t.Fatalf("point = %+v", p)
 	}
 

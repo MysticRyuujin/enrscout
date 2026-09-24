@@ -86,13 +86,13 @@ func TestForksEndpoint(t *testing.T) {
 		}
 		tracked[network] = true
 		h := &snapshot.ReadinessHistory{Version: snapshot.ReadinessHistoryVersion, Network: network, Fork: target.Name,
-			ELTime: elTimeOf(target), CLEpoch: clEpochOf(target),
 			Points: []snapshot.ReadinessPoint{{At: now.Unix(), EL: map[string]int{"ready": 1}}}}
+		h.ELTime, h.CLEpoch = target.Schedule()
 		data, err := h.Encode()
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := st.Put(context.Background(), layout.ReadinessHistoryKey(network, target.Name), data, "application/json"); err != nil {
+		if err := st.Put(context.Background(), historyKey(t, layout, network, target.Name), data, "application/json"); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -121,13 +121,10 @@ func TestForksEndpoint(t *testing.T) {
 			t.Fatal(err)
 		}
 		want := target.Phase()
-		if want == "" {
-			want = "none"
-		}
 		if body.Network != network || body.Phase != want || body.Fork.Name != target.Name {
 			t.Errorf("%s: network %q phase %q fork %q, want phase %q fork %q", network, body.Network, body.Phase, body.Fork.Name, want, target.Name)
 		}
-		if want != "none" && (body.Layers["el"] == nil || body.Layers["el"].Total != 1) {
+		if want != netconf.PhaseNone && (body.Layers["el"] == nil || body.Layers["el"].Total != 1) {
 			t.Errorf("%s: el layer = %+v, want the one seeded row", network, body.Layers["el"])
 		}
 		if tracked[network] && (body.History == nil || len(body.History.Points) != 1) {
@@ -149,7 +146,7 @@ func TestForksEndpointSurvivesCorruptHistory(t *testing.T) {
 	if target.Name == "" {
 		t.Skip("no fork tracked on sepolia at this date")
 	}
-	if err := st.Put(context.Background(), snapshot.Layout{}.ReadinessHistoryKey("sepolia", target.Name), []byte("{"), "application/json"); err != nil {
+	if err := st.Put(context.Background(), historyKey(t, snapshot.Layout{}, "sepolia", target.Name), []byte("{"), "application/json"); err != nil {
 		t.Fatal(err)
 	}
 	rr := httptest.NewRecorder()
@@ -174,16 +171,11 @@ func TestNodeFilterClientExact(t *testing.T) {
 	}
 }
 
-func elTimeOf(t netconf.ForkTarget) uint64 {
-	if t.EL == nil {
-		return 0
+func historyKey(t *testing.T, layout snapshot.Layout, network, fork string) string {
+	t.Helper()
+	key, err := layout.ReadinessHistoryKey(network, fork)
+	if err != nil {
+		t.Fatal(err)
 	}
-	return t.EL.Time
-}
-
-func clEpochOf(t netconf.ForkTarget) uint64 {
-	if t.CL == nil {
-		return 0
-	}
-	return t.CL.Epoch
+	return key
 }

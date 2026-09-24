@@ -24,6 +24,7 @@ import (
 	"github.com/MysticRyuujin/enrscout/internal/metricsrv"
 	"github.com/MysticRyuujin/enrscout/internal/netconf"
 	"github.com/MysticRyuujin/enrscout/internal/query"
+	"github.com/MysticRyuujin/enrscout/internal/snapshot"
 	"github.com/MysticRyuujin/enrscout/internal/store"
 )
 
@@ -357,7 +358,7 @@ func routes(eng *query.Engine, cors string, maxAge time.Duration, networks []str
 			writeErr(w, err)
 			return
 		}
-		w.Header().Set("Cache-Control", mapCacheControl(at, nextTransition, 300))
+		w.Header().Set("Cache-Control", cacheControlUntil(at, nextTransition, 300))
 		w.Header().Set("ETag", etag)
 		if etagMatches(r.Header.Get("If-None-Match"), etag) {
 			w.WriteHeader(http.StatusNotModified)
@@ -370,6 +371,9 @@ func routes(eng *query.Engine, cors string, maxAge time.Duration, networks []str
 	// The Forks page polls every minute and the body key buckets to the minute.
 	const forksMaxAge = 60
 	forks := newLRU[[]byte](32)
+	// The crawler appends a point once per ReadinessInterval, so the object is read once per interval
+	// rather than on every body-cache miss.
+	histories := newLRU[*snapshot.ReadinessHistory](8)
 	mux.HandleFunc("GET /api/v1/forks", instrument("/api/v1/forks", func(w http.ResponseWriter, r *http.Request) {
 		network := r.URL.Query().Get("network")
 		if network == "" {
@@ -394,13 +398,7 @@ func routes(eng *query.Engine, cors string, maxAge time.Duration, networks []str
 			return
 		}
 		if target.Phase() == netconf.PhaseActivated {
-			var activation time.Time
-			if target.EL != nil {
-				activation = time.Unix(int64(target.EL.Time), 0)
-			} else if target.CL != nil {
-				activation = target.CL.Time
-			}
-			if end := activation.Add(netconf.ForkTrackingGrace); nextTransition.IsZero() || end.Before(nextTransition) {
+			if end := target.Activation().Add(netconf.ForkTrackingGrace); nextTransition.IsZero() || end.Before(nextTransition) {
 				nextTransition = end
 			}
 		}
@@ -412,9 +410,13 @@ func routes(eng *query.Engine, cors string, maxAge time.Duration, networks []str
 			if err != nil {
 				return nil, err
 			}
-			if result.Phase != "none" {
+			if result.Phase != netconf.PhaseNone {
+				bucket := strconv.FormatInt(at.Truncate(snapshot.ReadinessInterval).Unix(), 10)
+				history, err := histories.load(r.Context(), network+"\x00"+result.Fork.Name+"\x00"+bucket, func() (*snapshot.ReadinessHistory, error) {
+					return eng.ReadinessHistoryFor(r.Context(), network, result.Fork)
+				})
 				// History is a side output; a bad object must not hide the live counts.
-				if history, err := eng.ReadinessHistoryFor(r.Context(), network, result.Fork); err != nil {
+				if err != nil {
 					slog.Warn("read readiness history", "network", network, "err", err)
 				} else {
 					result.History = history
@@ -426,7 +428,7 @@ func routes(eng *query.Engine, cors string, maxAge time.Duration, networks []str
 			writeErr(w, err)
 			return
 		}
-		w.Header().Set("Cache-Control", mapCacheControl(at, nextTransition, forksMaxAge))
+		w.Header().Set("Cache-Control", cacheControlUntil(at, nextTransition, forksMaxAge))
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(body)
 	}))
@@ -449,7 +451,7 @@ func forkEra(at time.Time, network string) (string, time.Time, error) {
 	return netconf.ForkEraTokenAt(at, network)
 }
 
-func mapCacheControl(at, nextTransition time.Time, maxAge int) string {
+func cacheControlUntil(at, nextTransition time.Time, maxAge int) string {
 	if !nextTransition.IsZero() {
 		remaining := nextTransition.Sub(at)
 		if remaining <= 0 {

@@ -6,33 +6,31 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/MysticRyuujin/enrscout/internal/clientname"
 	"github.com/MysticRyuujin/enrscout/internal/netconf"
 	"github.com/MysticRyuujin/enrscout/internal/nodeset"
 	"github.com/MysticRyuujin/enrscout/internal/snapshot"
 	"github.com/MysticRyuujin/enrscout/internal/store"
 )
 
-// readinessPointAt applies the same rule and client-chart population as /api/v1/forks, so a history
-// point and the live response agree for the same rows.
+// readinessPointAt applies the same rule as /api/v1/forks, so a history point and the live counts
+// agree for the same rows.
 func readinessPointAt(target netconf.ForkTarget, network string, rows []nodeset.Row, at time.Time) snapshot.ReadinessPoint {
 	point := snapshot.ReadinessPoint{At: at.Unix()}
-	freshAfter := at.Add(-7 * 24 * time.Hour).Unix()
+	if target.EL != nil {
+		point.EL = map[string]int{}
+	}
+	if target.CL != nil {
+		point.CL = map[string]int{}
+	}
 	for _, row := range rows {
 		var layer map[string]int
-		var clients map[string][2]int
-		switch {
-		case row.Layer == "el" && target.EL != nil:
-			if point.EL == nil {
-				point.EL, point.ClientsEL = map[string]int{}, map[string][2]int{}
-			}
-			layer, clients = point.EL, point.ClientsEL
-		case row.Layer == "cl" && target.CL != nil:
-			if point.CL == nil {
-				point.CL, point.ClientsCL = map[string]int{}, map[string][2]int{}
-			}
-			layer, clients = point.CL, point.ClientsCL
-		default:
+		switch row.Layer {
+		case "el":
+			layer = point.EL
+		case "cl":
+			layer = point.CL
+		}
+		if layer == nil {
 			continue
 		}
 		readiness := netconf.ReadinessAt(target, network, netconf.ReadinessEvidence{
@@ -40,19 +38,6 @@ func readinessPointAt(target netconf.ForkTarget, network string, rows []nodeset.
 			ENRForkDigest: row.ENRForkDigest, ENRNextForkVersion: row.ENRNextForkVersion, ENRNextForkEpoch: row.ENRNextForkEpoch,
 		}, at)
 		layer[string(readiness)]++
-		if readiness == netconf.Stale || row.Client == "" || (row.FPStatus != "ok" && row.FPStatus != "stale") || row.FPAt < freshAfter {
-			continue
-		}
-		client := row.Client
-		if !clientname.Recognized(client) {
-			client = "Other"
-		}
-		c := clients[client]
-		if readiness == netconf.Ready {
-			c[0]++
-		}
-		c[1]++
-		clients[client] = c
 	}
 	return point
 }
@@ -67,10 +52,14 @@ func (p *publisher) recordReadiness(ctx context.Context, byNet map[string][]node
 	p.readinessAt = now
 	for _, network := range p.networks {
 		target, err := netconf.ForkTargetAt(network, now)
-		if err != nil || target.Phase() == "" || target.Name == "" {
+		if err != nil || target.Phase() == netconf.PhaseNone {
 			continue
 		}
-		key := p.layout.ReadinessHistoryKey(network, target.Name)
+		key, err := p.layout.ReadinessHistoryKey(network, target.Name)
+		if err != nil {
+			slog.Warn("readiness history key", "network", network, "err", err)
+			continue
+		}
 		history := &snapshot.ReadinessHistory{Version: snapshot.ReadinessHistoryVersion, Network: network, Fork: target.Name}
 		if data, err := p.store.Get(ctx, key); err == nil {
 			stored, err := snapshot.DecodeReadinessHistory(data)
@@ -84,14 +73,7 @@ func (p *publisher) recordReadiness(ctx context.Context, byNet map[string][]node
 			slog.Warn("read readiness history", "key", key, "err", err)
 			continue
 		}
-		var elTime, clEpoch uint64
-		if target.EL != nil {
-			elTime = target.EL.Time
-		}
-		if target.CL != nil {
-			clEpoch = target.CL.Epoch
-		}
-		if history.ELTime != elTime || history.CLEpoch != clEpoch {
+		if elTime, clEpoch := target.Schedule(); history.ELTime != elTime || history.CLEpoch != clEpoch {
 			// A rescheduled fork is a different series; mixing them would draw one false curve.
 			history.ELTime, history.CLEpoch, history.Points = elTime, clEpoch, nil
 		}

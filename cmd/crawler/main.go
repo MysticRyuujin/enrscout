@@ -539,7 +539,7 @@ func restore(ctx context.Context, st store.Store, layout snapshot.Layout, set *n
 				}
 			}
 		}
-		if m.SchemaVersion < cgcSchemaVersion {
+		if m.SchemaVersion < enrScheduleSchemaVersion {
 			for i := range rows {
 				if rows[i].Layer != "cl" || rows[i].ENR == "" {
 					continue
@@ -548,21 +548,14 @@ func restore(ctx context.Context, st store.Store, layout snapshot.Layout, set *n
 				if err != nil {
 					continue
 				}
-				var cgc netconf.CGCEntry
-				if n.Load(&cgc) == nil {
-					rows[i].CGC, rows[i].CGCKnown = cgc.Uint32()
+				if m.SchemaVersion < cgcSchemaVersion {
+					var cgc netconf.CGCEntry
+					if n.Load(&cgc) == nil {
+						rows[i].CGC, rows[i].CGCKnown = cgc.Uint32()
+					}
 				}
-			}
-		}
-		if m.SchemaVersion < enrScheduleSchemaVersion {
-			for i := range rows {
-				if rows[i].Layer != "cl" || rows[i].ENR == "" {
-					continue
-				}
-				if n, err := enode.Parse(enode.ValidSchemes, rows[i].ENR); err == nil {
-					s := nodeset.CLForkScheduleOf(n)
-					rows[i].ENRForkDigest, rows[i].ENRNextForkVersion, rows[i].ENRNextForkEpoch = s.Digest, s.NextVersion, s.NextEpoch
-				}
+				s := nodeset.CLForkScheduleOf(n)
+				rows[i].ENRForkDigest, rows[i].ENRNextForkVersion, rows[i].ENRNextForkEpoch = s.Digest, s.NextVersion, s.NextEpoch
 			}
 		}
 		for i := range rows {

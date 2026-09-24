@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import { fetchStats } from "../api";
-import { num, topN } from "../theme";
+import { nodesPath, num, topN, whileVisible } from "../theme";
 import { BarRows } from "./BarList";
 
 const SHOWN_VERSIONS = 12;
@@ -41,9 +41,7 @@ export default function ClientVersions({
         .catch(() => live && setVersions({}));
     setVersions({});
     load();
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === "visible") void load();
-    }, 60000);
+    const timer = window.setInterval(whileVisible(load), 60000);
     return () => {
       live = false;
       window.clearInterval(timer);
@@ -68,7 +66,7 @@ export default function ClientVersions({
       .map((c) => c.client),
   );
   const nodesLink = choice && {
-    pathname: choice.layer === "el" ? "/nodes/execution" : "/nodes/consensus",
+    pathname: nodesPath(choice.layer),
     search: new URLSearchParams({
       client: choice.client,
       client_exact: "yes",

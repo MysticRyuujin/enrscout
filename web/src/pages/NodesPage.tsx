@@ -8,7 +8,7 @@ import type { NodeQuery, NodesResult } from "../types";
 const PAGE = 50;
 const FILTER_DEBOUNCE_MS = 250;
 
-type PatchFilter = (key: string, value: string) => void;
+type PatchFilter = (key: string, value: string, clear?: string[]) => void;
 type NodeSort = "last_seen" | "client" | "cgc";
 
 // Accepted custody expressions: "128" (exact), "4-8" (range), "8+" / ">=8"
@@ -166,30 +166,23 @@ export default function NodesPage({ layer }: { layer: "el" | "cl" }) {
   useEffect(() => {
     setSpRef.current = setSp;
   }, [setSp]);
-  const patch = useCallback((k: string, v: string) => {
-    setSpRef.current(
-      (current) => {
-        const next = new URLSearchParams(current);
-        if (v) next.set(k, v);
-        else next.delete(k);
-        return next;
-      },
-      { replace: true },
-    );
-  }, []);
-  const patchClient = useCallback((k: string, v: string) => {
+  const patch = useCallback((k: string, v: string, clear: string[] = []) => {
     setSpRef.current(
       (current) => {
         const next = new URLSearchParams(current);
         if ((next.get(k) ?? "") === v) return current;
         if (v) next.set(k, v);
         else next.delete(k);
-        next.delete("client_exact");
+        for (const key of clear) next.delete(key);
         return next;
       },
       { replace: true },
     );
   }, []);
+  const patchClient = useCallback(
+    (k: string, v: string) => patch(k, v, ["client_exact"]),
+    [patch],
+  );
 
   const changeSort = (value: NodeSort) => {
     const next = new URLSearchParams(sp);

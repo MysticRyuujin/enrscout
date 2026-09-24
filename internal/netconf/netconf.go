@@ -81,7 +81,6 @@ type Network struct {
 
 	once    sync.Once
 	genesis *types.Block
-	times   []uint64
 	elForks []elForkTime
 	hashMu  sync.RWMutex
 	hashes  map[[4]byte]struct{}
@@ -99,9 +98,6 @@ func (n *Network) load() {
 	n.once.Do(func() {
 		n.genesis = n.genesisFn().ToBlock()
 		n.elForks = forkTimes(n.ChainConfig)
-		for _, f := range n.elForks {
-			n.times = append(n.times, f.time)
-		}
 	})
 }
 
@@ -110,8 +106,8 @@ func (n *Network) load() {
 func (n *Network) forkEraAt(at time.Time) int64 {
 	unix := clampUnix(at)
 	var era int64
-	for _, ft := range n.times {
-		if t := int64(ft); t <= unix && t > era {
+	for _, f := range n.elForks {
+		if t := int64(f.time); t <= unix && t > era {
 			era = t
 		}
 	}
@@ -136,9 +132,9 @@ func (n *Network) gatherHashes(at time.Time) map[[4]byte]struct{} {
 	// With the head block fixed, the id changes only at scheduled fork times (the same invariant
 	// forkEraAt relies on), so the window is the id at its start plus each boundary inside it.
 	set[forkid.NewID(n.ChainConfig, n.genesis, forkHeadBlock, uint64(start)).Hash] = struct{}{}
-	for _, ft := range n.times {
-		if t := int64(ft); t >= start && t <= now+ahead {
-			set[forkid.NewID(n.ChainConfig, n.genesis, forkHeadBlock, ft).Hash] = struct{}{}
+	for _, f := range n.elForks {
+		if t := int64(f.time); t >= start && t <= now+ahead {
+			set[forkid.NewID(n.ChainConfig, n.genesis, forkHeadBlock, f.time).Hash] = struct{}{}
 		}
 	}
 	return set
@@ -251,8 +247,8 @@ func ForkEraTokenAt(at time.Time, requested ...string) (string, time.Time, error
 		if !state.NextTransition.IsZero() && (next.IsZero() || state.NextTransition.Before(next)) {
 			next = state.NextTransition
 		}
-		for _, unix := range n.times {
-			transition := time.Unix(int64(unix), 0).UTC()
+		for _, f := range n.elForks {
+			transition := time.Unix(int64(f.time), 0).UTC()
 			if transition.After(at) && (next.IsZero() || transition.Before(next)) {
 				next = transition
 			}

@@ -38,9 +38,8 @@ const maxReleasesFileBytes = 1 << 20
 // compared by hash because a copy that preserves mtime and size would otherwise be missed; a file that
 // fails to read or validate keeps the table already in use.
 type releasesFile struct {
-	path   string
-	sum    [sha256.Size]byte
-	loaded bool
+	path string
+	sum  [sha256.Size]byte
 }
 
 func (f *releasesFile) load() error {
@@ -49,7 +48,7 @@ func (f *releasesFile) load() error {
 		return err
 	}
 	sum := sha256.Sum256(data)
-	if f.loaded && sum == f.sum {
+	if sum == f.sum {
 		return nil
 	}
 	table, err := decodeReleases(data)
@@ -59,7 +58,7 @@ func (f *releasesFile) load() error {
 	if err := netconf.SetClientReleases(table); err != nil {
 		return fmt.Errorf("validate %s: %w", f.path, err)
 	}
-	f.sum, f.loaded = sum, true
+	f.sum = sum
 	slog.Info("client release table loaded", "file", f.path, "updated", table.Updated, "entries", len(table.Releases))
 	return nil
 }

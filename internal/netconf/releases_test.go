@@ -46,7 +46,7 @@ func TestBuiltinClientReleasesMatchConfiguredForks(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, r := range table.Releases {
-		target, err := ForkTargetAt(r.Network, time.Unix(sepoliaAmsterdam-86400, 0))
+		target, err := ForkTargetAt(r.Network, time.Unix(sepoliaGlamsterdam-86400, 0))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -54,7 +54,7 @@ func TestBuiltinClientReleasesMatchConfiguredForks(t *testing.T) {
 			t.Errorf("%s/%s: no configured %s fork (target %q)", r.Network, r.Client, r.Fork, target.Name)
 		}
 	}
-	_, _, got := ClientReleasesAt("sepolia", mustTarget(t, "sepolia", time.Unix(sepoliaAmsterdam-86400, 0)))
+	_, got := ClientReleasesAt("sepolia", mustTarget(t, "sepolia", time.Unix(sepoliaGlamsterdam-86400, 0)))
 	for _, r := range got {
 		if r.Outdated {
 			t.Errorf("%s: built-in entry is outdated against the configured fork time", r.Client)
@@ -100,8 +100,8 @@ func TestClientReleasesRescheduledForkIsOutdated(t *testing.T) {
 	}()
 	before := ClientReleasesGeneration()
 	moved := ClientReleaseTable{Updated: "2026-09-25", Releases: []ClientRelease{
-		{Fork: "Glamsterdam", Network: "sepolia", Layer: "el", Client: "Geth", ForkTime: sepoliaAmsterdam - 3600, MinVersions: []string{"1.17.6"}},
-		{Fork: "Glamsterdam", Network: "sepolia", Layer: "cl", Client: "Prysm", ForkTime: sepoliaAmsterdam, MinVersions: []string{"7.2.0"}},
+		{Fork: "Glamsterdam", Network: "sepolia", Layer: "el", Client: "Geth", ForkTime: sepoliaGlamsterdam - 3600, MinVersions: []string{"1.17.6"}},
+		{Fork: "Glamsterdam", Network: "sepolia", Layer: "cl", Client: "Prysm", ForkTime: sepoliaGlamsterdam, MinVersions: []string{"7.2.0"}},
 	}}
 	if err := SetClientReleases(moved); err != nil {
 		t.Fatal(err)
@@ -109,14 +109,14 @@ func TestClientReleasesRescheduledForkIsOutdated(t *testing.T) {
 	if ClientReleasesGeneration() == before {
 		t.Fatal("generation did not change, so cached responses would keep the old table")
 	}
-	updated, _, got := ClientReleasesAt("sepolia", mustTarget(t, "sepolia", time.Unix(sepoliaAmsterdam-86400, 0)))
+	updated, got := ClientReleasesAt("sepolia", mustTarget(t, "sepolia", time.Unix(sepoliaGlamsterdam-86400, 0)))
 	if updated != "2026-09-25" || len(got) != 2 || !got[0].Outdated || got[1].Outdated {
 		t.Fatalf("entries = %+v (updated %q), want only the entry verified against another time outdated", got, updated)
 	}
 	if err := SetClientReleases(ClientReleaseTable{Releases: []ClientRelease{{Layer: "el", Client: "Geth"}}}); err == nil {
 		t.Fatal("invalid table accepted")
 	}
-	if updated, _, _ := ClientReleasesAt("sepolia", mustTarget(t, "sepolia", time.Unix(sepoliaAmsterdam-86400, 0))); updated != "2026-09-25" {
+	if updated, _ := ClientReleasesAt("sepolia", mustTarget(t, "sepolia", time.Unix(sepoliaGlamsterdam-86400, 0))); updated != "2026-09-25" {
 		t.Fatalf("an invalid table replaced the good one (updated %q)", updated)
 	}
 }

@@ -180,12 +180,7 @@ func withForkReadiness(ctx context.Context, st store.Store, layout snapshot.Layo
 		}
 	}
 	h := &snapshot.ReadinessHistory{Version: snapshot.ReadinessHistoryVersion, Network: network, Fork: target.Name}
-	if target.EL != nil {
-		h.ELTime = target.EL.Time
-	}
-	if target.CL != nil {
-		h.CLEpoch = target.CL.Epoch
-	}
+	h.ELTime, h.CLEpoch = target.Schedule()
 	for i := range 24 {
 		at := gen.Add(-time.Duration(23-i) * snapshot.ReadinessInterval)
 		ready := i / 8
@@ -199,5 +194,9 @@ func withForkReadiness(ctx context.Context, st store.Store, layout snapshot.Layo
 	if err != nil {
 		return err
 	}
-	return st.Put(ctx, layout.ReadinessHistoryKey(network, target.Name), data, "application/json")
+	key, err := layout.ReadinessHistoryKey(network, target.Name)
+	if err != nil {
+		return err
+	}
+	return st.Put(ctx, key, data, "application/json")
 }

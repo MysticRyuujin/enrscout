@@ -1224,7 +1224,14 @@ type ENRForkSchedule struct {
 // CLForkScheduleOf returns the eth2 schedule a record advertises, or the zero value without one.
 func CLForkScheduleOf(n *enode.Node) ENRForkSchedule {
 	var eth2 netconf.Eth2Entry
-	if n.Load(&eth2) != nil || len(eth2) < 16 {
+	if n.Load(&eth2) != nil {
+		return ENRForkSchedule{}
+	}
+	return clForkSchedule(eth2)
+}
+
+func clForkSchedule(eth2 netconf.Eth2Entry) ENRForkSchedule {
+	if len(eth2) < 16 {
 		return ENRForkSchedule{}
 	}
 	// SSZ ENRForkID: fork_digest [0:4], next_fork_version [4:8], next_fork_epoch [8:16].
@@ -1314,7 +1321,7 @@ func extract(n *enode.Node) extracted {
 			var d [4]byte
 			copy(d[:], eth2[:4])
 			e.forkHash = hex.EncodeToString(eth2[:4])
-			e.schedule = CLForkScheduleOf(n)
+			e.schedule = clForkSchedule(eth2)
 			e.forkNext = e.schedule.NextEpoch
 			if nw := netconf.ClassifyCL(d); nw != "" {
 				e.network = nw

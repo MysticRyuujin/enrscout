@@ -173,7 +173,8 @@ export interface NodeQuery {
   offset?: number;
 }
 
-export type Readiness = "ready" | "not_ready" | "mismatch" | "unknown" | "stale";
+export type Readiness =
+  "ready" | "not_ready" | "mismatch" | "unknown" | "stale";
 export type ReadinessCounts = Record<Readiness, number>;
 
 export interface VersionReadiness {
@@ -198,7 +199,6 @@ export interface ClientReadiness {
   client: string;
   total: number;
   counts: ReadinessCounts;
-  release?: ClientRelease;
   versions: VersionReadiness[];
 }
 
@@ -207,15 +207,13 @@ export interface LayerReadiness {
   counts: ReadinessCounts;
   sync: Record<string, number>;
   unidentified: ReadinessCounts;
-  clients: ClientReadiness[] | null;
+  clients: ClientReadiness[];
 }
 
 export interface ReadinessPoint {
   at: number;
   el?: Partial<ReadinessCounts>;
   cl?: Partial<ReadinessCounts>;
-  clients_el?: Record<string, [number, number]>;
-  clients_cl?: Record<string, [number, number]>;
 }
 
 export interface ForkReadiness {
@@ -244,7 +242,7 @@ export interface ForkReadiness {
     };
   };
   releases_updated: string;
-  releases: ClientRelease[] | null;
+  releases: ClientRelease[];
   layers: Partial<Record<"el" | "cl", LayerReadiness>>;
   history?: { points: ReadinessPoint[] | null };
 }

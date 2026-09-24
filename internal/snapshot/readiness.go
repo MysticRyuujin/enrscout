@@ -3,6 +3,7 @@ package snapshot
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -15,14 +16,15 @@ const (
 	maxReadinessBytes = 8 << 20
 )
 
-// ReadinessPoint is one sample of a network's fork readiness. Layer maps count rows by readiness
-// state; client maps hold [ready, total] over the client-chart population.
+// ReadinessPoint is one sample of a network's fork readiness: rows per readiness state, per layer.
 type ReadinessPoint struct {
-	At        int64             `json:"at"`
-	EL        map[string]int    `json:"el,omitempty"`
-	CL        map[string]int    `json:"cl,omitempty"`
-	ClientsEL map[string][2]int `json:"clients_el,omitempty"`
-	ClientsCL map[string][2]int `json:"clients_cl,omitempty"`
+	At int64          `json:"at"`
+	EL map[string]int `json:"el,omitempty"`
+	CL map[string]int `json:"cl,omitempty"`
+	// Pre-release writers also recorded per-client pairs. They are accepted so those objects stay
+	// decodable and are dropped on the next write.
+	LegacyClientsEL json.RawMessage `json:"clients_el,omitempty"`
+	LegacyClientsCL json.RawMessage `json:"clients_cl,omitempty"`
 }
 
 // ReadinessHistory is a rolling series for one tracked fork on one network. It is written by the
@@ -37,9 +39,17 @@ type ReadinessHistory struct {
 	Points  []ReadinessPoint `json:"points"`
 }
 
-// ReadinessHistoryKey keeps history out of NetworkPrefix, which generation pruning owns.
-func (l Layout) ReadinessHistoryKey(network, fork string) string {
-	return fmt.Sprintf("%s/state/readiness/%s/%s.json", strings.TrimSuffix(l.prefix(), "/"), network, strings.ReplaceAll(strings.ToLower(fork), "/", "-"))
+var keySegment = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
+
+// ReadinessHistoryKey keeps history out of NetworkPrefix, which generation pruning owns, under the same
+// trimmed root as the crawler's other state objects. It checks both segments, so the writer and the
+// reader hold the key to one shape.
+func (l Layout) ReadinessHistoryKey(network, fork string) (string, error) {
+	fork = strings.ToLower(fork)
+	if !keySegment.MatchString(network) || !keySegment.MatchString(fork) {
+		return "", fmt.Errorf("readiness history key segments %q/%q", network, fork)
+	}
+	return fmt.Sprintf("%s/state/readiness/%s/%s.json", strings.TrimSuffix(l.prefix(), "/"), network, fork), nil
 }
 
 func DecodeReadinessHistory(data []byte) (*ReadinessHistory, error) {
@@ -52,6 +62,9 @@ func DecodeReadinessHistory(data []byte) (*ReadinessHistory, error) {
 	}
 	if h.Version != ReadinessHistoryVersion {
 		return nil, fmt.Errorf("unsupported readiness history version %d", h.Version)
+	}
+	for i := range h.Points {
+		h.Points[i].LegacyClientsEL, h.Points[i].LegacyClientsCL = nil, nil
 	}
 	return &h, nil
 }

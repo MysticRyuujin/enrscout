@@ -104,7 +104,7 @@ func (t ClientReleaseTable) Validate() error {
 			errs = append(errs, fmt.Errorf("%s: url %q is not an http(s) URL", key, r.URL))
 		case r.Layer != "el" && r.Layer != "cl":
 			errs = append(errs, fmt.Errorf("%s: layer %q", key, r.Layer))
-		case clientname.CanonicalVersion(r.Layer, r.Client, "") != r.Client || !clientname.Recognized(r.Client):
+		case clientname.Canonical(r.Layer, r.Client) != r.Client || !clientname.Recognized(r.Client):
 			errs = append(errs, fmt.Errorf("%s: %q is not a canonical client name, so its label would never match a row", key, r.Client))
 		case seen[key]:
 			errs = append(errs, fmt.Errorf("%s: duplicate entry", key))
@@ -132,10 +132,11 @@ func httpURL(s string) bool {
 }
 
 // ClientReleasesAt returns the entries for a network's tracked fork, marking any verified against a
-// fork time the target no longer has. The generation changes whenever the table is replaced.
-func ClientReleasesAt(network string, target ForkTarget) (updated string, generation uint64, out []ClientRelease) {
+// fork time the target no longer has.
+func ClientReleasesAt(network string, target ForkTarget) (updated string, out []ClientRelease) {
 	releasesMu.RLock()
 	defer releasesMu.RUnlock()
+	out = []ClientRelease{}
 	for _, r := range clientReleases.Releases {
 		if r.Network != network || !strings.EqualFold(r.Fork, target.Name) {
 			continue
@@ -152,7 +153,7 @@ func ClientReleasesAt(network string, target ForkTarget) (updated string, genera
 		}
 		out = append(out, r)
 	}
-	return clientReleases.Updated, clientReleasesGen, out
+	return clientReleases.Updated, out
 }
 
 const (
