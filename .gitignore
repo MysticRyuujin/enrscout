@@ -26,3 +26,4 @@ coverage.out
 
 # Generated E2E snapshot fixtures
 deploy/e2e/fixtures/
+web/e2e/design/

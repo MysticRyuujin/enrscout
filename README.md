@@ -316,6 +316,10 @@ cd web && npm ci && npx playwright install chromium
 node e2e/browse.mjs        # WEB_BASE defaults to http://localhost:8081
 ```
 
+`make design` (`web/e2e/design.mjs`) renders every page at four viewports against the same
+stack, applies the layout rules in [docs/design-contract.md](docs/design-contract.md), and
+diffs each screenshot against a local baseline. It is a local check, not a CI job.
+
 Regenerate the fixtures before each run. Client charts count only fingerprints
 fresher than 7 days, so fixtures older than that render empty donuts.
 

@@ -14,3 +14,12 @@ the repository-root AGENTS.md for architecture and cross-cutting constraints.
 - Network accent color follows the selected network in tiles/headers; the map colors
   points **by client** with one stable assignment ranked by within-layer share, and
   donut _category_ colors are fixed (validated categorical palette in `web/src/theme.ts`).
+
+## Design check (run before every commit that touches `web/`)
+
+`docs/design-contract.md` is the design review for this project; there is no human reviewer.
+Bring up the fixture stack, run `make design`, and read every changed screenshot at every
+viewport against the contract before committing. A `FAIL` blocks the commit. A `WARN` is a taste
+finding: fix it, or say in the commit message why it stays. Accept intended changes with
+`make design-update`. Edit `styles.css` with an exact anchor, never a file-wide substitution, and
+never report a layout as verified without a screenshot.

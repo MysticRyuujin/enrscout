@@ -177,6 +177,7 @@ a {
 .page-head .sub {
   margin: 4px 0 0;
   color: var(--muted);
+  word-break: break-all;
 }
 
 .back {
