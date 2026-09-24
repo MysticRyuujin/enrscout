@@ -82,18 +82,19 @@ export default function ReadinessTrend({
   const series = layers.map((layer) => {
     const values = points.map((p) => readyShare(layer === "el" ? p.el : p.cl));
     let d = "";
-    values.forEach((v, i) => {
-      if (v === null) return;
+    let last: { at: number; value: number } | null = null;
+    for (const [i, v] of values.entries()) {
+      if (v === null) continue;
       d += `${d && values[i - 1] !== null ? "L" : "M"}${x(points[i].at).toFixed(1)},${y(v).toFixed(1)}`;
-    });
-    const last = [...values].reverse().find((v) => v !== null) ?? null;
+      last = { at: points[i].at, value: v };
+    }
     return { layer, values, d, last };
   });
 
   const labelY: Record<string, number> = {};
   const placed = series
     .filter((s) => s.last !== null)
-    .map((s) => ({ layer: s.layer, y: y(s.last!) + 4 }))
+    .map((s) => ({ layer: s.layer, y: y(s.last!.value) + 4 }))
     .sort((a, b) => a.y - b.y);
   placed.forEach((l, i) => {
     const floor = i === 0 ? PAD.top + 10 : placed[i - 1].y + 13;
@@ -182,8 +183,8 @@ export default function ReadinessTrend({
             />
             {s.last !== null && (
               <circle
-                cx={x(tLast)}
-                cy={y(s.last)}
+                cx={x(s.last.at)}
+                cy={y(s.last.value)}
                 r={3.5}
                 fill={TREND_COLOR[s.layer]}
                 className="trend-dot"
@@ -192,10 +193,10 @@ export default function ReadinessTrend({
             {s.last !== null && (
               <text
                 className="trend-label"
-                x={x(tLast) + 6}
+                x={x(s.last.at) + 6}
                 y={labelY[s.layer]}
               >
-                {s.layer.toUpperCase()} {(s.last * 100).toFixed(1)}%
+                {s.layer.toUpperCase()} {(s.last.value * 100).toFixed(1)}%
               </text>
             )}
           </g>

@@ -63,7 +63,6 @@ func (f *releasesFile) load() error {
 	return nil
 }
 
-// readBounded re-applies the size limit while reading, since the file can grow after the Stat.
 func readBounded(path string) ([]byte, error) {
 	fh, err := os.Open(path)
 	if err != nil {

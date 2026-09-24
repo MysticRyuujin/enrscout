@@ -365,15 +365,12 @@ export default function NodesPage({ layer }: { layer: "el" | "cl" }) {
           <option value="unknown">sync unknown</option>
         </select>
         <select
-          value={query.fork}
+          value={query.fork || (query.readiness ? "all" : "current")}
           onChange={(e) => patch("fork", e.target.value)}
         >
-          <option value="">
-            {query.readiness ? "any fork" : "current fork"}
-          </option>
-          {query.readiness && <option value="current">current fork</option>}
+          <option value="current">current fork</option>
           <option value="stale">older fork</option>
-          {!query.readiness && <option value="all">any fork</option>}
+          <option value="all">any fork</option>
         </select>
         <select
           value={query.readiness}

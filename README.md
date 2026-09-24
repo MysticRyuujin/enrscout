@@ -160,7 +160,7 @@ The file is YAML, so it can carry comments; a JSON file also loads, because JSON
 Unknown keys are rejected, so a misspelt field fails validation instead of being ignored. The file replaces the built-in table as a whole, so copy the built-in entries you still want. Client
 names must be the canonical names the charts show (`Geth`, `Nethermind`, `Lighthouse`, and so on).
 The API validates the file at startup and refuses to start when it is missing or invalid. After startup it
-re-reads the file on every snapshot refresh (`--refresh`) when the file's time or size changes. A
+re-reads the file on every snapshot refresh (`--refresh`) and reloads it when its contents change. A
 file that fails to decode or validate is logged and ignored, and the table already in use stays in
 place. Fold overrides back into `releases.go` at the next release, so the built-in default stays
 current.
