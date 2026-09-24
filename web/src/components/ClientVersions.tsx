@@ -68,6 +68,7 @@ export default function ClientVersions({
   const nodesLink = choice && {
     pathname: nodesPath(choice.layer),
     search: new URLSearchParams({
+      network,
       client: choice.client,
       client_exact: "yes",
       identified: "recent",

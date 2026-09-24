@@ -184,6 +184,7 @@ function ClientRow({
   release?: ClientRelease;
   activated: boolean;
 }) {
+  const { network } = useNetwork();
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -208,6 +209,7 @@ function ClientRow({
             c.client === "Other" ? undefined : (
               <Link
                 to={nodesLink(layer, {
+                  network,
                   client: c.client,
                   client_exact: "yes",
                   identified: "recent",
