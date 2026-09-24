@@ -106,7 +106,7 @@ export default function About() {
           libp2p have no record and read as unknown. After activation, ready
           means upgraded and not ready means left behind.
         </p>
-        <p id="readiness-states">
+        <p>
           The bars on the Forks page split each client into these states. Before
           activation, <b>fork scheduled</b> means the node names this fork in
           its own schedule and <b>not scheduled</b> means it names none: the
@@ -141,8 +141,8 @@ export default function About() {
           the median head that other peers of the same network reported in the
           same ten minutes. It is an observed consensus of peer reports, not a
           trusted chain head, and it is shown for information only. Older{" "}
-          <code>eth</code>
-          versions report no block number, so those nodes read as unknown.
+          <code>eth</code> protocol versions report no block number, so those
+          nodes read as unknown.
         </p>
 
         <h3>Enrichment</h3>

@@ -153,7 +153,7 @@ function Legend({
           {stateLabel(s, activated)}
         </span>
       ))}
-      <Link to="/about#readiness-states">What these mean</Link>
+      <Link to="/about#fork-readiness">What these mean</Link>
     </div>
   );
 }
