@@ -63,6 +63,7 @@ func TestRecordReadinessAppendsAcrossRestartsAndKeepsUnreadable(t *testing.T) {
 
 	// A new process has no memory of the first one's points.
 	restarted := &publisher{store: st, layout: layout, networks: []string{"sepolia"}}
+	restarted.recordReadiness(ctx, rows, at.Add(time.Minute))
 	restarted.recordReadiness(ctx, rows, at.Add(snapshot.ReadinessInterval))
 	if got := len(read().Points); got != 2 {
 		t.Fatalf("after restart points = %d, want 2", got)

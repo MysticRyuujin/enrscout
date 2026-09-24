@@ -78,8 +78,12 @@ func (p *publisher) recordReadiness(ctx context.Context, byNet map[string][]node
 			history.ELTime, history.CLEpoch, history.Points = elTime, clEpoch, nil
 		}
 		if !history.Append(readinessPointAt(target, network, byNet[network], now)) {
-			if last := history.Points[len(history.Points)-1].At; last > now.Unix() {
-				slog.Warn("readiness history has a point after now; not appending until the clock passes it", "key", key, "last", time.Unix(last, 0).UTC())
+			last := time.Unix(history.Points[len(history.Points)-1].At, 0)
+			if last.After(now) {
+				slog.Warn("readiness history has a point after now; not appending until the clock passes it", "key", key, "last", last.UTC())
+			} else if last.Before(p.readinessAt) {
+				// Keep the persisted cadence when a restart checks before the next point is due.
+				p.readinessAt = last
 			}
 			continue
 		}
