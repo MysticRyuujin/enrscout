@@ -592,7 +592,7 @@ func TestParseCLAgent(t *testing.T) {
 		{"caplin/caplin/v3.5.2/linux-amd64/go1.25", "Caplin", "v3.5.2", "linux/x86_64", "go1.25"},
 		{"erigon/caplin/v3.3.9/linux-amd64/go1.25", "Caplin", "v3.3.9", "linux/x86_64", "go1.25"},
 		{"Lighthouse/v8.2.2-e423a66/riscv64-linux", "Lighthouse", "v8.2.2-e423a66", "linux/riscv64", ""},
-		{"ethrex/v24.0.0-main-ac8eb46a04718e526939994034e6ae41e8554918/riscv64gc-unknown-linux-gnu/rustc-v1.93.0", "Ethrex", "v24.0.0-main-ac8eb46a04718e526939994034e6ae41e8554918", "linux/riscv64", "rustc-v1.93.0"},
+		{"ethrex/v24.0.0-main-ac8eb46a04718e526939994034e6ae41e8554918/riscv64gc-unknown-linux-gnu/rustc-v1.93.0", "ethrex", "v24.0.0-main-ac8eb46a04718e526939994034e6ae41e8554918", "linux/riscv64", "rustc-v1.93.0"},
 		{"Geth/v1.17.5-stable-9621c6ad/linux-riscv64/go1.26.0", "Geth", "v1.17.5-stable-9621c6ad", "linux/riscv64", "go1.26.0"},
 	}
 	for _, c := range cases {
