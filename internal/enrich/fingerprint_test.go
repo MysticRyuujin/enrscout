@@ -572,6 +572,8 @@ func TestParseName(t *testing.T) {
 		{"Geth/1.2-prod/v1.17.6/linux-amd64/go1.26", "Geth", "v1.17.6", "linux/x86_64", "go1.26"},
 		{"Geth/a/b/v1.17.6/linux-amd64/go1.26", "Geth", "v1.17.6", "linux/x86_64", "go1.26"},
 		{"besu/myid/v26.8.1/linux-x86_64/openjdk-java-21", "besu", "v26.8.1", "linux/x86_64", "openjdk-java-21"},
+		{"Geth/v1.17.5-stable-9621c6ad/linux-riscv64/go1.26.0", "Geth", "v1.17.5-stable-9621c6ad", "linux/riscv64", "go1.26.0"},
+		{"ethrex/v24.0.0-main-ac8eb46a04718e526939994034e6ae41e8554918/riscv64gc-unknown-linux-gnu/rustc-v1.93.0", "ethrex", "v24.0.0-main-ac8eb46a04718e526939994034e6ae41e8554918", "linux/riscv64", "rustc-v1.93.0"},
 		{"solo", "solo", "", "", ""},
 		{"", "", "", "", ""},
 	}
@@ -591,6 +593,7 @@ func TestParseCLAgent(t *testing.T) {
 		{"caplin/v3.2.1/linux-amd64", "Caplin", "v3.2.1", "linux/x86_64", ""},
 		{"caplin/caplin/v3.5.2/linux-amd64/go1.25", "Caplin", "v3.5.2", "linux/x86_64", "go1.25"},
 		{"erigon/caplin/v3.3.9/linux-amd64/go1.25", "Caplin", "v3.3.9", "linux/x86_64", "go1.25"},
+		{"Lighthouse/v8.2.2-e423a66/riscv64-linux", "Lighthouse", "v8.2.2-e423a66", "linux/riscv64", ""},
 	}
 	for _, c := range cases {
 		client, version, os, lang := parseCLAgent(c.in)
@@ -608,6 +611,7 @@ func TestNormalizeOS(t *testing.T) {
 		"x86_64-unknown-linux-gnu": "linux/x86_64",
 		"linux-aarch_64":           "linux/arm64",
 		"windows-amd64":            "windows/x86_64",
+		"riscv64gc-unknown-linux":  "linux/riscv64",
 		"":                         "",
 		"a0071826c5daf7dc3a6e768":  "",
 	}
