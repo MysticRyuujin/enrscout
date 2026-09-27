@@ -657,6 +657,8 @@ func NormalizeOS(raw string) string {
 		arch = "arm64"
 	case strings.Contains(l, "amd64"), strings.Contains(l, "x86_64"), strings.Contains(l, "x64"):
 		arch = "x86_64"
+	case strings.Contains(l, "riscv64"):
+		arch = "riscv64"
 	}
 	switch {
 	case os == "" && arch == "":
