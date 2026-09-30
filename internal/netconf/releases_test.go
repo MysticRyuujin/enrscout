@@ -75,6 +75,10 @@ func TestClientReleaseTableValidate(t *testing.T) {
 		"unparsable floor":     {func(r *ClientRelease) { r.MinVersions = []string{"latest"} }, "not a release"},
 		"unknown network":      {func(r *ClientRelease) { r.Network = "sepoila" }, "unknown network"},
 		"script url":           {func(r *ClientRelease) { r.URL = "javascript:alert(1)" }, "http(s)"},
+		"script latest url":    {func(r *ClientRelease) { r.LatestURL = "javascript:alert(1)" }, "http(s)"},
+		"latest below floor":   {func(r *ClientRelease) { r.Latest = "1.17.5" }, "meets min_versions"},
+		"latest rc":            {func(r *ClientRelease) { r.Latest = "1.17.8-rc.1" }, "meets min_versions"},
+		"latest without floor": {func(r *ClientRelease) { r.MinVersions, r.Latest = nil, "1.17.7" }, "meets min_versions"},
 	} {
 		r := good
 		tc.mutate(&r)

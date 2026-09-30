@@ -193,6 +193,8 @@ export interface ClientRelease {
   prerelease?: string;
   released?: string;
   url?: string;
+  latest?: string;
+  latest_url?: string;
 }
 
 export interface ClientReadiness {

@@ -29,6 +29,8 @@ type ClientRelease struct {
 	Prerelease  string   `json:"prerelease,omitempty" yaml:"prerelease,omitempty"`
 	Released    string   `json:"released,omitempty" yaml:"released,omitempty"`
 	URL         string   `json:"url,omitempty" yaml:"url,omitempty"`
+	Latest      string   `json:"latest,omitempty" yaml:"latest,omitempty"`
+	LatestURL   string   `json:"latest_url,omitempty" yaml:"latest_url,omitempty"`
 	Outdated    bool     `json:"outdated,omitempty" yaml:"-"`
 }
 
@@ -40,26 +42,37 @@ type ClientReleaseTable struct {
 const sepoliaGlamsterdam = 1791294816
 
 var builtinClientReleases = ClientReleaseTable{
-	Updated: "2026-09-24",
+	Updated: "2026-09-30",
 	Releases: []ClientRelease{
 		{Fork: "Glamsterdam", Network: "sepolia", Layer: "el", Client: "Geth", ForkTime: sepoliaGlamsterdam,
-			MinVersions: []string{"1.17.6"}, Released: "2026-09-23", URL: "https://github.com/ethereum/go-ethereum/releases/tag/v1.17.6"},
+			MinVersions: []string{"1.17.6"}, Released: "2026-09-23", URL: "https://github.com/ethereum/go-ethereum/releases/tag/v1.17.6",
+			Latest: "1.17.7", LatestURL: "https://github.com/ethereum/go-ethereum/releases/tag/v1.17.7"},
 		{Fork: "Glamsterdam", Network: "sepolia", Layer: "el", Client: "Nethermind", ForkTime: sepoliaGlamsterdam,
 			MinVersions: []string{"2.0.0"}, Released: "2026-09-22", URL: "https://github.com/NethermindEth/nethermind/releases/tag/2.0.0"},
 		{Fork: "Glamsterdam", Network: "sepolia", Layer: "el", Client: "Ethrex", ForkTime: sepoliaGlamsterdam,
-			Prerelease: "28.0.0-rc.1", Released: "2026-09-22", URL: "https://github.com/lambdaclass/ethrex/releases/tag/v28.0.0-rc.1"},
-		{Fork: "Glamsterdam", Network: "sepolia", Layer: "el", Client: "Besu"},
-		{Fork: "Glamsterdam", Network: "sepolia", Layer: "el", Client: "Erigon"},
-		{Fork: "Glamsterdam", Network: "sepolia", Layer: "el", Client: "Reth"},
-		{Fork: "Glamsterdam", Network: "sepolia", Layer: "el", Client: "Nimbus"},
-		{Fork: "Glamsterdam", Network: "sepolia", Layer: "el", Client: "EthereumJS"},
+			MinVersions: []string{"28.0.0"}, Released: "2026-09-29", URL: "https://github.com/lambdaclass/ethrex/releases/tag/v28.0.0"},
+		{Fork: "Glamsterdam", Network: "sepolia", Layer: "el", Client: "Besu", ForkTime: sepoliaGlamsterdam,
+			MinVersions: []string{"26.9.0"}, Released: "2026-09-25", URL: "https://github.com/besu-eth/besu/releases/tag/26.9.0"},
+		{Fork: "Glamsterdam", Network: "sepolia", Layer: "el", Client: "Erigon", ForkTime: sepoliaGlamsterdam,
+			MinVersions: []string{"3.7.0"}, Released: "2026-09-25", URL: "https://github.com/erigontech/erigon/releases/tag/v3.7.0"},
+		{Fork: "Glamsterdam", Network: "sepolia", Layer: "el", Client: "Reth", ForkTime: sepoliaGlamsterdam,
+			MinVersions: []string{"2.7.0"}, Released: "2026-09-28", URL: "https://github.com/paradigmxyz/reth/releases/tag/v2.7.0"},
+		{Fork: "Glamsterdam", Network: "sepolia", Layer: "el", Client: "Nimbus", ForkTime: sepoliaGlamsterdam,
+			MinVersions: []string{"0.4.2"}, Released: "2026-09-29", URL: "https://github.com/status-im/nimbus-eth1/releases/tag/v0.4.2"},
 		{Fork: "Glamsterdam", Network: "sepolia", Layer: "cl", Client: "Lighthouse"},
-		{Fork: "Glamsterdam", Network: "sepolia", Layer: "cl", Client: "Prysm"},
-		{Fork: "Glamsterdam", Network: "sepolia", Layer: "cl", Client: "Teku"},
-		{Fork: "Glamsterdam", Network: "sepolia", Layer: "cl", Client: "Nimbus"},
-		{Fork: "Glamsterdam", Network: "sepolia", Layer: "cl", Client: "Lodestar"},
-		{Fork: "Glamsterdam", Network: "sepolia", Layer: "cl", Client: "Grandine"},
-		{Fork: "Glamsterdam", Network: "sepolia", Layer: "cl", Client: "Caplin"},
+		{Fork: "Glamsterdam", Network: "sepolia", Layer: "cl", Client: "Prysm", ForkTime: sepoliaGlamsterdam,
+			MinVersions: []string{"7.2.0"}, Released: "2026-09-28", URL: "https://github.com/OffchainLabs/prysm/releases/tag/v7.2.0"},
+		{Fork: "Glamsterdam", Network: "sepolia", Layer: "cl", Client: "Teku", ForkTime: sepoliaGlamsterdam,
+			MinVersions: []string{"26.9.1"}, Released: "2026-09-28", URL: "https://github.com/Consensys-Incorporated/teku/releases/tag/26.9.1"},
+		{Fork: "Glamsterdam", Network: "sepolia", Layer: "cl", Client: "Nimbus", ForkTime: sepoliaGlamsterdam,
+			MinVersions: []string{"26.9.0"}, Released: "2026-09-29", URL: "https://github.com/status-im/nimbus-eth2/releases/tag/v26.9.0",
+			Latest: "26.9.1", LatestURL: "https://github.com/status-im/nimbus-eth2/releases/tag/v26.9.1"},
+		{Fork: "Glamsterdam", Network: "sepolia", Layer: "cl", Client: "Lodestar", ForkTime: sepoliaGlamsterdam,
+			MinVersions: []string{"1.49.0"}, Released: "2026-09-28", URL: "https://github.com/ChainSafe/lodestar/releases/tag/v1.49.0"},
+		{Fork: "Glamsterdam", Network: "sepolia", Layer: "cl", Client: "Grandine", ForkTime: sepoliaGlamsterdam,
+			Prerelease: "3.0.0-rc.0", Released: "2026-09-30", URL: "https://github.com/grandinetech/grandine/releases/tag/3.0.0-rc.0"},
+		{Fork: "Glamsterdam", Network: "sepolia", Layer: "cl", Client: "Caplin", ForkTime: sepoliaGlamsterdam,
+			MinVersions: []string{"3.7.0"}, Released: "2026-09-25", URL: "https://github.com/erigontech/erigon/releases/tag/v3.7.0"},
 	},
 }
 
@@ -102,6 +115,10 @@ func (t ClientReleaseTable) Validate() error {
 			errs = append(errs, fmt.Errorf("%s: unknown network %q", key, r.Network))
 		case r.URL != "" && !httpURL(r.URL):
 			errs = append(errs, fmt.Errorf("%s: url %q is not an http(s) URL", key, r.URL))
+		case r.LatestURL != "" && !httpURL(r.LatestURL):
+			errs = append(errs, fmt.Errorf("%s: latest_url %q is not an http(s) URL", key, r.LatestURL))
+		case r.Latest != "" && ReleaseStatus(r.MinVersions, r.Latest) != ReleaseMeets:
+			errs = append(errs, fmt.Errorf("%s: latest %q is not a release that meets min_versions", key, r.Latest))
 		case r.Layer != "el" && r.Layer != "cl":
 			errs = append(errs, fmt.Errorf("%s: layer %q", key, r.Layer))
 		case clientname.Canonical(r.Layer, r.Client) != r.Client || !clientname.Recognized(r.Client):
