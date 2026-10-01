@@ -170,6 +170,24 @@ function releaseText(r?: ClientRelease): string {
   return "no release yet";
 }
 
+function ReleaseLink({ text, url }: { text: string; url?: string }) {
+  return url ? (
+    <a href={url} target="_blank" rel="noreferrer">
+      {text}
+    </a>
+  ) : (
+    <>{text}</>
+  );
+}
+
+function LatestRelease({ r }: { r: ClientRelease }) {
+  if (!hasRelease(r)) return <>-</>;
+  if (r.latest) return <ReleaseLink text={r.latest} url={r.latest_url} />;
+  if (r.min_versions!.length === 1)
+    return <ReleaseLink text={r.min_versions![0]} url={r.url} />;
+  return <>-</>;
+}
+
 const VERSION_BADGE: Record<string, string> = {
   meets: "release ≥ minimum",
   below: "older release",
@@ -532,7 +550,8 @@ export default function Forks() {
           <h3>Client releases</h3>
           <p className="card-subtitle">
             First release of each client that ships the {data.fork.name}{" "}
-            schedule for <span className="net-name">{network}</span>. Updated{" "}
+            schedule for <span className="net-name">{network}</span>, and the
+            latest release to run, which can carry later fixes. Updated{" "}
             {data.releases_updated}.
           </p>
           <div className="table-wrap">
@@ -541,8 +560,9 @@ export default function Forks() {
                 <tr>
                   <th>Client</th>
                   <th>Layer</th>
-                  <th>Release</th>
-                  <th>Date</th>
+                  <th>Minimum</th>
+                  <th>Latest</th>
+                  <th>Minimum date</th>
                 </tr>
               </thead>
               <tbody>
@@ -551,13 +571,10 @@ export default function Forks() {
                     <td>{r.client}</td>
                     <td>{layerName(r.layer)}</td>
                     <td className={hasRelease(r) ? "rd-rel ok" : "rd-rel"}>
-                      {r.url ? (
-                        <a href={r.url} target="_blank" rel="noreferrer">
-                          {releaseText(r)}
-                        </a>
-                      ) : (
-                        releaseText(r)
-                      )}
+                      <ReleaseLink text={releaseText(r)} url={r.url} />
+                    </td>
+                    <td>
+                      <LatestRelease r={r} />
                     </td>
                     <td>{r.released ?? "-"}</td>
                   </tr>

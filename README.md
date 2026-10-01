@@ -152,6 +152,8 @@ releases:
     min_versions: ["2.0.0"] # one floor per release line; add a backport line's floor here
     released: 2026-09-22
     url: https://github.com/NethermindEth/nethermind/releases/tag/2.0.0
+    latest: 2.0.1 # optional: newest fork-ready release to recommend; must meet min_versions; set it when there are several floors
+    latest_url: https://github.com/NethermindEth/nethermind/releases/tag/2.0.1
   # No fork-ready release yet: listed so the page shows "no release yet".
   - {fork: Glamsterdam, network: sepolia, layer: cl, client: Prysm}
 ```

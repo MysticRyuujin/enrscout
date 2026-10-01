@@ -634,6 +634,16 @@ func parseName(name string) (client, version, os, lang string) {
 	return client, version, os, lang
 }
 
+// archTokens maps whole-token GOARCH names, and the Rust target spellings for the same CPUs, to
+// GOARCH. A substring match is unsafe here: "386" or "mips" can appear inside a version or hash.
+var archTokens = map[string]string{
+	"386": "386", "i386": "386", "i686": "386",
+	"ppc64": "ppc64", "ppc64le": "ppc64le", "powerpc64": "ppc64", "powerpc64le": "ppc64le",
+	"s390x":   "s390x",
+	"loong64": "loong64", "loongarch64": "loong64",
+	"mips": "mips", "mipsle": "mipsle", "mips64": "mips64", "mips64le": "mips64le",
+}
+
 // NormalizeOS folds the many os/arch spellings clients report into "os/arch".
 func NormalizeOS(raw string) string {
 	l := strings.ToLower(strings.TrimSpace(raw))
@@ -653,12 +663,21 @@ func NormalizeOS(raw string) string {
 	}
 	var arch string
 	switch {
-	case strings.Contains(l, "aarch"), strings.Contains(l, "arm64"), strings.Contains(l, "arm"):
+	case strings.Contains(l, "aarch"), strings.Contains(l, "arm64"):
 		arch = "arm64"
+	case strings.Contains(l, "arm"):
+		arch = "arm"
 	case strings.Contains(l, "amd64"), strings.Contains(l, "x86_64"), strings.Contains(l, "x64"):
 		arch = "x86_64"
-	case strings.Contains(l, "riscv64"):
+	case strings.Contains(l, "riscv64"), strings.Contains(l, "rv64"):
 		arch = "riscv64"
+	default:
+		for _, tok := range strings.FieldsFunc(l, func(r rune) bool { return r == '-' || r == '_' || r == '/' }) {
+			if a, ok := archTokens[tok]; ok {
+				arch = a
+				break
+			}
+		}
 	}
 	switch {
 	case os == "" && arch == "":

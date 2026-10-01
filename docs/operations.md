@@ -112,7 +112,8 @@ As each client ships a release that carries the schedule:
    alone is not proof.
 2. Set `fork_time` to the activation you checked against, and add the version to `min_versions`.
    A release candidate goes in `prerelease` instead. A backport to an older release line gets its
-   own floor in `min_versions`; a later release on a line already listed needs no change.
+   own floor in `min_versions`. A later release on a line already listed does not change the
+   floor. Set it as `latest` and `latest_url`, so the page recommends it for its fixes.
 3. For a fast fix, edit the YAML file named by `--client-releases-file` (format in the README,
    "Client release table"). Comment each entry with where you verified the schedule. The API reloads it on its next snapshot refresh. The file replaces the whole
    built-in table, so keep every entry you still want in it.

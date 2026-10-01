@@ -605,15 +605,25 @@ func TestParseCLAgent(t *testing.T) {
 
 func TestNormalizeOS(t *testing.T) {
 	cases := map[string]string{
-		"linux-amd64":              "linux/x86_64",
-		"linux-x64":                "linux/x86_64",
-		"linux-x86_64":             "linux/x86_64",
-		"x86_64-unknown-linux-gnu": "linux/x86_64",
-		"linux-aarch_64":           "linux/arm64",
-		"windows-amd64":            "windows/x86_64",
-		"riscv64gc-unknown-linux":  "linux/riscv64",
-		"":                         "",
-		"a0071826c5daf7dc3a6e768":  "",
+		"linux-amd64":                   "linux/x86_64",
+		"linux-x64":                     "linux/x86_64",
+		"linux-x86_64":                  "linux/x86_64",
+		"x86_64-unknown-linux-gnu":      "linux/x86_64",
+		"linux-aarch_64":                "linux/arm64",
+		"windows-amd64":                 "windows/x86_64",
+		"riscv64gc-unknown-linux":       "linux/riscv64",
+		"rv64gc-unknown-linux-gnu":      "linux/riscv64",
+		"linux-armv7":                   "linux/arm",
+		"linux-arm64":                   "linux/arm64",
+		"linux-ppc64le":                 "linux/ppc64le",
+		"powerpc64le-unknown-linux-gnu": "linux/ppc64le",
+		"linux-s390x":                   "linux/s390x",
+		"linux-loong64":                 "linux/loong64",
+		"i686-unknown-linux-gnu":        "linux/386",
+		"linux-386":                     "linux/386",
+		"v1.3860":                       "",
+		"":                              "",
+		"a0071826c5daf7dc3a6e768":       "",
 	}
 	for in, want := range cases {
 		if got := NormalizeOS(in); got != want {
