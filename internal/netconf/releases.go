@@ -42,7 +42,7 @@ type ClientReleaseTable struct {
 const sepoliaGlamsterdam = 1791294816
 
 var builtinClientReleases = ClientReleaseTable{
-	Updated: "2026-09-30",
+	Updated: "2026-10-01",
 	Releases: []ClientRelease{
 		{Fork: "Glamsterdam", Network: "sepolia", Layer: "el", Client: "Geth", ForkTime: sepoliaGlamsterdam,
 			MinVersions: []string{"1.17.6"}, Released: "2026-09-23", URL: "https://github.com/ethereum/go-ethereum/releases/tag/v1.17.6",
@@ -59,7 +59,8 @@ var builtinClientReleases = ClientReleaseTable{
 			MinVersions: []string{"2.7.0"}, Released: "2026-09-28", URL: "https://github.com/paradigmxyz/reth/releases/tag/v2.7.0"},
 		{Fork: "Glamsterdam", Network: "sepolia", Layer: "el", Client: "Nimbus", ForkTime: sepoliaGlamsterdam,
 			MinVersions: []string{"0.4.2"}, Released: "2026-09-29", URL: "https://github.com/status-im/nimbus-eth1/releases/tag/v0.4.2"},
-		{Fork: "Glamsterdam", Network: "sepolia", Layer: "cl", Client: "Lighthouse"},
+		{Fork: "Glamsterdam", Network: "sepolia", Layer: "cl", Client: "Lighthouse", ForkTime: sepoliaGlamsterdam,
+			Prerelease: "8.3.0-rc.0", Released: "2026-10-01", URL: "https://github.com/sigp/lighthouse/releases/tag/v8.3.0-rc.0"},
 		{Fork: "Glamsterdam", Network: "sepolia", Layer: "cl", Client: "Prysm", ForkTime: sepoliaGlamsterdam,
 			MinVersions: []string{"7.2.0"}, Released: "2026-09-28", URL: "https://github.com/OffchainLabs/prysm/releases/tag/v7.2.0"},
 		{Fork: "Glamsterdam", Network: "sepolia", Layer: "cl", Client: "Teku", ForkTime: sepoliaGlamsterdam,
