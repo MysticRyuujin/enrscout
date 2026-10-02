@@ -141,31 +141,33 @@ api --client-releases-file=/etc/enrscout/client-releases.yaml
 ```
 
 ```yaml
-# Replaces the built-in table as a whole: keep every entry you still want.
-updated: 2026-09-25
+# List only the entries that change. Each one replaces the built-in entry with the
+# same network, fork, layer, and client, or adds a new one.
+updated: 2026-10-01 # optional; the built-in date stays when it is left out
 releases:
   - fork: Glamsterdam
     network: sepolia
     layer: el
     client: Nethermind
     fork_time: 1791294816 # the activation this entry was checked against
-    min_versions: ["2.0.0"] # one floor per release line; add a backport line's floor here
-    released: 2026-09-22
-    url: https://github.com/NethermindEth/nethermind/releases/tag/2.0.0
-    latest: 2.0.1 # optional: newest fork-ready release to recommend; must meet min_versions; set it when there are several floors
-    latest_url: https://github.com/NethermindEth/nethermind/releases/tag/2.0.1
-  # No fork-ready release yet: listed so the page shows "no release yet".
-  - {fork: Glamsterdam, network: sepolia, layer: cl, client: Prysm}
+    min_versions: ["2.1.0"] # one floor per release line; add a backport line's floor here
+    released: 2026-10-01
+    url: https://github.com/NethermindEth/nethermind/releases/tag/2.1.0
+    latest: 2.1.1 # optional: newest fork-ready release to recommend; must meet min_versions; set it when there are several floors
+    latest_url: https://github.com/NethermindEth/nethermind/releases/tag/2.1.1
 ```
 
 The file is YAML, so it can carry comments; a JSON file also loads, because JSON is valid YAML.
-Unknown keys are rejected, so a misspelt field fails validation instead of being ignored. The file replaces the built-in table as a whole, so copy the built-in entries you still want. Client
-names must be the canonical names the charts show (`Geth`, `Nethermind`, `Lighthouse`, and so on).
-The API validates the file at startup and refuses to start when it is missing or invalid. After startup it
-re-reads the file on every snapshot refresh (`--refresh`) and reloads it when its contents change. A
-file that fails to decode or validate is logged and ignored, and the table already in use stays in
-place. Fold overrides back into `releases.go` at the next release, so the built-in default stays
-current.
+Unknown keys are rejected, so a misspelt field fails validation instead of being ignored. An entry
+replaces the built-in entry as a whole: a field it leaves out is empty, not kept from the built-in
+entry. To withdraw a client's labels, give it an entry with no `min_versions` or `prerelease`, and
+the page shows "no release yet". Client names must be the canonical names the charts show (`Geth`,
+`Nethermind`, `Lighthouse`, and so on). The API validates the file at startup and refuses to start
+when it is missing or invalid. After startup it re-reads the file on every snapshot refresh
+(`--refresh`) and reloads it when its contents change. A file that fails to decode or validate is
+logged and ignored, and the table already in use stays in place. Fold overrides back into
+`releases.go` at the next release. After that, the API logs a warning for each file entry that
+matches the built-in entry; delete those entries.
 
 ## DNS tree publisher
 

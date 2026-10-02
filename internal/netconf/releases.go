@@ -4,7 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"reflect"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -104,11 +106,58 @@ func SetClientReleases(t ClientReleaseTable) error {
 	return nil
 }
 
+func releaseKey(r ClientRelease) string {
+	return r.Network + "/" + strings.ToLower(r.Fork) + "/" + r.Layer + "/" + r.Client
+}
+
+// Overlay replaces each entry of t whose key o also has, whole-entry so an omitted field is empty
+// rather than inherited, and appends o's new keys. redundant names o entries that equal t's.
+func (t ClientReleaseTable) Overlay(o ClientReleaseTable) (merged ClientReleaseTable, redundant []string) {
+	merged.Updated = t.Updated
+	if o.Updated != "" {
+		merged.Updated = o.Updated
+	}
+	merged.Releases = make([]ClientRelease, 0, len(t.Releases)+len(o.Releases))
+	slot := make(map[string]int, len(t.Releases))
+	for _, r := range t.Releases {
+		slot[releaseKey(r)] = len(merged.Releases)
+		merged.Releases = append(merged.Releases, cloneRelease(r))
+	}
+	for _, r := range o.Releases {
+		key := releaseKey(r)
+		i, ok := slot[key]
+		if !ok {
+			slot[key] = len(merged.Releases)
+			merged.Releases = append(merged.Releases, cloneRelease(r))
+			continue
+		}
+		if sameRelease(merged.Releases[i], r) {
+			redundant = append(redundant, key)
+		}
+		merged.Releases[i] = cloneRelease(r)
+	}
+	return merged, redundant
+}
+
+func cloneRelease(r ClientRelease) ClientRelease {
+	r.MinVersions = slices.Clone(r.MinVersions)
+	return r
+}
+
+// sameRelease treats an empty and an absent min_versions as equal, since both decode from a file.
+func sameRelease(a, b ClientRelease) bool {
+	if !slices.Equal(a.MinVersions, b.MinVersions) {
+		return false
+	}
+	a.MinVersions, b.MinVersions = nil, nil
+	return reflect.DeepEqual(a, b)
+}
+
 func (t ClientReleaseTable) Validate() error {
 	var errs []error
 	seen := map[string]bool{}
 	for _, r := range t.Releases {
-		key := r.Network + "/" + strings.ToLower(r.Fork) + "/" + r.Layer + "/" + r.Client
+		key := releaseKey(r)
 		switch {
 		case r.Network == "" || r.Fork == "":
 			errs = append(errs, fmt.Errorf("%s: network and fork are required", key))

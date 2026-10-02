@@ -125,6 +125,46 @@ func TestClientReleasesRescheduledForkIsOutdated(t *testing.T) {
 	}
 }
 
+func TestClientReleaseTableOverlay(t *testing.T) {
+	geth := ClientRelease{Fork: "Glamsterdam", Network: "sepolia", Layer: "el", Client: "Geth", ForkTime: 1,
+		MinVersions: []string{"1.17.6"}, Latest: "1.17.7", URL: "https://example.com/geth"}
+	besu := ClientRelease{Fork: "Glamsterdam", Network: "sepolia", Layer: "el", Client: "Besu", ForkTime: 1, MinVersions: []string{"26.9.0"}}
+	prysm := ClientRelease{Fork: "Glamsterdam", Network: "sepolia", Layer: "cl", Client: "Prysm"}
+	base := ClientReleaseTable{Updated: "2026-09-01", Releases: []ClientRelease{geth, besu, prysm}}
+
+	newGeth := ClientRelease{Fork: "glamsterdam", Network: "sepolia", Layer: "el", Client: "Geth", ForkTime: 1, MinVersions: []string{"1.18.0"}}
+	teku := ClientRelease{Fork: "Glamsterdam", Network: "sepolia", Layer: "cl", Client: "Teku"}
+	sameBesu := besu
+	sameBesu.MinVersions = []string{"26.9.0"}
+	merged, redundant := base.Overlay(ClientReleaseTable{Releases: []ClientRelease{newGeth, teku, sameBesu}})
+
+	if merged.Updated != "2026-09-01" {
+		t.Errorf("updated = %q, want the base date when the overlay sets none", merged.Updated)
+	}
+	if len(merged.Releases) != 4 {
+		t.Fatalf("got %d entries, want 4: %+v", len(merged.Releases), merged.Releases)
+	}
+	if got := merged.Releases[0]; got.Client != "Geth" || got.MinVersions[0] != "1.18.0" || got.Latest != "" || got.URL != "" {
+		t.Errorf("slot 0 = %+v, want the overlay Geth in Geth's slot, with omitted fields cleared", got)
+	}
+	if merged.Releases[1].Client != "Besu" || merged.Releases[2].Client != "Prysm" || merged.Releases[3].Client != "Teku" {
+		t.Errorf("order = %v, want base order with the new entry appended", merged.Releases)
+	}
+	if len(redundant) != 1 || redundant[0] != releaseKey(besu) {
+		t.Errorf("redundant = %v, want only the unchanged Besu entry", redundant)
+	}
+
+	merged.Releases[1].MinVersions[0] = "mutated"
+	if base.Releases[1].MinVersions[0] != "26.9.0" || besu.MinVersions[0] != "26.9.0" {
+		t.Error("the merged table aliases the base table")
+	}
+
+	dated, _ := base.Overlay(ClientReleaseTable{Updated: "2026-10-01"})
+	if dated.Updated != "2026-10-01" || len(dated.Releases) != 3 {
+		t.Errorf("an empty overlay with a date gave %+v", dated)
+	}
+}
+
 func mustTarget(t *testing.T, network string, at time.Time) ForkTarget {
 	t.Helper()
 	target, err := ForkTargetAt(network, at)

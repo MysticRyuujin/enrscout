@@ -57,7 +57,7 @@ node web/e2e/browse.mjs    # Playwright browse test (needs: cd web && npm ci && 
   mirrors the rule in SQL (`query.readinessConditionAt`), pinned by `TestReadinessMatchesSQLAndGo`.
   `netconf/releases.go` is a hand-curated label table that readiness never depends on: one floor per
   release line (`min_versions`), plus the `fork_time` each entry was verified against, so a rescheduled
-  fork withholds its labels. The API's `--client-releases-file` (strict YAML, so it can carry comments) replaces the whole table at runtime and
+  fork withholds its labels. The API's `--client-releases-file` (strict YAML, so it can carry comments) overlays the table at runtime by network/fork/layer/client and
   reloads on change; an invalid file keeps the last good table (`netconf.SetClientReleases` validates
   before it swaps). The forks cache key includes `ClientReleasesGeneration`, so a reload is visible at once.
   Readiness history (`<prefix>/state/readiness/<network>/<fork>.json`, `snapshot.ReadinessHistory`) is
