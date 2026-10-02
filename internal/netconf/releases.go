@@ -48,7 +48,7 @@ var builtinClientReleases = ClientReleaseTable{
 			MinVersions: []string{"1.17.6"}, Released: "2026-09-23", URL: "https://github.com/ethereum/go-ethereum/releases/tag/v1.17.6",
 			Latest: "1.17.7", LatestURL: "https://github.com/ethereum/go-ethereum/releases/tag/v1.17.7"},
 		{Fork: "Glamsterdam", Network: "sepolia", Layer: "el", Client: "Nethermind", ForkTime: sepoliaGlamsterdam,
-			MinVersions: []string{"2.0.0"}, Released: "2026-09-22", URL: "https://github.com/NethermindEth/nethermind/releases/tag/2.0.0"},
+			MinVersions: []string{"2.1.0"}, Released: "2026-10-01", URL: "https://github.com/NethermindEth/nethermind/releases/tag/2.1.0"},
 		{Fork: "Glamsterdam", Network: "sepolia", Layer: "el", Client: "Ethrex", ForkTime: sepoliaGlamsterdam,
 			MinVersions: []string{"28.0.0"}, Released: "2026-09-29", URL: "https://github.com/lambdaclass/ethrex/releases/tag/v28.0.0"},
 		{Fork: "Glamsterdam", Network: "sepolia", Layer: "el", Client: "Besu", ForkTime: sepoliaGlamsterdam,
