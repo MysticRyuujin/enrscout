@@ -44,7 +44,7 @@ type ClientReleaseTable struct {
 const sepoliaGlamsterdam = 1791294816
 
 var builtinClientReleases = ClientReleaseTable{
-	Updated: "2026-10-01",
+	Updated: "2026-10-03",
 	Releases: []ClientRelease{
 		{Fork: "Glamsterdam", Network: "sepolia", Layer: "el", Client: "Geth", ForkTime: sepoliaGlamsterdam,
 			MinVersions: []string{"1.17.6"}, Released: "2026-09-23", URL: "https://github.com/ethereum/go-ethereum/releases/tag/v1.17.6",
@@ -52,11 +52,13 @@ var builtinClientReleases = ClientReleaseTable{
 		{Fork: "Glamsterdam", Network: "sepolia", Layer: "el", Client: "Nethermind", ForkTime: sepoliaGlamsterdam,
 			MinVersions: []string{"2.1.0"}, Released: "2026-10-01", URL: "https://github.com/NethermindEth/nethermind/releases/tag/2.1.0"},
 		{Fork: "Glamsterdam", Network: "sepolia", Layer: "el", Client: "Ethrex", ForkTime: sepoliaGlamsterdam,
-			MinVersions: []string{"28.0.0"}, Released: "2026-09-29", URL: "https://github.com/lambdaclass/ethrex/releases/tag/v28.0.0"},
+			MinVersions: []string{"28.0.0"}, Released: "2026-09-29", URL: "https://github.com/lambdaclass/ethrex/releases/tag/v28.0.0",
+			Latest: "29.0.0", LatestURL: "https://github.com/lambdaclass/ethrex/releases/tag/v29.0.0"},
 		{Fork: "Glamsterdam", Network: "sepolia", Layer: "el", Client: "Besu", ForkTime: sepoliaGlamsterdam,
 			MinVersions: []string{"26.9.0"}, Released: "2026-09-25", URL: "https://github.com/besu-eth/besu/releases/tag/26.9.0"},
 		{Fork: "Glamsterdam", Network: "sepolia", Layer: "el", Client: "Erigon", ForkTime: sepoliaGlamsterdam,
-			MinVersions: []string{"3.7.0"}, Released: "2026-09-25", URL: "https://github.com/erigontech/erigon/releases/tag/v3.7.0"},
+			MinVersions: []string{"3.7.0"}, Released: "2026-09-25", URL: "https://github.com/erigontech/erigon/releases/tag/v3.7.0",
+			Latest: "3.7.1", LatestURL: "https://github.com/erigontech/erigon/releases/tag/v3.7.1"},
 		{Fork: "Glamsterdam", Network: "sepolia", Layer: "el", Client: "Reth", ForkTime: sepoliaGlamsterdam,
 			MinVersions: []string{"2.7.0"}, Released: "2026-09-28", URL: "https://github.com/paradigmxyz/reth/releases/tag/v2.7.0"},
 		{Fork: "Glamsterdam", Network: "sepolia", Layer: "el", Client: "Nimbus", ForkTime: sepoliaGlamsterdam,
@@ -75,7 +77,7 @@ var builtinClientReleases = ClientReleaseTable{
 		{Fork: "Glamsterdam", Network: "sepolia", Layer: "cl", Client: "Grandine", ForkTime: sepoliaGlamsterdam,
 			Prerelease: "3.0.0-rc.0", Released: "2026-09-30", URL: "https://github.com/grandinetech/grandine/releases/tag/3.0.0-rc.0"},
 		{Fork: "Glamsterdam", Network: "sepolia", Layer: "cl", Client: "Caplin", ForkTime: sepoliaGlamsterdam,
-			MinVersions: []string{"3.7.0"}, Released: "2026-09-25", URL: "https://github.com/erigontech/erigon/releases/tag/v3.7.0"},
+			MinVersions: []string{"3.7.1"}, Released: "2026-10-02", URL: "https://github.com/erigontech/erigon/releases/tag/v3.7.1"},
 	},
 }
 
