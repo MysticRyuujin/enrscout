@@ -308,11 +308,42 @@ func (c *Crawler) ResolveProtocol(n *enode.Node, proto string) (*enode.Node, str
 		if e.proto != proto || !fams[e.family] {
 			continue
 		}
-		if rn, err := e.res.RequestENR(n); err == nil && rn != nil {
-			return rn, e.proto, nil
+		rn, err := e.res.RequestENR(familyNode(n, e.family))
+		if err != nil || rn == nil {
+			continue
 		}
+		if rn.Seq() < n.Seq() {
+			rn = n
+		}
+		return rn, e.proto, nil
 	}
 	return nil, "", errUnresolved
+}
+
+// familyNode returns n when its preferred endpoint already uses family. go-ethereum
+// sends RequestENR to that single preferred endpoint (IPv4 wins a locality tie), so
+// a dual-stack record would otherwise never be asked at its other address. The
+// copy is an unsigned seq-0 record that keeps the ID and public key the handshakes
+// need; the caller applies the seq comparison against n itself.
+func familyNode(n *enode.Node, family string) *enode.Node {
+	want6 := family == "udp6"
+	if n.IPAddr().Is6() == want6 {
+		return n
+	}
+	key := n.Pubkey()
+	if key == nil {
+		return n
+	}
+	var ip netip.Addr
+	var udp uint16
+	n.Load((*enr.UDP)(&udp))
+	if want6 {
+		n.Load((*enr.IPv6Addr)(&ip))
+		n.Load((*enr.UDP6)(&udp))
+	} else {
+		n.Load((*enr.IPv4Addr)(&ip))
+	}
+	return enode.NewV4(key, net.IP(ip.AsSlice()), 0, int(udp))
 }
 
 func (c *Crawler) Close() error {
