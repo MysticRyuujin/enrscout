@@ -143,7 +143,7 @@ last 7 days; every other row is `unidentified`. The crawler's own advertiser ide
 `enrscout`, which announce every scheduled fork) are excluded from all readiness counts, from the
 readiness history, and from the `readiness` node filter.
 
-The release table is curated by hand: built into `internal/netconf/releases.go`, and replaceable at
+The release table is curated by hand: built into `internal/netconf/releases.go`, and overlaid entry by entry at
 runtime with the API's `--client-releases-file`. For each client it lists the first release of
 each release line that ships the schedule (`min_versions`). A reported version is labelled:
 

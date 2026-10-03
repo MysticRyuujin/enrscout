@@ -115,10 +115,12 @@ As each client ships a release that carries the schedule:
    own floor in `min_versions`. A later release on a line already listed does not change the
    floor. Set it as `latest` and `latest_url`, so the page recommends it for its fixes.
 3. For a fast fix, edit the YAML file named by `--client-releases-file` (format in the README,
-   "Client release table"). Comment each entry with where you verified the schedule. The API reloads it on its next snapshot refresh. The file replaces the whole
-   built-in table, so keep every entry you still want in it.
-4. Fold the change into `releases.go` at the next ENRScout release. Once the built-in table
-   matches the file, remove `--client-releases-file` from the API's configuration and restart it,
+   "Client release table"). Comment each entry with where you verified the schedule. The API reloads it on its next snapshot refresh. List only the
+   entries that change: each one replaces the built-in entry with the same network, fork, layer,
+   and client, or adds a new one.
+4. Fold the change into `releases.go` at the next ENRScout release. The API then logs a warning
+   for each file entry that matches the built-in entry; delete those entries. Once the file has
+   no entries left, remove `--client-releases-file` from the API's configuration and restart it,
    then delete the file. The API refuses to start when the flag names a missing or invalid file.
    A file removed while the API runs is only logged; the table already loaded stays in use.
 

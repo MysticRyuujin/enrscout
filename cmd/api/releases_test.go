@@ -33,16 +33,37 @@ func TestReleasesFileLoadsReloadsAndKeepsLastGood(t *testing.T) {
 		u, _ := netconf.ClientReleasesAt("sepolia", target)
 		return u
 	}
+	besu := func() (netconf.ClientRelease, int) {
+		_, rs := netconf.ClientReleasesAt("sepolia", target)
+		for _, r := range rs {
+			if r.Layer == "el" && r.Client == "Besu" {
+				return r, len(rs)
+			}
+		}
+		t.Fatal("no Besu entry")
+		return netconf.ClientRelease{}, 0
+	}
+	builtinEntries := len(netconf.BuiltinClientReleases().Releases)
 
 	start := time.Unix(1_790_000_000, 0)
 	write(`{"updated":"2026-09-25","releases":[{"fork":"Glamsterdam","network":"sepolia","layer":"el","client":"Besu",
-		"fork_time":1791294816,"min_versions":["26.9.0"]}]}`, start)
+		"fork_time":1791294816,"min_versions":["26.9.9"]}]}`, start)
 	f := &releasesFile{path: path}
 	if err := f.load(); err != nil {
 		t.Fatal(err)
 	}
 	if updated() != "2026-09-25" {
 		t.Fatalf("file table not in use (updated %q)", updated())
+	}
+	if r, n := besu(); n != builtinEntries || r.MinVersions[0] != "26.9.9" || r.Released != "" {
+		t.Fatalf("one-entry overlay gave %d entries and Besu %+v, want the built-in table with Besu replaced", n, r)
+	}
+
+	write(`{"updated":"2026-09-26","releases":[
+		{"fork":"Glamsterdam","network":"sepolia","layer":"el","client":"Besu"},
+		{"fork":"glamsterdam","network":"sepolia","layer":"el","client":"Besu"}]}`, start.Add(30*time.Second))
+	if err := f.load(); err == nil {
+		t.Fatal("duplicate key inside the file accepted")
 	}
 
 	write(`{"updated":"2026-09-26","releases":[{"fork":"Glamsterdam","network":"sepolia","layer":"el","client":"besu"}]}`, start.Add(time.Minute))
