@@ -294,12 +294,14 @@ func TestCollapseExemptionAfterActivation(t *testing.T) {
 		at       time.Time
 		builtSeq uint64
 		minTree  int
+		records  int
 		wantSkip string
 	}{
-		{"first cycle keeps the pre-fork tree", activation.Add(time.Hour), 0, 1, "collapse"},
-		{"a cycle later the drop is accepted", activation.Add(7 * time.Hour), 0, 1, ""},
-		{"a failed exempt push does not close the exemption", activation.Add(13 * time.Hour), uint64(activation.Add(7 * time.Hour).Unix()), 1, ""},
-		{"the floor still applies when exempt", activation.Add(7 * time.Hour), 0, 20, "below_floor"},
+		{"first cycle keeps the pre-fork tree", activation.Add(time.Hour), 0, 1, 10, "collapse"},
+		{"a cycle later the drop is accepted", activation.Add(7 * time.Hour), 0, 1, 10, ""},
+		{"a failed exempt push does not close the exemption", activation.Add(13 * time.Hour), uint64(activation.Add(7 * time.Hour).Unix()), 1, 10, ""},
+		{"the floor still applies when exempt", activation.Add(7 * time.Hour), 0, 20, 10, "below_floor"},
+		{"an empty tree is still refused when exempt", activation.Add(7 * time.Hour), 0, 0, 0, "empty_tree"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			outDir := t.TempDir()
@@ -308,7 +310,7 @@ func TestCollapseExemptionAfterActivation(t *testing.T) {
 			publishedSeq := uint64(activation.Add(-2 * time.Hour).Unix())
 			seedSepoliaBaseline(t, outDir, publishedSuffix, 100, publishedSeq)
 			seedSepoliaBaseline(t, outDir, "", 100, max(publishedSeq, tc.builtSeq))
-			rows := readinessRows(t, 0, 10, tc.at)
+			rows := readinessRows(t, 0, tc.records, tc.at)
 			trees, skip, err := buildNetworkTrees(rows, "sepolia", tc.at, tc.at, cfg, map[string]uint64{})
 			if err != nil {
 				t.Fatal(err)
@@ -381,6 +383,19 @@ func TestForkWindowsCountOnlyTheTreeLayer(t *testing.T) {
 	}
 	if got := allTree(t, trees); !got.readyOnly || got.Nodes != 5 {
 		t.Fatalf("all tree = %d nodes, ready-only %v; want 5 (3 EL, 2 ready CL), ready-only", got.Nodes, got.readyOnly)
+	}
+
+	// With no ready CL record, the EL records alone must not pass as a ready-only tree.
+	rows = []nodeset.Row{clRecordRow(t, "devnet", 1, math.MaxUint64, at), clRecordRow(t, "devnet", 2, math.MaxUint64, at)}
+	for i := range 3 {
+		rows = append(rows, elRow(t, "devnet", 10+i, sepoliaRecord{next: 0, score: 5, client: "Geth"}, at))
+	}
+	trees, skip, err = buildNetworkTrees(rows, "devnet", at, at, cfg, map[string]uint64{})
+	if err != nil || skip.reason != "" {
+		t.Fatalf("skipped as %q: %v", skip.reason, err)
+	}
+	if got := allTree(t, trees); got.readyOnly || got.Nodes != 5 {
+		t.Fatalf("all tree = %d nodes, ready-only %v; want the full 5-node tree", got.Nodes, got.readyOnly)
 	}
 }
 

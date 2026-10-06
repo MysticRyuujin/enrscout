@@ -34,9 +34,11 @@ Guidance for coding agents working in `cmd/dnspublisher`. Repo-wide rules are in
   slot can shift per-client counts by up to the reserved slots. Within two publish intervals of a
   scheduled activation, `buildNetworkTrees` publishes a ready-only tree when it passes every guard,
   and otherwise the full ranked tree. The choice is per domain, so `all` and `snap` can differ.
-  Under `--layer any`, a layer with no fork near keeps all its records: a tree built then is served across the fork, and EIP-2124
-  makes post-fork clients reject a past-fork record whose `Next` does not name the following fork.
-  The limit does not bind on small networks, so ranking alone would not change their trees.
+  A tree built then is served across the fork, and EIP-2124 makes post-fork clients reject a
+  past-fork record whose `Next` does not name the following fork. The limit does not bind on small
+  networks, so ranking alone would not change their trees. Under `--layer any`, a layer with no
+  fork near keeps all its records, and the ready-only tree needs at least one ready record of the
+  near layer, or the other layer alone would pass the guards.
   After activation, the first cycle usually skips on the collapse guard and keeps serving the
   ready pre-fork tree. From one publish interval after activation, the collapse guard is exempt
   (the empty and floor guards still apply), dated by the `.published` artifact's sequence, never
@@ -46,7 +48,8 @@ Guidance for coding agents working in `cmd/dnspublisher`. Repo-wide rules are in
   exempts the whole tree, which is conservative for the other layer's half. The sequence stands in
   for the publish time without an artifact schema change (strict unmarshal would break rollback,
   and the zone already serves the sequence as `enrtree-root seq=`). It is the snapshot's generation
-  time, so it can predate the publish by up to `--max-snapshot-age`. That only widens the window,
+  time, so it can predate the publish by up to `--max-snapshot-age` when that check is on. That only
+  widens the window,
   and a post-fork publish from a pre-fork snapshot never passes the guards, because no record in it
   is current. `enrscout_dns_tree_nodes_by_readiness` and the
   `ready`/`ready_only` log fields show what each tree holds.
