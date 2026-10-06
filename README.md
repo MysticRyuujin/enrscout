@@ -198,8 +198,8 @@ the sequence floor and the collapse baseline across restarts. Pass
 A network's two trees are gated together and any guard keeps both last-good copies:
 a stale snapshot (`--max-snapshot-age`), a tree that selected no nodes, an all-tree
 below `--min-tree-nodes`, or a drop past `--max-drop-pct` against that domain's own
-last publish. The drop guard does not apply once a fork in the network's schedule
-activated after that publish and at least one publish interval ago, because every
+last publish. The drop guard does not apply once a fork of the tree's layer in the
+network's schedule activated after that publish and at least one publish interval ago, because every
 record not seen since the fork drops out at once.
 
 Selection prefers records that advertise the network's next fork in their own `eth`

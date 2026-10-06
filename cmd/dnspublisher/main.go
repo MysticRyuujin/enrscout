@@ -514,9 +514,14 @@ func buildNetworkTrees(rows []nodeset.Row, network string, generatedAt, evaluate
 	cands := rankCandidates(rows, cfg.sel, evaluatedAt)
 	var ready []candidate
 	cycle := publishCycle(cfg.publishEvery)
-	if activationNear(network, cfg.sel.layer, evaluatedAt, 2*cycle) {
+	near := map[string]bool{
+		"el": cfg.sel.layer != "cl" && activationNear(network, "el", evaluatedAt, 2*cycle),
+		"cl": cfg.sel.layer != "el" && activationNear(network, "cl", evaluatedAt, 2*cycle),
+	}
+	if near["el"] || near["cl"] {
+		// A layer with no fork near keeps all its records: that fork cannot stale them.
 		for _, c := range cands {
-			if c.rank == rankReady {
+			if c.rank == rankReady || !near[c.row.Layer] {
 				ready = append(ready, c)
 			}
 		}

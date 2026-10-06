@@ -33,7 +33,8 @@ Guidance for coding agents working in `cmd/dnspublisher`. Repo-wide rules are in
   IPv6 tier still takes explicit `tcp6`/`quic6` before readiness, and which client holds a reserved
   slot can shift per-client counts by up to the reserved slots. Within two publish intervals of a
   scheduled activation, `buildNetworkTrees` publishes a ready-only tree when it passes every guard,
-  and otherwise the full ranked tree: a tree built then is served across the fork, and EIP-2124
+  and otherwise the full ranked tree. The choice is per domain, so `all` and `snap` can differ.
+  Under `--layer any`, a layer with no fork near keeps all its records: a tree built then is served across the fork, and EIP-2124
   makes post-fork clients reject a past-fork record whose `Next` does not name the following fork.
   The limit does not bind on small networks, so ranking alone would not change their trees.
   After activation, the first cycle usually skips on the collapse guard and keeps serving the
@@ -41,10 +42,13 @@ Guidance for coding agents working in `cmd/dnspublisher`. Repo-wide rules are in
   (the empty and floor guards still apply), dated by the `.published` artifact's sequence, never
   the build floor: a failed exempt push advances the build floor past the fork, and reading that
   would close the exemption and wedge the domain. Only a fork of the tree's own layer counts: an EL
-  tree's records stay current across a CL-only fork. The sequence stands in for the publish time
-  without an artifact schema change (strict unmarshal would break rollback). It runs ahead of the
-  snapshot time by one second per rebuild from an unchanged snapshot, and `--max-snapshot-age` stops
-  rebuilds of an old one, so the error is seconds. `enrscout_dns_tree_nodes_by_readiness` and the
+  tree's records stay current across a CL-only fork. Under `--layer any`, a fork of either layer
+  exempts the whole tree, which is conservative for the other layer's half. The sequence stands in
+  for the publish time without an artifact schema change (strict unmarshal would break rollback,
+  and the zone already serves the sequence as `enrtree-root seq=`). It is the snapshot's generation
+  time, so it can predate the publish by up to `--max-snapshot-age`. That only widens the window,
+  and a post-fork publish from a pre-fork snapshot never passes the guards, because no record in it
+  is current. `enrscout_dns_tree_nodes_by_readiness` and the
   `ready`/`ready_only` log fields show what each tree holds.
   When `--limit` binds, IPv6 also gets a reserved share: address family is not a client-balance
   dimension, so a family holding a few percent of the pool otherwise rounds away to nothing (at
