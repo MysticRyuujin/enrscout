@@ -171,6 +171,14 @@ func withForkReadiness(ctx context.Context, st store.Store, layout snapshot.Layo
 		switch {
 		case r.Layer == "el" && target.EL != nil && target.EL.Phase == netconf.PhaseScheduled && (r.Client == "Geth" || r.Client == "Nethermind"):
 			r.ForkNext = target.EL.Time
+		case r.Layer == "el" && target.EL != nil && target.EL.Phase == netconf.PhaseActivated && (r.Client == "Geth" || r.Client == "Besu"):
+			r.ForkHash, r.ForkNext = target.EL.PreHash, 0
+			if r.Client == "Geth" {
+				r.ForkNext = target.EL.Time
+			}
+		case r.Layer == "cl" && target.CL != nil && target.CL.Phase == netconf.PhaseActivated && r.Client == "Teku":
+			r.ForkHash, r.ENRForkDigest = target.CL.PreDigest, target.CL.PreDigest
+			r.ENRNextForkVersion, r.ENRNextForkEpoch = target.CL.Version, target.CL.Epoch
 		case r.Layer == "cl" && target.CL != nil && r.Client != "Teku":
 			r.ENRForkDigest = r.ForkHash
 			r.ENRNextForkVersion, r.ENRNextForkEpoch = target.CL.Version, target.CL.Epoch
@@ -184,11 +192,16 @@ func withForkReadiness(ctx context.Context, st store.Store, layout snapshot.Layo
 	for i := range 24 {
 		at := gen.Add(-time.Duration(23-i) * snapshot.ReadinessInterval)
 		ready := i / 8
-		h.Points = append(h.Points, snapshot.ReadinessPoint{
+		point := snapshot.ReadinessPoint{
 			At: at.Unix(),
 			EL: map[string]int{"ready": ready, "not_ready": 4 - ready},
 			CL: map[string]int{"ready": min(ready, 1), "not_ready": 2 - min(ready, 1), "unknown": 1},
-		})
+		}
+		if activation := target.Activation(); !at.Before(activation) {
+			point.EL = map[string]int{"ready": 1, "pending": 1, "not_ready": 2}
+			point.CL = map[string]int{"ready": 1, "pending": 1, "not_ready": 1}
+		}
+		h.Points = append(h.Points, point)
 	}
 	data, err := h.Encode()
 	if err != nil {

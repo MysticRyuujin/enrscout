@@ -22,13 +22,14 @@ type Readiness string
 
 const (
 	Ready    Readiness = "ready"
+	Pending  Readiness = "pending"
 	NotReady Readiness = "not_ready"
 	Mismatch Readiness = "mismatch"
 	Unknown  Readiness = "unknown"
 	Stale    Readiness = "stale"
 )
 
-var Readinesses = []Readiness{Ready, NotReady, Mismatch, Unknown, Stale}
+var Readinesses = []Readiness{Ready, Pending, NotReady, Mismatch, Unknown, Stale}
 
 type ELForkTarget struct {
 	Name     string `json:"name"`
@@ -244,9 +245,10 @@ type ReadinessEvidence struct {
 
 // ReadinessAt is the single readiness rule. Before activation a current-fork row is ready when it
 // advertises the target itself: the EL fork id's Next equals the fork time, or the CL record's next
-// fork version and epoch equal the target's. After activation a row on the new fork is ready and a
-// row still on the pre-fork hash or digest is not. Anything else not current is stale. A row whose
-// layer has no tracked fork has no readiness (""). The query
+// fork version and epoch equal the target's. After activation a row on the new fork is ready. A row
+// still on the pre-fork hash or digest is pending when it carries that same pre-activation claim,
+// because it was last seen before the fork or has not synced to it, unknown when a CL row has no
+// schedule under that digest, and not ready otherwise. Anything else not current is stale. A row whose layer has no tracked fork has no readiness (""). The query
 // engine's SQL mirror (readinessConditionAt) must agree; a Go-vs-SQL test pins the two.
 func ReadinessAt(t ForkTarget, network string, ev ReadinessEvidence, at time.Time) Readiness {
 	current := RowForkCurrentAt(ev.Layer, network, ev.ForkHash, ev.ForkNext, at)
@@ -254,7 +256,7 @@ func ReadinessAt(t ForkTarget, network string, ev ReadinessEvidence, at time.Tim
 	case ev.Layer == "el" && t.EL != nil:
 		el := t.EL
 		if el.Phase == PhaseActivated {
-			return activatedReadiness(current, ev.ForkHash, el.PreHash)
+			return activatedReadiness(current, ev.ForkHash, el.PreHash, true, ev.ForkNext == el.Time)
 		}
 		switch {
 		case !current:
@@ -269,7 +271,9 @@ func ReadinessAt(t ForkTarget, network string, ev ReadinessEvidence, at time.Tim
 	case ev.Layer == "cl" && t.CL != nil:
 		cl := t.CL
 		if cl.Phase == PhaseActivated {
-			return activatedReadiness(current, ev.ForkHash, cl.PreDigest)
+			readable := strings.EqualFold(ev.ENRForkDigest, cl.PreDigest)
+			scheduled := ev.ENRNextForkEpoch == cl.Epoch && strings.EqualFold(ev.ENRNextForkVersion, cl.Version)
+			return activatedReadiness(current, ev.ForkHash, cl.PreDigest, readable, scheduled)
 		}
 		switch {
 		case !current:
@@ -287,13 +291,17 @@ func ReadinessAt(t ForkTarget, network string, ev ReadinessEvidence, at time.Tim
 	return ""
 }
 
-func activatedReadiness(current bool, forkHash, pre string) Readiness {
+func activatedReadiness(current bool, forkHash, pre string, readable, scheduled bool) Readiness {
 	switch {
 	case current:
 		return Ready
-	case strings.EqualFold(forkHash, pre):
-		return NotReady
-	default:
+	case !strings.EqualFold(forkHash, pre):
 		return Stale
+	case !readable:
+		return Unknown
+	case scheduled:
+		return Pending
+	default:
+		return NotReady
 	}
 }

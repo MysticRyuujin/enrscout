@@ -134,9 +134,15 @@ still matches. Consensus nodes seen only over libp2p have no ENR and read as `un
 blob-parameter-only (BPO) transition is a consensus target too: per the Fulu p2p spec its epoch is
 advertised in `next_fork_epoch` while `next_fork_version` stays unchanged.
 
-After activation, a row on the new fork is `ready` (upgraded), a row still on the pre-fork hash or
-digest is `not_ready` (left behind), and any other row is `stale`. The tracker therefore counts
-stale-fork rows of the network, which the current-network views exclude.
+After activation, a row on the new fork is `ready` (upgraded). A row still on the pre-fork hash or
+digest is `pending` when it carries the pre-activation `ready` claim: the fork ID `Next` equals the
+fork time, or the ENR under the pre-fork digest schedules the target. Such a row was last seen
+before activation, or its node has not synced to the fork. A consensus row on the pre-fork digest
+whose ENR has no `eth2` entry under that digest stays `unknown`, as before activation. Any other
+row on the pre-fork hash or digest is `not_ready` (left behind), and any other row is `stale`. The tracker therefore counts
+stale-fork rows of the network, which the current-network views exclude. `pending` rows turn into
+`ready` as the crawler sees the nodes again, so expect most of them to move within the first
+hours after activation.
 
 Client rows and the per-client split cover recognized clients with a verified handshake in the
 last 7 days; every other row is `unidentified`. The crawler's own advertiser identities (client

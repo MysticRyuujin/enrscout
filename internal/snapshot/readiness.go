@@ -12,6 +12,10 @@ const (
 	ReadinessHistoryVersion = 1
 	ReadinessInterval       = 15 * time.Minute
 	ReadinessRetention      = 30 * 24 * time.Hour
+	// Around an activation the trend changes by the minute, so every publish becomes a point. Six
+	// hours of minute points add 360 points to a 2,880-point series.
+	ReadinessDenseWindow   = 3 * time.Hour
+	ReadinessDenseInterval = time.Minute
 	// maxReadinessBytes keeps a corrupt or runaway object from being loaded whole.
 	maxReadinessBytes = 8 << 20
 )
@@ -69,8 +73,17 @@ func DecodeReadinessHistory(data []byte) (*ReadinessHistory, error) {
 	return &h, nil
 }
 
-func (h *ReadinessHistory) Append(p ReadinessPoint) bool {
-	if n := len(h.Points); n > 0 && p.At-h.Points[n-1].At < int64(ReadinessInterval.Seconds()) {
+// ReadinessIntervalAt is the spacing between history points at a given time for a fork that
+// activates at activation.
+func ReadinessIntervalAt(at, activation time.Time) time.Duration {
+	if !activation.IsZero() && at.Sub(activation).Abs() <= ReadinessDenseWindow {
+		return ReadinessDenseInterval
+	}
+	return ReadinessInterval
+}
+
+func (h *ReadinessHistory) Append(p ReadinessPoint, interval time.Duration) bool {
+	if n := len(h.Points); n > 0 && p.At-h.Points[n-1].At < int64(interval.Seconds()) {
 		return false
 	}
 	h.Points = append(h.Points, p)

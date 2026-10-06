@@ -104,7 +104,8 @@ export default function About() {
           node is ready when the <code>eth2</code> entry of its signed record
           names the fork version and epoch. Consensus nodes seen only over
           libp2p have no record and read as unknown. After activation, ready
-          means upgraded and not ready means left behind.
+          means upgraded, and a node still on the fork before it is pending when
+          it had scheduled the fork and left behind when it had not.
         </p>
         <p>
           The bars on the Forks page split each client into these states. Before
@@ -119,9 +120,19 @@ export default function About() {
           <b>No schedule advertised</b> is consensus-only: the record carries no{" "}
           <code>eth2</code> entry, or its digest does not match the fork
           observed over Status, so its claim cannot be read. After activation
-          the same two bars read <b>upgraded</b> and <b>left behind</b>. Nodes
-          on an older fork are counted per layer but never appear in a client
-          bar, and the Nodes page filter <i>older fork</i> lists them.
+          the bars read <b>upgraded</b>, <b>pending</b> and <b>left behind</b>.
+          Pending means the node scheduled the fork, but the crawler has not
+          seen it on the fork yet: it was last seen before activation, or it has
+          not synced to the fork. Nodes on an older fork are counted per layer
+          but never appear in a client bar, and the Nodes page filter{" "}
+          <i>older fork</i> lists them.
+        </p>
+        <p>
+          The adoption chart plots the share of identities that have the fork in
+          their schedule, from a point every 15 minutes, and every minute within
+          3 hours of activation. After activation the solid line also counts
+          pending nodes, and the dashed line counts only nodes seen on the new
+          fork.
         </p>
         <p>
           Release labels come from a hand-curated table and never change the

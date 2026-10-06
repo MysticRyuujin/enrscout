@@ -9,16 +9,16 @@ import (
 func TestReadinessHistoryAppendSpacesAndPrunes(t *testing.T) {
 	h := &ReadinessHistory{Version: ReadinessHistoryVersion}
 	start := time.Unix(1_790_000_000, 0)
-	if !h.Append(ReadinessPoint{At: start.Unix()}) {
+	if !h.Append(ReadinessPoint{At: start.Unix()}, ReadinessInterval) {
 		t.Fatal("first point rejected")
 	}
-	if h.Append(ReadinessPoint{At: start.Add(ReadinessInterval - time.Second).Unix()}) {
+	if h.Append(ReadinessPoint{At: start.Add(ReadinessInterval - time.Second).Unix()}, ReadinessInterval) {
 		t.Fatal("point inside the interval accepted")
 	}
-	if !h.Append(ReadinessPoint{At: start.Add(ReadinessInterval).Unix()}) {
+	if !h.Append(ReadinessPoint{At: start.Add(ReadinessInterval).Unix()}, ReadinessInterval) {
 		t.Fatal("point one interval later rejected")
 	}
-	if !h.Append(ReadinessPoint{At: start.Add(ReadinessRetention + ReadinessInterval).Unix()}) {
+	if !h.Append(ReadinessPoint{At: start.Add(ReadinessRetention + ReadinessInterval).Unix()}, ReadinessInterval) {
 		t.Fatal("late point rejected")
 	}
 	if len(h.Points) != 2 || h.Points[0].At != start.Add(ReadinessInterval).Unix() {

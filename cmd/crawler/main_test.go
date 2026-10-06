@@ -775,6 +775,26 @@ func TestShrankTooMuch(t *testing.T) {
 	}
 }
 
+func TestShrankTooMuchAcrossForkActivation(t *testing.T) {
+	activation := time.Unix(1791294816, 0)
+	sepolia := func(at time.Time, total, current int) *snapshot.Manifest {
+		return &snapshot.Manifest{GeneratedAt: at, Networks: map[string]snapshot.NetworkSnapshot{
+			"sepolia": {NodeCount: total, CurrentNodeCount: current},
+		}}
+	}
+	prev := sepolia(activation.Add(-2*time.Minute), 3000, 2700)
+	if got := shrankTooMuch(prev, sepolia(activation.Add(3*time.Minute), 3000, 40), 50); got != "" {
+		t.Fatalf("collapse across Glamsterdam = %q, want no reason", got)
+	}
+	if got := shrankTooMuch(prev, sepolia(activation.Add(3*time.Minute), 200, 40), 50); got != "collapse_total" {
+		t.Fatalf("gutted set across Glamsterdam = %q, want collapse_total", got)
+	}
+	after := sepolia(activation.Add(3*time.Minute), 3000, 2700)
+	if got := shrankTooMuch(after, sepolia(activation.Add(8*time.Minute), 3000, 40), 50); got != "collapse_current" {
+		t.Fatalf("collapse after Glamsterdam = %q, want collapse_current", got)
+	}
+}
+
 func TestBelowFloor(t *testing.T) {
 	networks := []string{"mainnet", "hoodi"}
 	if got := belowFloor(guardManifest(10, 10), networks, 1); got != "current_below_floor" {
@@ -879,5 +899,27 @@ func TestDistinctStatePersistsHourlyAndAtShutdownDespiteRejectedPublish(t *testi
 	p.final = true
 	if err := p.Publish(ctx); err != nil || !saved() {
 		t.Fatalf("shutdown publish: err=%v saved=%v, want the state saved", err, saved())
+	}
+}
+
+func TestPublishIntervalShortensNearActivation(t *testing.T) {
+	activation := time.Unix(1791294816, 0)
+	networks := []string{"mainnet", "sepolia"}
+	for _, tc := range []struct {
+		name string
+		at   time.Time
+		base time.Duration
+		want time.Duration
+	}{
+		{"a day before", activation.Add(-24 * time.Hour), 5 * time.Minute, 5 * time.Minute},
+		{"an hour before", activation.Add(-forkPublishWindow), 5 * time.Minute, forkPublishInterval},
+		{"just after", activation.Add(time.Minute), 5 * time.Minute, forkPublishInterval},
+		{"already faster", activation, 30 * time.Second, 30 * time.Second},
+		{"two hours after", activation.Add(2 * time.Hour), 5 * time.Minute, 5 * time.Minute},
+		{"a long interval stops at the window", activation.Add(-forkPublishWindow - 10*time.Minute), 3 * time.Hour, 10 * time.Minute},
+	} {
+		if got := nextPublishDelay(tc.at, tc.base, networks); got != tc.want {
+			t.Errorf("%s: nextPublishDelay = %s, want %s", tc.name, got, tc.want)
+		}
 	}
 }

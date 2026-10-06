@@ -93,7 +93,7 @@ var filterEnums = []struct {
 	{"membership", func(f Filter) string { return f.Membership }, map[string]bool{"": true, "verified": true, "claimed": true, "all": true}},
 	{"identified", func(f Filter) string { return f.Identified }, map[string]bool{"": true, "recent": true}},
 	{"sync", func(f Filter) string { return f.Sync }, map[string]bool{"": true, "synced": true, "lagging": true, "unknown": true}},
-	{"readiness", func(f Filter) string { return f.Readiness }, map[string]bool{"": true, "ready": true, "not_ready": true, "mismatch": true, "unknown": true, "stale": true}},
+	{"readiness", func(f Filter) string { return f.Readiness }, map[string]bool{"": true, "ready": true, "pending": true, "not_ready": true, "mismatch": true, "unknown": true, "stale": true}},
 }
 
 // Validate rejects every filter value the engine cannot implement, so callers can report a

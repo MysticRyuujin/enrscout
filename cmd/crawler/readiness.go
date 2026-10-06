@@ -51,15 +51,19 @@ func readinessPointAt(target netconf.ForkTarget, network string, rows []nodeset.
 // each time rather than trusting memory, so a restart or a host move cannot drop earlier points.
 // Failures only warn: history is a side output and must never block a publish.
 func (p *publisher) recordReadiness(ctx context.Context, byNet map[string][]nodeset.Row, now time.Time) {
-	if !p.readinessAt.IsZero() && now.Sub(p.readinessAt) < snapshot.ReadinessInterval {
-		return
-	}
-	p.readinessAt = now
 	for _, network := range p.networks {
 		target, err := netconf.ForkTargetAt(network, now)
 		if err != nil || target.Phase() == netconf.PhaseNone {
 			continue
 		}
+		interval := snapshot.ReadinessIntervalAt(now, target.Activation())
+		if last, ok := p.readinessAt[network]; ok && now.Sub(last) < interval {
+			continue
+		}
+		if p.readinessAt == nil {
+			p.readinessAt = map[string]time.Time{}
+		}
+		p.readinessAt[network] = now
 		key, err := p.layout.ReadinessHistoryKey(network, target.Name)
 		if err != nil {
 			slog.Warn("readiness history key", "network", network, "err", err)
@@ -82,13 +86,13 @@ func (p *publisher) recordReadiness(ctx context.Context, byNet map[string][]node
 			// A rescheduled fork is a different series; mixing them would draw one false curve.
 			history.ELTime, history.CLEpoch, history.Points = elTime, clEpoch, nil
 		}
-		if !history.Append(readinessPointAt(target, network, byNet[network], now)) {
+		if !history.Append(readinessPointAt(target, network, byNet[network], now), interval) {
 			last := time.Unix(history.Points[len(history.Points)-1].At, 0)
 			if last.After(now) {
 				slog.Warn("readiness history has a point after now; not appending until the clock passes it", "key", key, "last", last.UTC())
-			} else if last.Before(p.readinessAt) {
+			} else if last.Before(p.readinessAt[network]) {
 				// Keep the persisted cadence when a restart checks before the next point is due.
-				p.readinessAt = last
+				p.readinessAt[network] = last
 			}
 			continue
 		}

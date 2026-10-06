@@ -1,17 +1,21 @@
 import { useEffect, useRef, useState } from "react";
-import { ACCENT, CATEGORICAL } from "../theme";
+import { ACCENT, CATEGORICAL, num } from "../theme";
 import type { ReadinessCounts, ReadinessPoint } from "../types";
 
 export const TREND_COLOR = { el: ACCENT, cl: CATEGORICAL[2] } as const;
 
 const H = 220;
-const PAD = { top: 12, right: 64, bottom: 28, left: 40 };
+const PAD = { top: 12, right: 100, bottom: 28, left: 40 };
 
 // Stale rows are off the current fork before activation and long gone after it, so they are not
 // part of the population a fork can be ready in.
 export function readyPool(c: Partial<ReadinessCounts>): number {
   return (
-    (c.ready ?? 0) + (c.not_ready ?? 0) + (c.mismatch ?? 0) + (c.unknown ?? 0)
+    (c.ready ?? 0) +
+    (c.pending ?? 0) +
+    (c.not_ready ?? 0) +
+    (c.mismatch ?? 0) +
+    (c.unknown ?? 0)
   );
 }
 
@@ -21,6 +25,45 @@ export function readyShare(
   if (!c) return null;
   const pool = readyPool(c);
   return pool ? (c.ready ?? 0) / pool : null;
+}
+
+// Pending rows scheduled the fork before activation and have not been seen since, so counting them
+// keeps the adoption line continuous across activation instead of dropping to the re-observed few.
+function scheduledShare(
+  c: Partial<ReadinessCounts> | undefined,
+): number | null {
+  if (!c) return null;
+  const pool = readyPool(c);
+  return pool ? ((c.ready ?? 0) + (c.pending ?? 0)) / pool : null;
+}
+
+function linePath(
+  values: (number | null)[],
+  points: ReadinessPoint[],
+  x: (t: number) => number,
+  y: (v: number) => number,
+): string {
+  let d = "";
+  for (const [i, v] of values.entries()) {
+    if (v === null) continue;
+    d += `${d && values[i - 1] !== null ? "L" : "M"}${x(points[i].at).toFixed(1)},${y(v).toFixed(1)}`;
+  }
+  return d;
+}
+
+function lastValue(values: (number | null)[], points: ReadinessPoint[]) {
+  for (let i = values.length - 1; i >= 0; i--) {
+    const v = values[i];
+    if (v !== null) return { at: points[i].at, value: v };
+  }
+  return null;
+}
+
+function fmtClock(unix: number): string {
+  return new Date(unix * 1000).toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function fmtTime(unix: number): string {
@@ -59,8 +102,8 @@ export default function ReadinessTrend({
     return (
       <div className="trend" ref={wrap}>
         <p className="empty">
-          No history yet. The crawler records a point every 15 minutes once it
-          tracks this fork.
+          No history yet. The crawler records a point every 15 minutes, and
+          every minute near activation, once it tracks this fork.
         </p>
       </div>
     );
@@ -80,27 +123,43 @@ export default function ReadinessTrend({
   const y = (share: number) => PAD.top + (1 - share) * plotH;
 
   const series = layers.map((layer) => {
-    const values = points.map((p) => readyShare(layer === "el" ? p.el : p.cl));
-    let d = "";
-    let last: { at: number; value: number } | null = null;
-    for (const [i, v] of values.entries()) {
-      if (v === null) continue;
-      d += `${d && values[i - 1] !== null ? "L" : "M"}${x(points[i].at).toFixed(1)},${y(v).toFixed(1)}`;
-      last = { at: points[i].at, value: v };
-    }
-    return { layer, values, d, last };
+    const counts = points.map((p) => (layer === "el" ? p.el : p.cl));
+    const values = counts.map(scheduledShare);
+    const upgraded = counts.map((c, i) =>
+      activation !== undefined && points[i].at >= activation
+        ? readyShare(c)
+        : null,
+    );
+    return {
+      layer,
+      values,
+      upgraded,
+      d: linePath(values, points, x, y),
+      dUpgraded: linePath(upgraded, points, x, y),
+      last: lastValue(values, points),
+      lastUpgraded: lastValue(upgraded, points),
+    };
   });
 
   const labelY: Record<string, number> = {};
   const placed = series
-    .filter((s) => s.last !== null)
-    .map((s) => ({ layer: s.layer, y: y(s.last!.value) + 4 }))
+    .flatMap((s) => [
+      ...(s.last ? [{ key: s.layer, y: y(s.last.value) + 4 }] : []),
+      ...(s.lastUpgraded
+        ? [{ key: `${s.layer}-up`, y: y(s.lastUpgraded.value) + 4 }]
+        : []),
+    ])
     .sort((a, b) => a.y - b.y);
   placed.forEach((l, i) => {
     const floor = i === 0 ? PAD.top + 10 : placed[i - 1].y + 13;
     l.y = Math.max(l.y, floor);
-    labelY[l.layer] = l.y;
   });
+  for (let i = placed.length - 1; i >= 0; i--) {
+    const ceiling =
+      i === placed.length - 1 ? PAD.top + plotH + 4 : placed[i + 1].y - 13;
+    placed[i].y = Math.min(placed[i].y, ceiling);
+    labelY[placed[i].key] = placed[i].y;
+  }
 
   const onMove = (e: React.PointerEvent<SVGRectElement>) => {
     const box = e.currentTarget.getBoundingClientRect();
@@ -151,7 +210,10 @@ export default function ReadinessTrend({
           y={H - 8}
           textAnchor="end"
         >
-          {fmtTime(t1)}
+          {new Date(t0 * 1000).toDateString() ===
+          new Date(t1 * 1000).toDateString()
+            ? fmtClock(t1)
+            : fmtTime(t1)}
         </text>
         {activation && activation >= t0 && activation <= t1 && (
           <g>
@@ -181,6 +243,26 @@ export default function ReadinessTrend({
               strokeWidth={2}
               strokeLinejoin="round"
             />
+            {s.dUpgraded && (
+              <path
+                d={s.dUpgraded}
+                fill="none"
+                stroke={TREND_COLOR[s.layer]}
+                strokeWidth={2}
+                strokeDasharray="4 3"
+                strokeLinejoin="round"
+              />
+            )}
+            {s.lastUpgraded !== null && (
+              <text
+                className="trend-label"
+                x={x(s.lastUpgraded.at) + 6}
+                y={labelY[`${s.layer}-up`]}
+              >
+                {s.layer.toUpperCase()}{" "}
+                {(s.lastUpgraded.value * 100).toFixed(1)}% seen
+              </text>
+            )}
             {s.last !== null && (
               <circle
                 cx={x(s.last.at)}
@@ -245,6 +327,7 @@ export default function ReadinessTrend({
             const c = s.layer === "el" ? hp.el : hp.cl;
             const v = s.values[hover!];
             if (v === null || !c) return null;
+            const up = s.upgraded[hover!];
             return (
               <div key={s.layer}>
                 <span
@@ -252,7 +335,10 @@ export default function ReadinessTrend({
                   style={{ background: TREND_COLOR[s.layer] }}
                 />
                 {s.layer === "el" ? "Execution" : "Consensus"}{" "}
-                {(v * 100).toFixed(1)}% ({c.ready ?? 0} ready)
+                {(v * 100).toFixed(1)}%
+                {up === null
+                  ? ` (${num(c.ready ?? 0)} scheduled)`
+                  : ` (${num(c.ready ?? 0)} upgraded, ${num(c.pending ?? 0)} pending)`}
               </div>
             );
           })}

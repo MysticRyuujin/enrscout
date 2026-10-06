@@ -174,7 +174,7 @@ export interface NodeQuery {
 }
 
 export type Readiness =
-  "ready" | "not_ready" | "mismatch" | "unknown" | "stale";
+  "ready" | "pending" | "not_ready" | "mismatch" | "unknown" | "stale";
 export type ReadinessCounts = Record<Readiness, number>;
 
 export interface VersionReadiness {

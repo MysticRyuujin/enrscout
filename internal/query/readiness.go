@@ -225,19 +225,26 @@ func readinessConditionAt(network, want string, at time.Time) (string, []any, er
 		parts = append(parts, "(layer = '"+layer+"' AND "+cond+")")
 		args = append(append(args, currentArgs...), a...)
 	}
-	activated := func(layer, pre string) {
+	activated := func(layer, pre, readable string, readableArgs []any, scheduled string, scheduledArgs ...any) {
+		onPre := "NOT " + current + " AND lower(fork_hash) = ? AND "
+		preReadable := append([]any{pre}, readableArgs...)
+		withSchedule := append(append([]any{}, preReadable...), scheduledArgs...)
 		switch netconf.Readiness(want) {
 		case netconf.Ready:
 			add(layer, current)
+		case netconf.Pending:
+			add(layer, onPre+readable+" AND "+scheduled, withSchedule...)
 		case netconf.NotReady:
-			add(layer, "NOT "+current+" AND lower(fork_hash) = ?", pre)
+			add(layer, onPre+readable+" AND NOT ("+scheduled+")", withSchedule...)
+		case netconf.Unknown:
+			add(layer, onPre+"NOT ("+readable+")", preReadable...)
 		case netconf.Stale:
 			add(layer, "NOT "+current+" AND lower(coalesce(fork_hash, '')) <> ?", pre)
 		}
 	}
 	if el := target.EL; el != nil {
 		if el.Phase == netconf.PhaseActivated {
-			activated("el", el.PreHash)
+			activated("el", el.PreHash, "TRUE", nil, "coalesce(fork_next, 0) = ?", el.Time)
 		} else {
 			switch netconf.Readiness(want) {
 			case netconf.Ready:
@@ -253,7 +260,8 @@ func readinessConditionAt(network, want string, at time.Time) (string, []any, er
 	}
 	if cl := target.CL; cl != nil {
 		if cl.Phase == netconf.PhaseActivated {
-			activated("cl", cl.PreDigest)
+			activated("cl", cl.PreDigest, "lower(coalesce(enr_fork_digest, '')) = ?", []any{cl.PreDigest},
+				"coalesce(enr_next_fork_epoch, 0) = ? AND lower(coalesce(enr_next_fork_version, '')) = ?", cl.Epoch, cl.Version)
 		} else {
 			matched := "coalesce(enr_fork_digest, '') <> '' AND lower(enr_fork_digest) = lower(fork_hash)"
 			ready := "coalesce(enr_next_fork_epoch, 0) = ? AND lower(coalesce(enr_next_fork_version, '')) = ?"
@@ -304,16 +312,37 @@ func (e *Engine) ReadinessHistoryFor(ctx context.Context, network string, target
 	if elTime, clEpoch := target.Schedule(); h.ELTime != elTime || h.CLEpoch != clEpoch {
 		return nil, nil
 	}
-	if n := len(h.Points); n > maxHistoryPoints {
-		step := (n + maxHistoryPoints - 1) / maxHistoryPoints
-		kept := make([]snapshot.ReadinessPoint, 0, maxHistoryPoints+1)
-		for i := 0; i < n; i += step {
-			kept = append(kept, h.Points[i])
-		}
-		if kept[len(kept)-1].At != h.Points[n-1].At {
-			kept = append(kept, h.Points[n-1])
-		}
-		h.Points = kept
-	}
+	h.Points = thinHistory(h.Points, target.Activation())
 	return h, nil
+}
+
+// thinHistory caps the regular 15-minute points at maxHistoryPoints and keeps every point of the
+// dense window around activation, which is the part of the trend people watch.
+func thinHistory(points []snapshot.ReadinessPoint, activation time.Time) []snapshot.ReadinessPoint {
+	dense := func(p snapshot.ReadinessPoint) bool {
+		return snapshot.ReadinessIntervalAt(time.Unix(p.At, 0), activation) == snapshot.ReadinessDenseInterval
+	}
+	regular := 0
+	for _, p := range points {
+		if !dense(p) {
+			regular++
+		}
+	}
+	if regular <= maxHistoryPoints {
+		return points
+	}
+	step := (regular + maxHistoryPoints - 1) / maxHistoryPoints
+	kept := make([]snapshot.ReadinessPoint, 0, len(points)-regular+maxHistoryPoints+1)
+	seen := 0
+	for i, p := range points {
+		if dense(p) || i == len(points)-1 {
+			kept = append(kept, p)
+			continue
+		}
+		if seen%step == 0 {
+			kept = append(kept, p)
+		}
+		seen++
+	}
+	return kept
 }
