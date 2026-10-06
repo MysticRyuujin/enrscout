@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/MysticRyuujin/enrscout/internal/distinct"
+	"github.com/MysticRyuujin/enrscout/internal/netconf"
 	"github.com/MysticRyuujin/enrscout/internal/nodeset"
 	"github.com/MysticRyuujin/enrscout/internal/snapshot"
 	"github.com/MysticRyuujin/enrscout/internal/store"
@@ -50,7 +51,7 @@ type publisher struct {
 	final              bool
 	distinctSavedAt    time.Time
 	aggregatesPrunedAt time.Time
-	readinessAt        time.Time
+	readinessAt        map[string]time.Time
 }
 
 type generation struct {
@@ -313,8 +314,14 @@ func shrankTooMuch(prev, current *snapshot.Manifest, maxCollapsePct int) string 
 		}
 		// A fork-classification regression can leave the row count untouched while every
 		// current-fork node disappears, which is the failure that actually reaches the map.
+		// A scheduled fork between the two publishes does the same thing legitimately: every row
+		// keeps its pre-fork id until it is seen again, and the reference only advances on success.
 		if shrank(after.CurrentNodeCount, before.CurrentNodeCount, maxCollapsePct) {
-			return "collapse_current"
+			if !forkActivatedBetween(network, prev.GeneratedAt, current.GeneratedAt) {
+				return "collapse_current"
+			}
+			slog.Warn("accepting a current-fork collapse across a scheduled fork activation", "network", network,
+				"current", after.CurrentNodeCount, "previous", before.CurrentNodeCount)
 		}
 	}
 	return ""
@@ -330,6 +337,15 @@ func belowFloor(current *snapshot.Manifest, networks []string, minCurrent int) s
 		}
 	}
 	return ""
+}
+
+func forkActivatedBetween(network string, from, to time.Time) bool {
+	before, _, err := netconf.ForkEraTokenAt(from, network)
+	if err != nil {
+		return false
+	}
+	after, _, err := netconf.ForkEraTokenAt(to, network)
+	return err == nil && before != after
 }
 
 func shrank(after, before, maxPct int) bool {

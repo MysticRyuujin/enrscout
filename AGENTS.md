@@ -61,7 +61,7 @@ node web/e2e/browse.mjs    # Playwright browse test (needs: cd web && npm ci && 
   reloads on change; an invalid file keeps the last good table (`netconf.SetClientReleases` validates
   before it swaps). The forks cache key includes `ClientReleasesGeneration`, so a reload is visible at once.
   Readiness history (`<prefix>/state/readiness/<network>/<fork>.json`, `snapshot.ReadinessHistory`) is
-  written by the crawler after each manifest commit, one point per 15 minutes for 30 days, by
+  written by the crawler after each manifest commit, one point per 15 minutes (per publish within 3 h of activation) for 30 days, by
   read-modify-write so restarts keep earlier points. It is not part of a generation or the manifest,
   it is never overwritten when unreadable, and the API reads it best-effort. It cannot be backfilled:
   ship the writer before a fork is scheduled, or the trend starts late.
@@ -81,7 +81,9 @@ node web/e2e/browse.mjs    # Playwright browse test (needs: cd web && npm ci && 
   `snapshots/manifest.json` pointer only after every network's parquet is stored
   (`internal/snapshot`). It restores the nodeset from the manifest on startup, refuses
   to advance the manifest when the total or current-fork count collapses past
-  `--max-collapse-pct` or a network falls below `--min-current-nodes`, commits
+  `--max-collapse-pct` (the current count is exempt across an activation in its own
+  schedule, since every row keeps its pre-fork id until seen again) or a network falls
+  below `--min-current-nodes`, publishes every minute within an hour of an activation, commits
   against the restored manifest/CrawlerID, and
   prunes old generations (`--keep-generations`). The api reads the manifest, not a
   mutable `latest.parquet`. Both build keys via `snapshot.Layout` so they never diverge.

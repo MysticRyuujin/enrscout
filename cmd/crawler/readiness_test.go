@@ -80,3 +80,37 @@ func TestRecordReadinessAppendsAcrossRestartsAndKeepsUnreadable(t *testing.T) {
 		t.Fatalf("unreadable history was overwritten with %s", data)
 	}
 }
+
+func TestRecordReadinessIsDenseAroundActivation(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.NewFS(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	layout := snapshot.Layout{}
+	rows := map[string][]nodeset.Row{"sepolia": {{ID: "a", Layer: "el"}}}
+	key, err := layout.ReadinessHistoryKey("sepolia", "Glamsterdam")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub := &publisher{store: st, layout: layout, networks: []string{"sepolia"}}
+	activation := time.Unix(sepoliaAmsterdam, 0)
+	for _, at := range []time.Time{
+		activation.Add(-snapshot.ReadinessDenseWindow - 10*time.Minute),
+		activation.Add(-snapshot.ReadinessDenseWindow - 5*time.Minute),
+		activation.Add(-time.Minute), activation, activation.Add(time.Minute), activation.Add(90 * time.Second),
+	} {
+		pub.recordReadiness(ctx, rows, at)
+	}
+	data, err := st.Get(ctx, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := snapshot.DecodeReadinessHistory(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(h.Points) != 4 {
+		t.Fatalf("points = %d, want one before the window and one per minute inside it", len(h.Points))
+	}
+}

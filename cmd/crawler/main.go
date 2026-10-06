@@ -442,8 +442,8 @@ func run() error {
 		crawlerID: id, networks: advertisedNetworks, statePrefix: statePrefix, distinctKey: distinctStateKey,
 		prev: prev,
 	}
-	ticker := time.NewTicker(conf.snapInterval)
-	defer ticker.Stop()
+	timer := time.NewTimer(nextPublishDelay(time.Now(), conf.snapInterval, advertisedNetworks))
+	defer timer.Stop()
 
 	// fatal is only ever a lost manifest race: another writer advanced it, so this crawler stops
 	// rather than fighting over the pointer.
@@ -453,14 +453,46 @@ func run() error {
 		case <-ctx.Done():
 			slog.Info("shutting down", "nodes", set.Len())
 			return shutdown(resolvers, loops, cr.pool, probes, probeShutdownGrace(conf.fpTimeout), rt, pub, fatal)
-		case <-ticker.C:
+		case <-timer.C:
+			started := time.Now()
 			if err := pub.Publish(ctx); err != nil {
 				fatal = err
 				slog.Error("snapshot writer leadership lost; stopping crawler", "err", err)
 				stop()
 			}
+			timer.Reset(nextPublishDelay(started, conf.snapInterval, advertisedNetworks) - time.Since(started))
 		}
 	}
+}
+
+const (
+	forkPublishWindow   = time.Hour
+	forkPublishInterval = time.Minute
+)
+
+// nextPublishDelay is the time from a publish that starts at at until the next one. Near a tracked
+// activation it shortens to forkPublishInterval, because the Forks page polls every minute and a
+// longer --snapshot-interval would hide the cutover; a longer interval is cut short at the window's
+// start, or it could step over the whole window.
+func nextPublishDelay(at time.Time, base time.Duration, networks []string) time.Duration {
+	delay := base
+	for _, network := range networks {
+		target, err := netconf.ForkTargetAt(network, at)
+		if err != nil {
+			continue
+		}
+		activation := target.Activation()
+		if activation.IsZero() {
+			continue
+		}
+		if at.Sub(activation).Abs() <= forkPublishWindow {
+			return min(base, forkPublishInterval)
+		}
+		if untilWindow := activation.Add(-forkPublishWindow).Sub(at); untilWindow > 0 {
+			delay = min(delay, untilWindow)
+		}
+	}
+	return delay
 }
 
 // probeShutdownGrace budgets the graceful half of the probe shutdown. An RLPx probe re-arms the

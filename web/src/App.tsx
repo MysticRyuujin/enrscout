@@ -7,6 +7,7 @@ import {
   useSearchParams,
 } from "react-router";
 import Nav from "./components/Nav";
+import UnderConstruction from "./components/UnderConstruction";
 import { NetworkContext } from "./network";
 import { NETWORKS } from "./theme";
 import { fetchMeta } from "./api";
@@ -98,6 +99,7 @@ export default function App() {
     >
       <div className="shell">
         <Nav />
+        {networksReady && <UnderConstruction />}
         <main className="content">
           <Suspense fallback={<div className="loading">Loading…</div>}>
             {networksReady && networks.includes(network) ? (

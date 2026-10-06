@@ -101,9 +101,16 @@ func TestReadinessAt(t *testing.T) {
 	}{
 		{"el upgraded", ReadinessEvidence{Layer: "el", ForkHash: activated.EL.PostHash}, Ready},
 		{"el left behind", ReadinessEvidence{Layer: "el", ForkHash: activated.EL.PreHash}, NotReady},
+		{"el scheduled, not seen on it yet", ReadinessEvidence{Layer: "el", ForkHash: activated.EL.PreHash, ForkNext: sepoliaGlamsterdam}, Pending},
 		{"el long stale", ReadinessEvidence{Layer: "el", ForkHash: "deadbeef"}, Stale},
 		{"cl upgraded", ReadinessEvidence{Layer: "cl", ForkHash: activated.CL.PostDigest}, Ready},
-		{"cl left behind", ReadinessEvidence{Layer: "cl", ForkHash: activated.CL.PreDigest}, NotReady},
+		{"cl scheduled, not seen on it yet", ReadinessEvidence{Layer: "cl", ForkHash: activated.CL.PreDigest,
+			ENRForkDigest: activated.CL.PreDigest, ENRNextForkVersion: "90000076", ENRNextForkEpoch: 353024}, Pending},
+		{"cl schedule under another digest", ReadinessEvidence{Layer: "cl", ForkHash: activated.CL.PreDigest,
+			ENRForkDigest: "12345678", ENRNextForkVersion: "90000076", ENRNextForkEpoch: 353024}, Unknown},
+		{"cl without ENR", ReadinessEvidence{Layer: "cl", ForkHash: activated.CL.PreDigest}, Unknown},
+		{"cl never scheduled", ReadinessEvidence{Layer: "cl", ForkHash: activated.CL.PreDigest,
+			ENRForkDigest: activated.CL.PreDigest, ENRNextForkVersion: "70000076", ENRNextForkEpoch: math.MaxUint64}, NotReady},
 	} {
 		if got := ReadinessAt(activated, "sepolia", tc.ev, activation); got != tc.want {
 			t.Errorf("%s: ReadinessAt = %q, want %q", tc.name, got, tc.want)

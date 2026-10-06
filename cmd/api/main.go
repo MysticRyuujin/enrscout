@@ -371,8 +371,8 @@ func routes(eng *query.Engine, cors string, maxAge time.Duration, networks []str
 	// The Forks page polls every minute and the body key buckets to the minute.
 	const forksMaxAge = 60
 	forks := newLRU[[]byte](32)
-	// The crawler appends a point once per ReadinessInterval, so the object is read once per interval
-	// rather than on every body-cache miss.
+	// The crawler appends a point at most once per ReadinessIntervalAt, so the object is read once per
+	// interval rather than on every body-cache miss.
 	histories := newLRU[*snapshot.ReadinessHistory](8)
 	mux.HandleFunc("GET /api/v1/forks", instrument("/api/v1/forks", func(w http.ResponseWriter, r *http.Request) {
 		network := r.URL.Query().Get("network")
@@ -411,7 +411,7 @@ func routes(eng *query.Engine, cors string, maxAge time.Duration, networks []str
 				return nil, err
 			}
 			if result.Phase != netconf.PhaseNone {
-				bucket := strconv.FormatInt(at.Truncate(snapshot.ReadinessInterval).Unix(), 10)
+				bucket := strconv.FormatInt(at.Truncate(snapshot.ReadinessIntervalAt(at, result.Fork.Activation())).Unix(), 10)
 				history, err := histories.load(r.Context(), network+"\x00"+result.Fork.Name+"\x00"+bucket, func() (*snapshot.ReadinessHistory, error) {
 					return eng.ReadinessHistoryFor(r.Context(), network, result.Fork)
 				})

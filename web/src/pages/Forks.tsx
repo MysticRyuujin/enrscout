@@ -29,8 +29,15 @@ import type {
 } from "../types";
 
 const REFRESH_MS = 60_000;
+// The zoomed trend spans the time since activation and as much before it, so the cutover sits
+// mid-chart instead of in the last few pixels of a month of history.
+const ZOOM_MIN_BEFORE_S = 2 * 3600;
+const ZOOM_DEFAULT_FOR_S = 3 * 86400;
+
+type TrendRange = "fork" | "all";
 const STATES: Readiness[] = [
   "ready",
+  "pending",
   "not_ready",
   "mismatch",
   "unknown",
@@ -38,8 +45,10 @@ const STATES: Readiness[] = [
 ];
 
 // Validated as a set against the dark panel surface; unknown and stale are deliberately neutral.
+// Pending is the ready hue hatched: the node has the fork, but nobody has seen it run it yet.
 const STATE_COLOR: Record<Readiness, string> = {
   ready: CATEGORICAL[1],
+  pending: `repeating-linear-gradient(135deg, ${CATEGORICAL[1]} 0 3px, ${CATEGORICAL[1]}4d 3px 6px)`,
   not_ready: CATEGORICAL[5],
   mismatch: CATEGORICAL[4],
   unknown: OTHER_COLOR,
@@ -50,6 +59,8 @@ function stateLabel(state: Readiness, activated: boolean): string {
   switch (state) {
     case "ready":
       return activated ? "upgraded" : "fork scheduled";
+    case "pending":
+      return "pending";
     case "not_ready":
       return activated ? "left behind" : "not scheduled";
     case "mismatch":
@@ -62,9 +73,12 @@ function stateLabel(state: Readiness, activated: boolean): string {
 }
 
 // Only the states a layer's bars can draw: stale rows never reach a client row, execution rows are
-// never unknown, and after activation a row is either upgraded or left behind.
+// never unknown, and after activation mismatch is folded into left behind.
 function legendStates(layer: "el" | "cl", activated: boolean): Readiness[] {
-  if (activated) return ["ready", "not_ready"];
+  if (activated)
+    return layer === "el"
+      ? ["ready", "pending", "not_ready"]
+      : ["ready", "pending", "not_ready", "unknown"];
   return layer === "el"
     ? ["ready", "not_ready", "mismatch"]
     : ["ready", "not_ready", "mismatch", "unknown"];
@@ -76,9 +90,11 @@ function stateHint(state: Readiness, activated: boolean): string {
       return activated
         ? "The identity advertises the new fork."
         : "The identity names this fork in its own schedule: the execution fork ID Next field, or the consensus record's next fork version and epoch.";
+    case "pending":
+      return "The identity scheduled the fork, but its last observation is still on the fork before it. The crawler has not seen it since activation, or the node has not synced to the fork.";
     case "not_ready":
       return activated
-        ? "The identity still advertises the fork before this one."
+        ? "The identity still advertises the fork before this one, without this one in its schedule."
         : "The identity advertises no next fork: Next is 0, or the next fork epoch is far-future.";
     case "mismatch":
       return "The identity advertises a next fork that is not this one: a custom or overridden fork time, or a client bug in how it encodes the schedule.";
@@ -155,6 +171,22 @@ function Legend({
       ))}
       <Link to="/about#fork-readiness">What these mean</Link>
     </div>
+  );
+}
+
+function LineKey({ dashed }: { dashed?: boolean }) {
+  return (
+    <svg width="18" height="8" aria-hidden="true">
+      <line
+        x1="0"
+        x2="18"
+        y1="4"
+        y2="4"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeDasharray={dashed ? "4 3" : undefined}
+      />
+    </svg>
   );
 }
 
@@ -345,6 +377,7 @@ export default function Forks() {
   const [data, setData] = useState<ForkReadiness | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now() / 1000);
+  const [range, setRange] = useState<TrendRange | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -422,6 +455,15 @@ export default function Forks() {
             ? undefined
             : `${(share * 100).toFixed(1)}% of ${num(pool)}`,
       },
+      ...(c.pending
+        ? [
+            {
+              label: `${l.toUpperCase()} pending`,
+              value: c.pending,
+              hint: `${pct(c.pending, pool)}, fork scheduled`,
+            },
+          ]
+        : []),
       {
         label: `${l.toUpperCase()} ${activated ? "left behind" : "not scheduled"}`,
         value: c.not_ready,
@@ -453,9 +495,29 @@ export default function Forks() {
       value: lagging,
       hint: "behind the observed tip",
     });
+  const snapshotAt = data.snapshot_generated_at
+    ? Date.parse(data.snapshot_generated_at) / 1000
+    : undefined;
+  const preActivationSnapshot =
+    activated &&
+    activation !== undefined &&
+    snapshotAt !== undefined &&
+    snapshotAt < activation;
+  const history = data.history?.points ?? [];
+  const zoomable = activated && activation !== undefined;
+  const trendRange: TrendRange =
+    range ??
+    (zoomable && now - activation < ZOOM_DEFAULT_FOR_S ? "fork" : "all");
+  const trendPoints =
+    zoomable && trendRange === "fork"
+      ? history.filter(
+          (p) =>
+            p.at >= activation - Math.max(now - activation, ZOOM_MIN_BEFORE_S),
+        )
+      : history;
   const releases = data.releases;
   const released = releases.filter(hasRelease).length;
-  if (releases.length)
+  if (releases.length && !activated)
     tiles.push({
       label: "clients with a release",
       value: released,
@@ -501,11 +563,17 @@ export default function Forks() {
       </div>
 
       {err && <div className="error">API unreachable: {err}</div>}
+      {preActivationSnapshot && (
+        <div className="error">
+          The latest snapshot is from before activation, so no node can show as
+          upgraded yet. Counts update with the next snapshot.
+        </div>
+      )}
 
       <section className="disclaimer-banner" aria-label="Methodology">
         <span>
           {activated
-            ? "Upgraded means the identity advertises the new fork; left behind means it still advertises the fork before it."
+            ? "Upgraded means the identity advertises the new fork. Pending means it scheduled the fork, but the crawler has not seen it on the fork yet. Left behind means it did not advertise the fork."
             : "Ready means the identity itself advertises the fork: the execution fork ID names the fork time, or the consensus record names the fork version and epoch."}{" "}
           This is the node&apos;s own schedule, not its version string. Release
           labels come from a hand-curated table, updated {data.releases_updated}
@@ -518,18 +586,47 @@ export default function Forks() {
       <div className="card">
         <h3>Adoption over time</h3>
         <p className="card-subtitle">
-          Share of current-fork identities that advertise the fork before
-          activation, and that upgraded after it, from the crawler&apos;s
-          15-minute history.{" "}
+          Share of identities that have the fork in their schedule.
+        </p>
+        <div className="rd-legend">
           {layers.map((l) => (
-            <span key={l} className="rd-key">
+            <span key={l}>
               <span className="swatch" style={{ background: TREND_COLOR[l] }} />
               {layerName(l)}
             </span>
           ))}
-        </p>
+          {activated && (
+            <>
+              <span>
+                <LineKey /> scheduled or upgraded
+              </span>
+              <span>
+                <LineKey dashed /> seen on the fork
+              </span>
+            </>
+          )}
+          {zoomable && (
+            <div className="trend-range" role="group" aria-label="Time range">
+              {(
+                [
+                  ["fork", "Around activation"],
+                  ["all", "All history"],
+                ] as const
+              ).map(([r, label]) => (
+                <button
+                  key={r}
+                  className={trendRange === r ? "active" : undefined}
+                  aria-pressed={trendRange === r}
+                  onClick={() => setRange(r)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
         <ReadinessTrend
-          points={data.history?.points ?? []}
+          points={trendPoints}
           activation={activation}
           layers={layers}
         />

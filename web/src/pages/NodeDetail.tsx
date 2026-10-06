@@ -32,6 +32,7 @@ function Row({
 
 const READINESS_TEXT: Record<Readiness, string> = {
   ready: "Scheduled / upgraded",
+  pending: "Scheduled, not seen on the fork yet",
   not_ready: "Not scheduled / left behind",
   mismatch: "Advertises another schedule",
   unknown: "No schedule advertised",

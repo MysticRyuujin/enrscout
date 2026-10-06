@@ -113,14 +113,16 @@ func TestReadinessMatchesSQLAndGo(t *testing.T) {
 				}
 				ids.Close()
 			}
+			covered := map[netconf.Readiness]bool{}
+			for _, r := range seen {
+				covered[r] = true
+			}
+			wantCovered := []netconf.Readiness{netconf.Ready, netconf.Pending, netconf.NotReady, netconf.Unknown, netconf.Stale}
 			if target.Phase() == netconf.PhaseScheduled {
-				covered := map[netconf.Readiness]bool{}
-				for _, r := range seen {
-					covered[r] = true
-				}
-				if len(covered) != len(netconf.Readinesses) {
-					t.Fatalf("corpus covers only %v", covered)
-				}
+				wantCovered = []netconf.Readiness{netconf.Ready, netconf.NotReady, netconf.Mismatch, netconf.Unknown, netconf.Stale}
+			}
+			if len(covered) != len(wantCovered) {
+				t.Fatalf("corpus covers %v, want %v", covered, wantCovered)
 			}
 			for _, r := range rows {
 				if got, want := seen[r.id], netconf.ReadinessAt(target, "sepolia", r.ev, at); got != want {
@@ -270,8 +272,34 @@ func TestReadinessHistoryDownsamplesKeepingEndpoints(t *testing.T) {
 		t.Fatal(err)
 	}
 	n := len(got.Points)
-	if n > maxHistoryPoints+1 || got.Points[0].At != h.Points[0].At || got.Points[n-1].At != h.Points[len(h.Points)-1].At {
+	if n > maxHistoryPoints+1+int(2*snapshot.ReadinessDenseWindow/(15*time.Minute))+1 || got.Points[0].At != h.Points[0].At || got.Points[n-1].At != h.Points[len(h.Points)-1].At {
 		t.Fatalf("downsampled to %d points spanning %d..%d", n, got.Points[0].At, got.Points[n-1].At)
+	}
+}
+
+func TestThinHistoryKeepsTheActivationWindow(t *testing.T) {
+	activation := time.Unix(sepoliaAmsterdam, 0)
+	start := activation.Add(-20 * 24 * time.Hour)
+	var points []snapshot.ReadinessPoint
+	for at := start; at.Before(activation.Add(10 * 24 * time.Hour)); {
+		points = append(points, snapshot.ReadinessPoint{At: at.Unix()})
+		at = at.Add(snapshot.ReadinessIntervalAt(at, activation))
+	}
+	got := thinHistory(points, activation)
+	dense := 0
+	for _, p := range got {
+		if time.Unix(p.At, 0).Sub(activation).Abs() <= snapshot.ReadinessDenseWindow {
+			dense++
+		}
+	}
+	if want := int(2*snapshot.ReadinessDenseWindow/snapshot.ReadinessDenseInterval) + 1; dense < want-1 {
+		t.Fatalf("kept %d points around activation, want about %d", dense, want)
+	}
+	if regular := len(got) - dense; regular > maxHistoryPoints+1 {
+		t.Fatalf("kept %d regular points, want at most %d", regular, maxHistoryPoints+1)
+	}
+	if got[0].At != points[0].At || got[len(got)-1].At != points[len(points)-1].At {
+		t.Fatalf("thinned history spans %d..%d, want %d..%d", got[0].At, got[len(got)-1].At, points[0].At, points[len(points)-1].At)
 	}
 }
 
