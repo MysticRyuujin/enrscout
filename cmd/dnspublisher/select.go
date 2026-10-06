@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/hex"
 	"errors"
+	"log/slog"
 	"math"
 	"sort"
 	"time"
@@ -57,24 +58,49 @@ func (o selectOpts) Validate() error {
 
 // enrForkCurrentAt evaluates the row currency rule on the ENR the tree will carry: a Status-classified
 // row can be current while its ENR advertises no fork entry or a stale one, and consumers pre-qualify
-// peers from the record alone. Same bar as discv4-crawl's `devp2p nodeset filter -eth-network`.
-func enrForkCurrentAt(n *enode.Node, layer, network string, now time.Time) bool {
+// peers from the record alone. Same bar as discv4-crawl's `devp2p nodeset filter -eth-network`. The
+// record's fork schedule is returned too, so readiness is read from the same record.
+func enrForkCurrentAt(n *enode.Node, layer, network string, now time.Time) (netconf.ReadinessEvidence, bool) {
 	switch layer {
 	case "el":
 		var eth netconf.EthEntry
 		if n.Record().Load(&eth) != nil {
-			return false
+			return netconf.ReadinessEvidence{}, false
 		}
-		return netconf.RowForkCurrentAt(layer, network, hex.EncodeToString(eth.ForkID.Hash[:]), eth.ForkID.Next, now)
+		ev := netconf.ReadinessEvidence{Layer: layer, ForkHash: hex.EncodeToString(eth.ForkID.Hash[:]), ForkNext: eth.ForkID.Next}
+		return ev, netconf.RowForkCurrentAt(layer, network, ev.ForkHash, ev.ForkNext, now)
 	case "cl":
 		// SSZ ENRForkID is fixed 16 bytes: a truncated entry can carry a current digest yet still fail strict consumers.
 		var eth2 netconf.Eth2Entry
 		if n.Record().Load(&eth2) != nil || len(eth2) != 16 {
-			return false
+			return netconf.ReadinessEvidence{}, false
 		}
-		return netconf.RowForkCurrentAt(layer, network, hex.EncodeToString(eth2[:4]), 0, now)
+		s := nodeset.CLForkScheduleOf(n)
+		ev := netconf.ReadinessEvidence{Layer: layer, ForkHash: s.Digest, ENRForkDigest: s.Digest,
+			ENRNextForkVersion: s.NextVersion, ENRNextForkEpoch: s.NextEpoch}
+		return ev, netconf.RowForkCurrentAt(layer, network, ev.ForkHash, 0, now)
 	default:
-		return false
+		return netconf.ReadinessEvidence{}, false
+	}
+}
+
+const (
+	rankReady = iota
+	rankNeutral
+	rankMismatch
+)
+
+// readinessRank orders records by what they advertise about the tracked fork. A ready record stays
+// acceptable to post-fork clients (EIP-2124 accepts a past fork whose Next names the following one);
+// one with Next = 0 is rejected once the fork activates; a mismatch splits from the network at it.
+func readinessRank(r netconf.Readiness) int {
+	switch r {
+	case netconf.Ready:
+		return rankReady
+	case netconf.Mismatch:
+		return rankMismatch
+	default:
+		return rankNeutral
 	}
 }
 
@@ -117,9 +143,12 @@ type candidate struct {
 	node   *enode.Node
 	client string
 	v6     ipv6Slot
+	rank   int
 }
 
-// rankCandidates applies every per-row filter except capability, in rank order. It sorts rows in place.
+// rankCandidates applies every per-row filter except capability, in rank order: readiness for the
+// network's tracked fork first, then score. It sorts rows in place. Readiness never filters, so an
+// early schedule with few ready records cannot shrink a tree.
 func rankCandidates(rows []nodeset.Row, opt selectOpts, now time.Time) []candidate {
 	sort.Slice(rows, func(i, j int) bool {
 		if rows[i].Score != rows[j].Score {
@@ -131,6 +160,7 @@ func rankCandidates(rows []nodeset.Row, opt selectOpts, now time.Time) []candida
 		return rows[i].ID < rows[j].ID
 	})
 	var out []candidate
+	targets := map[string]netconf.ForkTarget{}
 	for i := range rows {
 		r := &rows[i]
 		if opt.layer != "" && opt.layer != "any" && r.Layer != opt.layer {
@@ -165,14 +195,25 @@ func rankCandidates(rows []nodeset.Row, opt selectOpts, now time.Time) []candida
 		if !enrWellFormed(n) {
 			continue
 		}
-		if !enrForkCurrentAt(n, r.Layer, r.Network, now) {
+		ev, current := enrForkCurrentAt(n, r.Layer, r.Network, now)
+		if !current {
 			continue
+		}
+		target, ok := targets[r.Network]
+		if !ok {
+			var err error
+			if target, err = netconf.LayerForkTargetsAt(r.Network, now); err != nil {
+				slog.Warn("fork target unavailable; not ranking by readiness", "network", r.Network, "err", err)
+			}
+			targets[r.Network] = target
 		}
 		out = append(out, candidate{
 			row: r, node: n, client: clientBucket(*r),
-			v6: ipv6Slot{dialable: r.DialableV6(), ownPort: r.TCP6 != 0 || r.QUIC6 != 0},
+			v6:   ipv6Slot{dialable: r.DialableV6(), ownPort: r.TCP6 != 0 || r.QUIC6 != 0},
+			rank: readinessRank(netconf.ReadinessAt(target, r.Network, ev, now)),
 		})
 	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].rank < out[j].rank })
 	return out
 }
 
@@ -268,8 +309,7 @@ func countTrue(b []bool) int {
 	return n
 }
 
-// mergeRanked restores candidate order, because tree layout depends on input order and a stable order
-// keeps branch records identical between cycles that select the same nodes.
+// mergeRanked returns the selected candidates in rank order.
 func mergeRanked(all []candidate, reserved []bool, filled []candidate) []candidate {
 	keep := make(map[*enode.Node]bool, len(filled))
 	for _, c := range filled {
@@ -381,8 +421,6 @@ func balanceClients(cands []candidate, limit int, held map[string]int) []candida
 	for _, c := range order {
 		picked = append(picked, pool[c][:slots[c]]...)
 	}
-	// Restore the ranked order: tree layout depends on input order, so a stable order keeps branch
-	// records identical between cycles that select the same nodes.
 	sort.Ints(picked)
 	selected := make([]candidate, 0, len(picked))
 	for _, i := range picked {

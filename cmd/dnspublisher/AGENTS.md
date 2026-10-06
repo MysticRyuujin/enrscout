@@ -24,8 +24,28 @@ Guidance for coding agents working in `cmd/dnspublisher`. Repo-wide rules are in
   row columns. A Status-classified row can be current while its ENR advertises no fork entry or a
   stale one; consumers pre-qualify peers from the record alone, and discv4-crawl's `devp2p nodeset
   filter -eth-network` applied the same bar: every record in the EF production trees carries a
-  parseable `eth` entry. Expect the tree to shed ENR-stale nodes for a cycle at fork transitions,
-  bounded by the collapse guards.
+  parseable `eth` entry.
+  **Fork readiness ranks, it never filters by itself.** `rankCandidates` ranks each record by
+  `netconf.ReadinessAt` on the record's own schedule (ready, neutral, mismatch), against
+  `netconf.LayerForkTargetsAt`, which keeps both layers even when their forks activate at different
+  instants. The order inside a rank is unchanged (score, `last_seen`, ID). `balanceClients` and
+  `reserveIPv6` consume input order, so ready records fill each client's quota first; the reserved
+  IPv6 tier still takes explicit `tcp6`/`quic6` before readiness, and which client holds a reserved
+  slot can shift per-client counts by up to the reserved slots. Within two publish intervals of a
+  scheduled activation, `buildNetworkTrees` publishes a ready-only tree when it passes every guard,
+  and otherwise the full ranked tree: a tree built then is served across the fork, and EIP-2124
+  makes post-fork clients reject a past-fork record whose `Next` does not name the following fork.
+  The limit does not bind on small networks, so ranking alone would not change their trees.
+  After activation, the first cycle usually skips on the collapse guard and keeps serving the
+  ready pre-fork tree. From one publish interval after activation, the collapse guard is exempt
+  (the empty and floor guards still apply), dated by the `.published` artifact's sequence, never
+  the build floor: a failed exempt push advances the build floor past the fork, and reading that
+  would close the exemption and wedge the domain. Only a fork of the tree's own layer counts: an EL
+  tree's records stay current across a CL-only fork. The sequence stands in for the publish time
+  without an artifact schema change (strict unmarshal would break rollback). It runs ahead of the
+  snapshot time by one second per rebuild from an unchanged snapshot, and `--max-snapshot-age` stops
+  rebuilds of an old one, so the error is seconds. `enrscout_dns_tree_nodes_by_readiness` and the
+  `ready`/`ready_only` log fields show what each tree holds.
   When `--limit` binds, IPv6 also gets a reserved share: address family is not a client-balance
   dimension, so a family holding a few percent of the pool otherwise rounds away to nothing (at
   `--limit=25` a 2.4% IPv6 share expects 0.6 nodes). `reserveIPv6` gives it its proportional share and
