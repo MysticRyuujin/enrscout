@@ -32,7 +32,7 @@ func TestObserveAuthenticatedELStoresVerifiedEnodeWithoutENR(t *testing.T) {
 	if observed := s.ObserveAuthenticatedEL(n, "v4", "mainnet", "07c9462e", 0, time.Now()); !observed.Applied {
 		t.Fatalf("legacy observation = %+v", observed)
 	}
-	s.SetFingerprint(n.ID(), Fingerprint{"Nethermind", "v1.39.0", "linux/x86_64", "dotnet10", "eth/71"}, "outbound")
+	s.SetFingerprint(n.ID(), "el", Fingerprint{"Nethermind", "v1.39.0", "linux/x86_64", "dotnet10", "eth/71"}, "outbound")
 	row := s.rows("mainnet")[0]
 	if row.ENR != "" || row.Enode != url || row.Layer != "el" || row.Client != "Nethermind" || !row.HasV4 {
 		t.Fatalf("legacy row = %+v", row)
@@ -59,7 +59,7 @@ func TestSnapshotRequiresRepeatedInboundOnlyAuthentication(t *testing.T) {
 	if observed := s.ObserveAuthenticatedEL(n, "inbound", "mainnet", "07c9462e", 0, now); !observed.Applied {
 		t.Fatalf("first inbound observation = %+v", observed)
 	}
-	s.SetFingerprint(n.ID(), Fingerprint{"Geth", "v1.17.4", "linux/x86_64", "go1.24", "eth/71"}, "outbound")
+	s.SetFingerprint(n.ID(), "el", Fingerprint{"Geth", "v1.17.4", "linux/x86_64", "go1.24", "eth/71"}, "outbound")
 	if got := len(s.SnapshotNetworks([]string{"mainnet"})["mainnet"]); got != 0 {
 		t.Fatalf("snapshot contains %d one-shot inbound identities, want 0", got)
 	}
@@ -105,7 +105,7 @@ func TestMembershipSourceAndDirectionProvenance(t *testing.T) {
 	if !s.SetExecutionStatus(n.ID(), "mainnet", forkid.ID{Hash: [4]byte{1, 2, 3, 4}}) {
 		t.Fatal("execution status rejected")
 	}
-	s.SetFingerprint(n.ID(), Fingerprint{"Geth", "v1", "linux", "go", "eth/71"}, "inbound")
+	s.SetFingerprint(n.ID(), "el", Fingerprint{"Geth", "v1", "linux", "go", "eth/71"}, "inbound")
 	row := s.rows("mainnet")[0]
 	if row.MembershipSource != "status" || row.FPDirection != "inbound" {
 		t.Fatalf("provenance = %q/%q, want status/inbound", row.MembershipSource, row.FPDirection)
@@ -172,7 +172,7 @@ func TestObserveAuthenticatedCLForcesConsensusLayerWithoutENR(t *testing.T) {
 	if observed := s.ObserveAuthenticatedCL(n, "mainnet", "6a95a1a1", time.Now()); !observed.Applied {
 		t.Fatalf("CL observation = %+v", observed)
 	}
-	s.SetFingerprint(n.ID(), Fingerprint{"Lighthouse", "v7.0.1", "linux/x86_64", "", ""}, "outbound")
+	s.SetFingerprint(n.ID(), "cl", Fingerprint{"Lighthouse", "v7.0.1", "linux/x86_64", "", ""}, "outbound")
 	row := s.rows("mainnet")[0]
 	if row.ENR != "" || row.Layer != "cl" || row.Client != "Lighthouse" || row.TCP != 9000 {
 		t.Fatalf("authenticated CL row = %+v", row)
@@ -288,8 +288,8 @@ func TestCapacityNeverEvictsVerifiedOrEqualClass(t *testing.T) {
 	a, b := elNode(t, 20), elNode(t, 21)
 	s.Observe(a, "v5", now)
 	s.Observe(b, "v5", now)
-	s.SetFingerprint(a.ID(), Fingerprint{"Geth", "v1", "linux", "go", "eth/71"}, "outbound")
-	s.SetFingerprint(b.ID(), Fingerprint{"Geth", "v1", "linux", "go", "eth/71"}, "outbound")
+	s.SetFingerprint(a.ID(), "el", Fingerprint{"Geth", "v1", "linux", "go", "eth/71"}, "outbound")
+	s.SetFingerprint(b.ID(), "el", Fingerprint{"Geth", "v1", "linux", "go", "eth/71"}, "outbound")
 	observed := s.ObserveResult(elNode(t, 22), "v5", now)
 	if observed.Accepted || observed.Reject != "capacity" {
 		t.Fatalf("classified candidate displaced verified nodes: %+v", observed)
@@ -308,7 +308,7 @@ func TestIngestEvictsFallbackForRestoredRows(t *testing.T) {
 
 	src := NewWithLimit(0)
 	src.Observe(elNode(t, 31), "v5", now)
-	src.SetFingerprint(elNode(t, 31).ID(), Fingerprint{"Geth", "v1", "linux", "go", "eth/71"}, "outbound")
+	src.SetFingerprint(elNode(t, 31).ID(), "el", Fingerprint{"Geth", "v1", "linux", "go", "eth/71"}, "outbound")
 	rows := src.SnapshotNetworks([]string{"mainnet"})["mainnet"]
 
 	dropped, evicted := s.Ingest(rows)
@@ -349,7 +349,7 @@ func TestObserveFallbackRetainsFingerprintedNode(t *testing.T) {
 	n := elNode(t, 93)
 	now := time.Now()
 	s.Observe(n, "v5", now)
-	s.SetFingerprint(n.ID(), Fingerprint{"Geth", "v1", "linux", "go", "eth/71"}, "outbound")
+	s.SetFingerprint(n.ID(), "el", Fingerprint{"Geth", "v1", "linux", "go", "eth/71"}, "outbound")
 
 	s.ObserveFallbackResult(n, "v5", now.Add(time.Second))
 	if s.Len() != 1 {
@@ -414,7 +414,7 @@ func TestSnapshotExcludesUnverifiedFallbackUntilResolvedOrAuthenticated(t *testi
 	if !s.ObserveFallbackResult(authenticated, "v5", now).Accepted {
 		t.Fatal("authenticated fallback lead rejected")
 	}
-	s.SetFingerprint(authenticated.ID(), Fingerprint{"Nethermind", "v1.39.1", "linux/x86_64", "dotnet10", "eth/71"}, "outbound")
+	s.SetFingerprint(authenticated.ID(), "el", Fingerprint{"Nethermind", "v1.39.1", "linux/x86_64", "dotnet10", "eth/71"}, "outbound")
 	if got := len(s.SnapshotNetworks([]string{"mainnet"})["mainnet"]); got != 2 {
 		t.Fatalf("snapshot contains %d verified nodes, want 2", got)
 	}
@@ -553,7 +553,7 @@ func TestPenalizeRetainsFingerprintedNode(t *testing.T) {
 	n := elNode(t, 94)
 	now := time.Now()
 	s.Observe(n, "v4", now)
-	s.SetFingerprint(n.ID(), Fingerprint{"Geth", "v1", "linux", "go", "eth/71"}, "outbound")
+	s.SetFingerprint(n.ID(), "el", Fingerprint{"Geth", "v1", "linux", "go", "eth/71"}, "outbound")
 	s.Penalize(n.ID(), now.Add(time.Second))
 	if s.Len() != 1 {
 		t.Fatal("transient resolution failure removed a fingerprinted node")
@@ -672,7 +672,7 @@ func TestPruneStaleRetainsVerifiedNodeForLongerLifetime(t *testing.T) {
 	verified := elNode(t, 90)
 	unverified := elNode(t, 91)
 	s.Observe(verified, "v5", now.Add(-48*time.Hour))
-	s.SetFingerprint(verified.ID(), Fingerprint{"Nethermind", "v1.38.1", "linux/x86_64", "dotnet9", "eth/71"}, "outbound")
+	s.SetFingerprint(verified.ID(), "el", Fingerprint{"Nethermind", "v1.38.1", "linux/x86_64", "dotnet9", "eth/71"}, "outbound")
 	s.mu.Lock()
 	s.m[verified.ID()].LastResolved = now.Add(-48 * time.Hour)
 	s.mu.Unlock()
@@ -694,7 +694,7 @@ func TestVerifiedPruneUsesLastResolvedNotFallbackSightings(t *testing.T) {
 	now := time.Now()
 	n := elNode(t, 92)
 	s.Observe(n, "v5", now.Add(-8*24*time.Hour))
-	s.SetFingerprint(n.ID(), Fingerprint{"Geth", "v1", "linux", "go", "eth/71"}, "outbound")
+	s.SetFingerprint(n.ID(), "el", Fingerprint{"Geth", "v1", "linux", "go", "eth/71"}, "outbound")
 	s.mu.Lock()
 	s.m[n.ID()].LastResolved = now.Add(-8 * 24 * time.Hour)
 	s.mu.Unlock()
@@ -734,7 +734,7 @@ func TestFingerprintRetriesWithBackoffWithoutGivingUp(t *testing.T) {
 		t.Fatal("due retry should remain claimable after failed status")
 	}
 
-	if failures := s.SetFingerprint(id, Fingerprint{"Geth", "v1.17.4", "linux/x86_64", "go1.24", "eth/68"}, "outbound"); failures != fpFailedAfter {
+	if failures := s.SetFingerprint(id, "el", Fingerprint{"Geth", "v1.17.4", "linux/x86_64", "go1.24", "eth/68"}, "outbound"); failures != fpFailedAfter {
 		t.Fatalf("reported prior failures = %d, want %d", failures, fpFailedAfter)
 	}
 	s.UnclaimFingerprint(id)
@@ -893,7 +893,7 @@ func TestLateFingerprintFailureDoesNotOverrideSuccess(t *testing.T) {
 	if !s.ClaimFingerprintAt(n.ID(), now) {
 		t.Fatal("initial claim failed")
 	}
-	s.SetFingerprint(n.ID(), Fingerprint{"Geth", "v1", "linux", "go", "eth/71"}, "outbound")
+	s.SetFingerprint(n.ID(), "el", Fingerprint{"Geth", "v1", "linux", "go", "eth/71"}, "outbound")
 	if retry := s.FingerprintFailed(n.ID(), now); !retry.RetryAt.IsZero() {
 		t.Fatalf("late failure scheduled over success: %+v", retry)
 	}
@@ -990,13 +990,13 @@ func TestUnclaimedFingerprintSurvivesRefreshInvalidation(t *testing.T) {
 		t.Fatal("initial claim failed")
 	}
 	s.Observe(n2, "v5", now.Add(time.Second))
-	if failures := s.SetFingerprint(id, Fingerprint{"Nethermind", "v2", "linux", "dotnet", "eth/71"}, "outbound"); failures != 0 {
+	if failures := s.SetFingerprint(id, "el", Fingerprint{"Nethermind", "v2", "linux", "dotnet", "eth/71"}, "outbound"); failures != 0 {
 		t.Fatalf("inbound failures = %d, want 0", failures)
 	}
 	if got := s.rows("")[0]; got.Client != "Nethermind" || got.FPStatus != "ok" {
 		t.Fatalf("inbound fingerprint not applied: client=%q status=%q", got.Client, got.FPStatus)
 	}
-	s.SetClaimedFingerprint(id, Fingerprint{"Geth", "v1", "linux", "go", "eth/68"}, "outbound")
+	s.SetClaimedFingerprint(id, "el", Fingerprint{"Geth", "v1", "linux", "go", "eth/68"}, "outbound")
 	if got := s.rows("")[0]; got.Client != "Nethermind" {
 		t.Fatalf("stale claimed result overwrote fresh fingerprint: %q", got.Client)
 	}
@@ -1018,7 +1018,7 @@ func TestNewerRecordRefreshesFingerprint(t *testing.T) {
 
 	s := NewWithLimit(0)
 	s.Observe(n1, "v5", time.Now())
-	s.SetFingerprint(id, Fingerprint{"Geth", "v1", "linux", "go", "eth/68"}, "outbound")
+	s.SetFingerprint(id, "el", Fingerprint{"Geth", "v1", "linux", "go", "eth/68"}, "outbound")
 	if !s.Observe(n2, "v5", time.Now().Add(time.Second)) {
 		t.Fatal("newer record rejected")
 	}
@@ -1047,7 +1047,7 @@ func TestNewerRecordDiscardsInFlightFingerprint(t *testing.T) {
 		t.Fatal("initial fingerprint claim failed")
 	}
 	s.Observe(n2, "v5", time.Now().Add(time.Second))
-	s.SetClaimedFingerprint(id, Fingerprint{"Geth", "stale", "linux", "go", "eth/68"}, "outbound")
+	s.SetClaimedFingerprint(id, "el", Fingerprint{"Geth", "stale", "linux", "go", "eth/68"}, "outbound")
 	if got := s.rows("")[0].Client; got != "" {
 		t.Fatalf("stale in-flight fingerprint was retained as %q", got)
 	}
@@ -1061,7 +1061,7 @@ func TestFingerprintRefreshesAfterTTL(t *testing.T) {
 	n := elNode(t, 98)
 	now := time.Now()
 	s.Observe(n, "v5", now)
-	s.SetFingerprint(n.ID(), Fingerprint{"Geth", "v1", "linux", "go", "eth/68"}, "outbound")
+	s.SetFingerprint(n.ID(), "el", Fingerprint{"Geth", "v1", "linux", "go", "eth/68"}, "outbound")
 	s.mu.Lock()
 	s.m[n.ID()].fpAt = now.Add(-fpRefreshAge)
 	s.mu.Unlock()
@@ -1082,7 +1082,7 @@ func TestFingerprintRefreshesAfterTTL(t *testing.T) {
 	if !s.ClaimFingerprintAt(n.ID(), retry.RetryAt) {
 		t.Fatal("refresh retry was not claimable after backoff")
 	}
-	s.SetFingerprint(n.ID(), Fingerprint{"Nethermind", "v1.39", "linux/x86_64", "dotnet10", "eth/71"}, "outbound")
+	s.SetFingerprint(n.ID(), "el", Fingerprint{"Nethermind", "v1.39", "linux/x86_64", "dotnet10", "eth/71"}, "outbound")
 	if row := s.rows("")[0]; row.Client != "Nethermind" || row.Version != "v1.39" || row.FPStatus != "ok" {
 		t.Fatalf("successful refresh did not atomically replace fingerprint: %+v", row)
 	}
@@ -1093,7 +1093,7 @@ func TestStaleFingerprintRetrySurvivesSnapshotRestore(t *testing.T) {
 	n := elNode(t, 99)
 	now := time.Unix(1700000000, 0)
 	s.Observe(n, "v5", now)
-	s.SetFingerprint(n.ID(), Fingerprint{"Reth", "v1.8.2", "linux/x86_64", "rust1.88", "eth/71"}, "outbound")
+	s.SetFingerprint(n.ID(), "el", Fingerprint{"Reth", "v1.8.2", "linux/x86_64", "rust1.88", "eth/71"}, "outbound")
 	s.mu.Lock()
 	s.m[n.ID()].fpAt = now.Add(-fpRefreshAge)
 	s.mu.Unlock()
@@ -1236,7 +1236,7 @@ func TestParquetRoundTripRestoresNodes(t *testing.T) {
 	now := time.Unix(1700000000, 0)
 	n := elNode(t, 7)
 	s.Observe(n, "v5", now)
-	s.SetFingerprint(n.ID(), Fingerprint{"Geth", "v1.17.4", "linux", "go1.24", "eth/68"}, "outbound")
+	s.SetFingerprint(n.ID(), "el", Fingerprint{"Geth", "v1.17.4", "linux", "go1.24", "eth/68"}, "outbound")
 	s.SetGeo(n.ID(), n.IP(), "US", "Fond du Lac", "WI", 43.77, -88.45, 0, "", false, false, true, 20)
 
 	data, err := s.ParquetForNetwork("mainnet")
@@ -1542,7 +1542,7 @@ func TestSetClaimedFingerprintReportsDiscardAfterRecordChange(t *testing.T) {
 	if !s.ClaimFingerprintAt(unchanged.ID(), now) {
 		t.Fatal("claim failed")
 	}
-	if _, applied := s.SetClaimedFingerprintAt(unchanged.ID(), Fingerprint{"Geth", "v1", "linux", "go", "eth/68"}, "outbound", now.Add(time.Second)); !applied {
+	if _, applied := s.SetClaimedFingerprintAt(unchanged.ID(), "el", Fingerprint{"Geth", "v1", "linux", "go", "eth/68"}, "outbound", now.Add(time.Second)); !applied {
 		t.Fatal("unchanged-record claimed completion was discarded")
 	}
 
@@ -1552,8 +1552,123 @@ func TestSetClaimedFingerprintReportsDiscardAfterRecordChange(t *testing.T) {
 		t.Fatal("claim failed")
 	}
 	s.Observe(elNodeSeq(t, 0x55, 2, 30304), "v5", now.Add(time.Second))
-	if _, applied := s.SetClaimedFingerprintAt(changed.ID(), Fingerprint{"Geth", "v1", "linux", "go", "eth/68"}, "outbound", now.Add(2*time.Second)); applied {
+	if _, applied := s.SetClaimedFingerprintAt(changed.ID(), "el", Fingerprint{"Geth", "v1", "linux", "go", "eth/68"}, "outbound", now.Add(2*time.Second)); applied {
 		t.Fatal("post-change claimed completion was applied")
+	}
+}
+
+// clNodeSeq signs a mainnet consensus record under the same node ID elNodeSeq gives tag, as an
+// operator running both layers on one key produces.
+func clNodeSeq(t *testing.T, tag byte, seq uint64) *enode.Node {
+	t.Helper()
+	state, err := netconf.CLForkStateAt("mainnet", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var r enr.Record
+	r.SetSeq(seq)
+	r.Set(enr.IPv4{1, 2, 3, tag})
+	r.Set(enr.TCP(9000))
+	r.Set(netconf.Eth2Entry(state.ENRForkID()))
+	var id enode.ID
+	id[0] = tag
+	return enode.SignNull(&r, id)
+}
+
+var besuHello = Fingerprint{"Besu", "v26.9.0", "linux/x86_64", "openjdk-java-25", "eth/68,eth/69"}
+
+func TestOtherLayerFingerprintDoesNotOverwriteRow(t *testing.T) {
+	s := NewWithLimit(0)
+	now := time.Now()
+	n := clNodeSeq(t, 0x60, 5)
+	s.Observe(n, "v5", now)
+	if got := s.LayerOf(n.ID()); got != "cl" {
+		t.Fatalf("layer = %q, want cl", got)
+	}
+	s.SetFingerprintAt(n.ID(), "el", besuHello, "inbound", now)
+	if row := s.rows("mainnet")[0]; row.Client != "" || row.FPStatus == "ok" {
+		t.Fatalf("EL fingerprint written to CL row: %+v", row)
+	}
+	if !s.ClaimFingerprintAt(n.ID(), now) {
+		t.Fatal("claim failed")
+	}
+	if _, applied := s.SetClaimedFingerprintAt(n.ID(), "el", besuHello, "outbound", now); applied {
+		t.Fatal("claimed EL completion applied to CL row")
+	}
+	if row := s.rows("mainnet")[0]; row.Client != "" {
+		t.Fatalf("claimed EL fingerprint written to CL row: %+v", row)
+	}
+	if !s.ClaimFingerprintAt(n.ID(), now) {
+		t.Fatal("discarded other-layer completion did not release the claim")
+	}
+}
+
+func TestLayerChangeClearsVerifiedFingerprint(t *testing.T) {
+	s := NewWithLimit(0)
+	now := time.Now()
+	el := elNodeSeq(t, 0x61, 1, 30303)
+	s.Observe(el, "v5", now)
+	s.SetFingerprintAt(el.ID(), "el", besuHello, "inbound", now)
+	s.Observe(clNodeSeq(t, 0x61, 2), "v5", now.Add(time.Second))
+	row := s.rows("mainnet")[0]
+	if row.Layer != "cl" || row.Client != "" || row.Caps != "" || row.FPDirection != "" || row.FPStatus == "ok" || row.FPStatus == "stale" {
+		t.Fatalf("row after EL to CL change = %+v", row)
+	}
+	if !s.ClaimFingerprintAt(el.ID(), now.Add(2*time.Second)) {
+		t.Fatal("row is not due for a consensus probe after the layer change")
+	}
+}
+
+func TestLayerChangeDiscardsOutstandingClaimedProbe(t *testing.T) {
+	s := NewWithLimit(0)
+	now := time.Now()
+	el := elNodeSeq(t, 0x62, 1, 30303)
+	s.Observe(el, "v5", now)
+	if !s.ClaimFingerprintAt(el.ID(), now) {
+		t.Fatal("claim failed")
+	}
+	s.SetFingerprintAt(el.ID(), "el", besuHello, "inbound", now.Add(time.Second))
+	s.Observe(clNodeSeq(t, 0x62, 2), "v5", now.Add(2*time.Second))
+	if _, applied := s.SetClaimedFingerprintAt(el.ID(), "el", besuHello, "outbound", now.Add(3*time.Second)); applied {
+		t.Fatal("outstanding EL probe applied after the row became CL")
+	}
+	if row := s.rows("mainnet")[0]; row.Client != "" {
+		t.Fatalf("CL row took the EL identity: %+v", row)
+	}
+}
+
+func TestSetCandidateClientRejectsConsensusRow(t *testing.T) {
+	s := NewWithLimit(0)
+	n := clQUICNode(t, 0x63)
+	s.Observe(n, "v5", time.Now())
+	if s.LayerOf(n.ID()) != "cl" {
+		t.Fatalf("layer = %q, want cl", s.LayerOf(n.ID()))
+	}
+	if s.SetCandidateClient(n.ID(), besuHello, "inbound") {
+		t.Fatal("candidate client accepted on a CL row")
+	}
+}
+
+func TestIngestDropsExecutionIdentityFromConsensusRow(t *testing.T) {
+	src := NewWithLimit(0)
+	now := time.Now()
+	n := clNodeSeq(t, 0x64, 1)
+	src.Observe(n, "v5", now)
+	src.SetFingerprintAt(n.ID(), "cl", Fingerprint{"Lighthouse", "v8.0.0", "linux", "", ""}, "outbound", now)
+	rows := src.SnapshotNetworks([]string{"mainnet"})["mainnet"]
+	rows[0].Client, rows[0].Version, rows[0].Caps = besuHello.Client, besuHello.Version, besuHello.Caps
+
+	s := NewWithLimit(0)
+	s.Ingest(rows)
+	if row := s.rows("mainnet")[0]; row.Client != "" || row.Caps != "" || row.FPStatus == "ok" || row.FPStatus == "stale" {
+		t.Fatalf("restored CL row kept an RLPx identity: %+v", row)
+	}
+
+	rows[0].Client, rows[0].Version, rows[0].Caps = "Lighthouse", "v8.0.0", ""
+	s = NewWithLimit(0)
+	s.Ingest(rows)
+	if row := s.rows("mainnet")[0]; row.Client != "Lighthouse" || row.FPStatus != "ok" {
+		t.Fatalf("restored CL row lost its consensus identity: %+v", row)
 	}
 }
 
@@ -1566,7 +1681,7 @@ func TestUnclaimFingerprintAfterInboundCompletionLeavesNodeClaimable(t *testing.
 		t.Fatal("initial claim failed")
 	}
 	s.Observe(elNodeSeq(t, 0x53, 2, 30304), "v5", now.Add(time.Second))
-	s.SetFingerprintAt(n.ID(), Fingerprint{"Geth", "v1", "linux", "go", "eth/68"}, "inbound", now.Add(2*time.Second))
+	s.SetFingerprintAt(n.ID(), "el", Fingerprint{"Geth", "v1", "linux", "go", "eth/68"}, "inbound", now.Add(2*time.Second))
 	s.UnclaimFingerprint(n.ID())
 	s.Observe(elNodeSeq(t, 0x53, 3, 30305), "v5", now.Add(3*time.Second))
 	if !s.ClaimFingerprintAt(n.ID(), now.Add(4*time.Second)) {
@@ -1688,7 +1803,7 @@ func TestCandidatePromotionByAuthenticatedStatusPublishes(t *testing.T) {
 	if !s.ClaimFingerprintAt(id, now) {
 		t.Fatal("claim failed")
 	}
-	if _, applied := s.SetClaimedFingerprintAt(id, Fingerprint{"Nethermind", "v1.39.3", "linux/x86_64", "dotnet10", "eth/71"}, "outbound", now); !applied {
+	if _, applied := s.SetClaimedFingerprintAt(id, "el", Fingerprint{"Nethermind", "v1.39.3", "linux/x86_64", "dotnet10", "eth/71"}, "outbound", now); !applied {
 		t.Fatal("claimed fingerprint was not applied")
 	}
 	if observed := s.ObserveAuthenticatedEL(n, "dial", "mainnet", "07c9462e", 0, now); !observed.Applied {
@@ -1715,7 +1830,7 @@ func TestStatusCreditRequiresGapAndSameNetwork(t *testing.T) {
 	if observed := s.ObserveAuthenticatedEL(n, "inbound", "mainnet", "07c9462e", 0, now); !observed.Applied {
 		t.Fatalf("first inbound observation = %+v", observed)
 	}
-	s.SetFingerprint(id, Fingerprint{"Geth", "v1.17.4", "linux/x86_64", "go1.24", "eth/71"}, "inbound")
+	s.SetFingerprint(id, "el", Fingerprint{"Geth", "v1.17.4", "linux/x86_64", "go1.24", "eth/71"}, "inbound")
 	fork := forkid.ID{Hash: [4]byte{0x07, 0xc9, 0x46, 0x2e}}
 	if !s.SetExecutionStatusAt(id, "mainnet", fork, now.Add(time.Minute)) {
 		t.Fatal("status inside the gap rejected")
@@ -1909,7 +2024,7 @@ func TestPromotedSeqZeroTouchArmsRefresh(t *testing.T) {
 	if !s.ClaimFingerprintAt(id, now) {
 		t.Fatal("claim failed")
 	}
-	if _, applied := s.SetClaimedFingerprintAt(id, Fingerprint{"Nethermind", "v1.39.3", "linux/x86_64", "dotnet10", "eth/71"}, "outbound", now); !applied {
+	if _, applied := s.SetClaimedFingerprintAt(id, "el", Fingerprint{"Nethermind", "v1.39.3", "linux/x86_64", "dotnet10", "eth/71"}, "outbound", now); !applied {
 		t.Fatal("claimed fingerprint was not applied")
 	}
 	s.ObserveAuthenticatedEL(n, "dial", "mainnet", "07c9462e", 0, now)

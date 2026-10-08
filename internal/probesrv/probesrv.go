@@ -238,7 +238,7 @@ func handle(w http.ResponseWriter, r *http.Request, fp *enrich.Fingerprinter, cl
 	// Status is gated on the fingerprint completion: a claimed probe whose record
 	// changed mid-probe is discarded, and a probe of a stale record (accepted but
 	// not applied) must not overwrite the newer retained record's network either.
-	if finishRegisteredProbe(set, n.ID(), res.Registered, claimed, observed.Applied, fpr, err) && fpr.Network != "" {
+	if finishRegisteredProbe(set, n.ID(), layer, res.Registered, claimed, observed.Applied, fpr, err) && fpr.Network != "" {
 		switch layer {
 		case "el":
 			if set.SetExecutionStatus(n.ID(), fpr.Network, fpr.ForkID) {
@@ -255,7 +255,7 @@ func handle(w http.ResponseWriter, r *http.Request, fp *enrich.Fingerprinter, cl
 	json.NewEncoder(w).Encode(res)
 }
 
-func finishRegisteredProbe(set *nodeset.Set, id enode.ID, registered, claimed, applied bool, fp enrich.Fingerprint, probeErr error) bool {
+func finishRegisteredProbe(set *nodeset.Set, id enode.ID, layer string, registered, claimed, applied bool, fp enrich.Fingerprint, probeErr error) bool {
 	if !registered || set == nil {
 		return false
 	}
@@ -266,10 +266,13 @@ func finishRegisteredProbe(set *nodeset.Set, id enode.ID, registered, claimed, a
 		return false
 	}
 	if claimed {
-		_, ok := set.SetClaimedFingerprint(id, fp.Identity(), "outbound")
+		_, ok := set.SetClaimedFingerprint(id, layer, fp.Identity(), "outbound")
 		return ok
 	}
-	set.SetFingerprint(id, fp.Identity(), "outbound")
+	if set.LayerOf(id) != layer {
+		return false
+	}
+	set.SetFingerprint(id, layer, fp.Identity(), "outbound")
 	return applied
 }
 

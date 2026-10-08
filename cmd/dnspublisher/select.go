@@ -333,7 +333,7 @@ func clientBucket(r nodeset.Row) string {
 		return unknownClient
 	}
 	name := clientname.Canonical(r.Layer, r.Client)
-	if !clientname.Recognized(name) {
+	if !clientname.Recognized(r.Layer, name) {
 		return unknownClient
 	}
 	return name

@@ -173,7 +173,7 @@ func (t ClientReleaseTable) Validate() error {
 			errs = append(errs, fmt.Errorf("%s: latest %q is not a release that meets min_versions", key, r.Latest))
 		case r.Layer != "el" && r.Layer != "cl":
 			errs = append(errs, fmt.Errorf("%s: layer %q", key, r.Layer))
-		case clientname.Canonical(r.Layer, r.Client) != r.Client || !clientname.Recognized(r.Client):
+		case clientname.Canonical(r.Layer, r.Client) != r.Client || !clientname.Recognized(r.Layer, r.Client):
 			errs = append(errs, fmt.Errorf("%s: %q is not a canonical client name, so its label would never match a row", key, r.Client))
 		case seen[key]:
 			errs = append(errs, fmt.Errorf("%s: duplicate entry", key))

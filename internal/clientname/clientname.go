@@ -96,15 +96,19 @@ const Other = "Other"
 const Self = "enrscout"
 
 // Crawlers, tooling, L2 clients (OP-Geth), and garbage self-reported strings are
-// deliberately absent so aggregation collapses them to Other. Keep in sync with the
-// web CLIENT_COLOR map in web/src/theme.ts.
-var recognized = map[string]bool{
-	"Geth": true, "Nethermind": true, "Besu": true, "Erigon": true, "Reth": true,
-	"Ethrex": true, "EthereumJS": true, "Nimbus": true,
-	"Lighthouse": true, "Prysm": true, "Teku": true, "Lodestar": true,
-	"Grandine": true, "Caplin": true,
+// deliberately absent so aggregation collapses them to Other. Per layer, because projects
+// like Nethermind ship clients for both. Keep in sync with web/src/theme.ts.
+var recognized = map[string]map[string]bool{
+	"el": {
+		"Geth": true, "Nethermind": true, "Besu": true, "Erigon": true, "Reth": true,
+		"Ethrex": true, "EthereumJS": true, "Nimbus": true,
+	},
+	"cl": {
+		"Lighthouse": true, "Prysm": true, "Teku": true, "Nimbus": true, "Lodestar": true,
+		"Grandine": true, "Caplin": true,
+	},
 }
 
-func Recognized(name string) bool {
-	return recognized[strings.TrimSpace(name)]
+func Recognized(layer, name string) bool {
+	return recognized[layer][strings.TrimSpace(name)]
 }

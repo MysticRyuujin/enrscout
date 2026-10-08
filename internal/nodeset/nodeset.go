@@ -156,6 +156,20 @@ type Observation struct {
 
 func (n *Node) isELCandidate() bool { return n.Layer == "el" && n.Network == "" }
 
+// clearFingerprintLocked forgets an identity that no longer describes the record, unlike the
+// stale-while-revalidate a verified fingerprint gets on a record change within one layer.
+func (n *Node) clearFingerprintLocked() {
+	n.Client, n.ClientVersion, n.OS, n.Lang, n.Capabilities = "", "", "", "", ""
+	n.FPDirection = ""
+	n.fpAt = time.Time{}
+	n.fpDone, n.fpRefreshDue = false, false
+	n.fpAttempts = 0
+	n.fpNext = time.Time{}
+	if n.fpInFlight {
+		n.fpRefresh = true
+	}
+}
+
 func (s *Set) trackCandidateLocked(was, is bool) {
 	switch {
 	case is && !was:
@@ -529,6 +543,9 @@ func (s *Set) observe(n *enode.Node, via string, now time.Time, forceNetwork, fo
 		// An EL head is a block number and a CL head a slot, so a layer change invalidates it.
 		if cur.Layer != e.layer {
 			cur.Head, cur.HeadObservedAt = 0, time.Time{}
+			if cur.Layer != "" {
+				cur.clearFingerprintLocked()
+			}
 		}
 		cur.Layer = e.layer
 	}
@@ -570,7 +587,7 @@ func (s *Set) SetCandidateClient(id enode.ID, fp Fingerprint, direction string) 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	n := s.m[id]
-	if n == nil || n.Network != "" {
+	if n == nil || !n.isELCandidate() {
 		return false
 	}
 	n.Client, n.ClientVersion, n.OS, n.Lang, n.Capabilities = fp.Client, fp.Version, fp.OS, fp.Lang, fp.Caps
@@ -1081,39 +1098,41 @@ func fingerprintRetryDelay(id enode.ID, attempt int) time.Duration {
 // SetFingerprint records a successful unclaimed probe (inbound or on-demand)
 // and returns the number of failures that preceded it for this record. Callers
 // use that to report recoveries without exposing node IDs as metric labels.
+// The layer is checked under the lock: an operator can run an EL and a CL on one
+// node key, so a probe of one layer can arrive for a row that holds the other.
 // Fingerprint is a client identification as a probe reports it.
 type Fingerprint struct {
 	Client, Version, OS, Lang, Caps string
 }
 
-func (s *Set) SetFingerprint(id enode.ID, fp Fingerprint, direction string) int {
-	return s.SetFingerprintAt(id, fp, direction, time.Now())
+func (s *Set) SetFingerprint(id enode.ID, layer string, fp Fingerprint, direction string) int {
+	return s.SetFingerprintAt(id, layer, fp, direction, time.Now())
 }
 
-func (s *Set) SetFingerprintAt(id enode.ID, fp Fingerprint, direction string, now time.Time) int {
-	failures, _ := s.setFingerprint(id, fp, direction, false, now)
+func (s *Set) SetFingerprintAt(id enode.ID, layer string, fp Fingerprint, direction string, now time.Time) int {
+	failures, _ := s.setFingerprint(id, layer, fp, direction, false, now)
 	return failures
 }
 
 // SetClaimedFingerprint completes the probe reserved by ClaimFingerprint; it is discarded (applied
-// is false) when the record changed after the claim, so the caller must not apply any other result
-// of the same probe either.
-func (s *Set) SetClaimedFingerprint(id enode.ID, fp Fingerprint, direction string) (failures int, applied bool) {
-	return s.SetClaimedFingerprintAt(id, fp, direction, time.Now())
+// is false) when the record changed after the claim or is no longer of the probed layer, so the
+// caller must not apply any other result of the same probe either.
+func (s *Set) SetClaimedFingerprint(id enode.ID, layer string, fp Fingerprint, direction string) (failures int, applied bool) {
+	return s.SetClaimedFingerprintAt(id, layer, fp, direction, time.Now())
 }
 
-func (s *Set) SetClaimedFingerprintAt(id enode.ID, fp Fingerprint, direction string, now time.Time) (failures int, applied bool) {
-	return s.setFingerprint(id, fp, direction, true, now)
+func (s *Set) SetClaimedFingerprintAt(id enode.ID, layer string, fp Fingerprint, direction string, now time.Time) (failures int, applied bool) {
+	return s.setFingerprint(id, layer, fp, direction, true, now)
 }
 
-func (s *Set) setFingerprint(id enode.ID, fp Fingerprint, direction string, claimed bool, now time.Time) (int, bool) {
+func (s *Set) setFingerprint(id enode.ID, layer string, fp Fingerprint, direction string, claimed bool, now time.Time) (int, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	n := s.m[id]
-	if n == nil {
+	if n == nil || (n.Layer != layer && !claimed) {
 		return 0, false
 	}
-	if n.fpRefresh && claimed {
+	if claimed && (n.fpRefresh || n.Layer != layer) {
 		n.fpAttempts = 0
 		n.fpInFlight = false
 		n.fpRefresh = false
@@ -1534,6 +1553,10 @@ func (s *Set) Ingest(rows []Row) (dropped, evicted int) {
 			fpAttempts:   restoredAttempts(r),
 			fpAt:         timeOrZero(r.FPAt),
 			fpNext:       timeOrZero(r.FPNext),
+		}
+		// Only RLPx reports capabilities, so a consensus row carrying them holds an execution identity.
+		if r.Layer == "cl" && r.Caps != "" {
+			candidate.clearFingerprintLocked()
 		}
 		if _, exists := s.m[id]; !exists && s.max > 0 && len(s.m) >= s.max {
 			n, _ := s.evictForLocked(candidate.capacityClass())

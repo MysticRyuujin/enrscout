@@ -139,7 +139,7 @@ func (e *Engine) ForkReadinessAt(ctx context.Context, network string, at time.Ti
 		if readiness == netconf.Stale {
 			continue
 		}
-		if !chart || !clientname.Recognized(client) {
+		if !chart || !clientname.Recognized(ev.Layer, client) {
 			layer.Unidentified[readiness] += count
 			continue
 		}

@@ -965,7 +965,11 @@ func (e *Engine) StatsForMembershipAt(ctx context.Context, network, membership s
 		if client.String == "" {
 			continue
 		}
-		s.ByClient[client.String] += c
+		name := client.String
+		if !clientname.Recognized(layer.String, name) {
+			name = clientname.Other
+		}
+		s.ByClient[name] += c
 		byClient, byDirection := s.ByClientEL, s.ByDirectionEL
 		switch layer.String {
 		case "el":
@@ -974,7 +978,7 @@ func (e *Engine) StatsForMembershipAt(ctx context.Context, network, membership s
 		default:
 			continue
 		}
-		byClient[client.String] += c
+		byClient[name] += c
 		if direction.String != "" {
 			byDirection[direction.String] += c
 		}
@@ -983,9 +987,6 @@ func (e *Engine) StatsForMembershipAt(ctx context.Context, network, membership s
 		return s, err
 	}
 
-	collapseUnrecognizedClients(s.ByClient)
-	collapseUnrecognizedClients(s.ByClientEL)
-	collapseUnrecognizedClients(s.ByClientCL)
 	for _, count := range s.ByClientEL {
 		s.ELIdentified += count
 	}
@@ -1149,19 +1150,6 @@ func scanGroupingSets(ctx context.Context, db queryContext, q string, args []any
 		}
 	}
 	return rows.Err()
-}
-
-func collapseUnrecognizedClients(m map[string]int) {
-	var other int
-	for name, c := range m {
-		if !clientname.Recognized(name) {
-			other += c
-			delete(m, name)
-		}
-	}
-	if other > 0 {
-		m[clientname.Other] += other
-	}
 }
 
 func scanNodes(rows *sql.Rows, at time.Time) ([]Node, error) {

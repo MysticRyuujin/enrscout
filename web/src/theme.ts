@@ -51,8 +51,8 @@ export const OTHER_COLOR = "#5f6b7e";
 
 // Stable client colors shared by every client visualization. Only recognized L1
 // clients get a color; anything else (crawlers, tooling, garbage) falls to
-// OTHER_COLOR so the legend never mints a swatch per stranger. Keep the key set in
-// sync with clientname.recognized in internal/clientname/clientname.go.
+// OTHER_COLOR so the legend never mints a swatch per stranger. Keep these keys and
+// LAYER_CLIENTS in sync with clientname.recognized in internal/clientname/clientname.go.
 export const CLIENT_COLOR: Readonly<Record<string, string>> = {
   geth: "#5B8FF9",
   nethermind: "#E65A9E",
@@ -70,8 +70,35 @@ export const CLIENT_COLOR: Readonly<Record<string, string>> = {
   caplin: "#82B35A",
 };
 
+const LAYER_CLIENTS: Readonly<Record<string, ReadonlySet<string>>> = {
+  el: new Set([
+    "geth",
+    "nethermind",
+    "besu",
+    "erigon",
+    "reth",
+    "ethrex",
+    "ethereumjs",
+    "nimbus",
+  ]),
+  cl: new Set([
+    "lighthouse",
+    "prysm",
+    "teku",
+    "nimbus",
+    "lodestar",
+    "grandine",
+    "caplin",
+  ]),
+};
+
 export function clientColor(name: string): string {
   return CLIENT_COLOR[name.trim().toLowerCase()] ?? OTHER_COLOR;
+}
+
+export function layerClient(name: string, layer: string): string {
+  if (!name) return name;
+  return LAYER_CLIENTS[layer]?.has(name.trim().toLowerCase()) ? name : "Other";
 }
 
 export function hexRGB(hex: string): [number, number, number] {
