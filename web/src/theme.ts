@@ -68,6 +68,7 @@ export const CLIENT_COLOR: Readonly<Record<string, string>> = {
   lodestar: "#49C59A",
   grandine: "#F0784F",
   caplin: "#82B35A",
+  ethlambda: "#9FD4FF",
 };
 
 const LAYER_CLIENTS: Readonly<Record<string, ReadonlySet<string>>> = {
@@ -89,6 +90,8 @@ const LAYER_CLIENTS: Readonly<Record<string, ReadonlySet<string>>> = {
     "lodestar",
     "grandine",
     "caplin",
+    "nethermind",
+    "ethlambda",
   ]),
 };
 

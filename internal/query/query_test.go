@@ -1383,10 +1383,10 @@ func TestStatsCollapseClientsUnrecognizedForTheirLayer(t *testing.T) {
 	if want := map[string]int{"Geth": 1, "Other": 2}; !maps.Equal(stats.ByClientEL, want) {
 		t.Fatalf("ByClientEL = %v, want %v", stats.ByClientEL, want)
 	}
-	if want := map[string]int{"Nimbus": 1, "Other": 3}; !maps.Equal(stats.ByClientCL, want) {
+	if want := map[string]int{"Nimbus": 1, "Nethermind": 1, "Other": 2}; !maps.Equal(stats.ByClientCL, want) {
 		t.Fatalf("ByClientCL = %v, want %v", stats.ByClientCL, want)
 	}
-	if want := map[string]int{"Geth": 1, "Nimbus": 1, "Other": 5}; !maps.Equal(stats.ByClient, want) {
+	if want := map[string]int{"Geth": 1, "Nimbus": 1, "Nethermind": 1, "Other": 4}; !maps.Equal(stats.ByClient, want) {
 		t.Fatalf("ByClient = %v, want %v", stats.ByClient, want)
 	}
 	if stats.ELIdentified != 3 || stats.CLIdentified != 4 {

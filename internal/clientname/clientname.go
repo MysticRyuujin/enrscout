@@ -75,6 +75,10 @@ func Consensus(name string) string {
 		return "Caplin"
 	case "teku":
 		return "Teku"
+	case "nethermind":
+		return "Nethermind"
+	case "ethlambda":
+		return "Ethlambda"
 	default:
 		return name
 	}
@@ -96,8 +100,8 @@ const Other = "Other"
 const Self = "enrscout"
 
 // Crawlers, tooling, L2 clients (OP-Geth), and garbage self-reported strings are
-// deliberately absent so aggregation collapses them to Other. Per layer, because projects
-// like Nethermind ship clients for both. Keep in sync with web/src/theme.ts.
+// deliberately absent so aggregation collapses them to Other. Per layer: a name
+// recognized on one layer is not evidence of a client on the other. Keep in sync with web/src/theme.ts.
 var recognized = map[string]map[string]bool{
 	"el": {
 		"Geth": true, "Nethermind": true, "Besu": true, "Erigon": true, "Reth": true,
@@ -105,7 +109,7 @@ var recognized = map[string]map[string]bool{
 	},
 	"cl": {
 		"Lighthouse": true, "Prysm": true, "Teku": true, "Nimbus": true, "Lodestar": true,
-		"Grandine": true, "Caplin": true,
+		"Grandine": true, "Caplin": true, "Nethermind": true, "Ethlambda": true,
 	},
 }
 

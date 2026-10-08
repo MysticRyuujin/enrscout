@@ -12,6 +12,8 @@ func TestCanonical(t *testing.T) {
 		{"el", "nimbus-eth1", "Nimbus"},
 		{"cl", "erigon", "Caplin"},
 		{"cl", "TEKU", "Teku"},
+		{"cl", "ethlambda", "Ethlambda"},
+		{"cl", "nethermind", "Nethermind"},
 		{"unknown", " custom ", "custom"},
 	}
 	for _, tc := range cases {
@@ -54,7 +56,9 @@ func TestRecognized(t *testing.T) {
 		{"cl", "Nimbus", true},
 		{"cl", "Lighthouse", true},
 		{"cl", "Caplin", true},
-		{"cl", "Nethermind", false},
+		{"cl", "Nethermind", true},
+		{"cl", "Ethlambda", true},
+		{"el", "Ethlambda", false},
 		{"cl", "Besu", false},
 		{"el", "Lighthouse", false},
 		{"", "Geth", false},
