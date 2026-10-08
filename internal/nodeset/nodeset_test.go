@@ -1672,6 +1672,27 @@ func TestIngestDropsExecutionIdentityFromConsensusRow(t *testing.T) {
 	}
 }
 
+func TestInboundSuccessKeepsOutstandingClaimDiscardable(t *testing.T) {
+	s := NewWithLimit(0)
+	now := time.Unix(1700000000, 0)
+	n := elNodeSeq(t, 0x65, 1, 30303)
+	s.Observe(n, "v5", now)
+	if !s.ClaimFingerprintAt(n.ID(), now) {
+		t.Fatal("claim failed")
+	}
+	s.SetFingerprintAt(n.ID(), "el", Fingerprint{"Geth", "v2", "linux", "go", "eth/68"}, "inbound", now.Add(time.Second))
+	s.Observe(elNodeSeq(t, 0x65, 2, 30304), "v5", now.Add(2*time.Second))
+	if s.ClaimFingerprintAt(n.ID(), now.Add(3*time.Second)) {
+		t.Fatal("second claim granted while the first probe is outstanding")
+	}
+	if _, applied := s.SetClaimedFingerprintAt(n.ID(), "el", Fingerprint{"Geth", "v1", "linux", "go", "eth/68"}, "outbound", now.Add(4*time.Second)); applied {
+		t.Fatal("probe of the previous endpoint applied after the record changed")
+	}
+	if !s.ClaimFingerprintAt(n.ID(), now.Add(5*time.Second)) {
+		t.Fatal("changed record is not due for a probe of its new endpoint")
+	}
+}
+
 func TestUnclaimFingerprintAfterInboundCompletionLeavesNodeClaimable(t *testing.T) {
 	s := NewWithLimit(0)
 	now := time.Unix(1700000000, 0)

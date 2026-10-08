@@ -1145,8 +1145,9 @@ func (s *Set) setFingerprint(id enode.ID, layer string, fp Fingerprint, directio
 	}
 	n.Client, n.ClientVersion, n.OS, n.Lang, n.Capabilities = fp.Client, fp.Version, fp.OS, fp.Lang, fp.Caps
 	n.FPDirection = direction
-	// fpRefresh stays armed so the outstanding claimed probe's stale completion is discarded.
-	if !n.fpRefresh {
+	// An unclaimed result leaves an outstanding claim to its owner, so a record change before that
+	// probe returns still arms fpRefresh and its stale completion is discarded.
+	if claimed {
 		n.fpInFlight = false
 	}
 	n.fpDone = true
