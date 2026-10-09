@@ -69,6 +69,7 @@ func TestClientReleaseTableValidate(t *testing.T) {
 		err    string
 	}{
 		"non-canonical client": {func(r *ClientRelease) { r.Client = "geth" }, "canonical"},
+		"other-layer client":   {func(r *ClientRelease) { r.Layer = "cl" }, "canonical"},
 		"bad layer":            {func(r *ClientRelease) { r.Layer = "execution" }, "layer"},
 		"missing fork time":    {func(r *ClientRelease) { r.ForkTime = 0 }, "fork_time"},
 		"dev build floor":      {func(r *ClientRelease) { r.MinVersions = []string{"1.18.0-rc.1"} }, "not a release"},

@@ -38,6 +38,10 @@ var (
 		Name: "enrscout_dns_tree_nodes",
 		Help: "Nodes in each built EIP-1459 tree (matches devp2p_discv4_dns_nodes). Written as a local artifact, not pushed to DNS.",
 	}, []string{"domain"})
+	mDNSTreeReadiness = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "enrscout_dns_tree_nodes_by_readiness",
+		Help: "Nodes in each built tree by what their record advertises about the network's tracked fork: ready, neutral (not scheduled, or no fork tracked) or mismatch.",
+	}, []string{"domain", "readiness"})
 	mDNSPublishTotal = promauto.NewGauge(prometheus.GaugeOpts{
 		Name: "enrscout_dns_artifact_nodes_total",
 		Help: "Nodes across all trees in the last successful artifact-write cycle. See enrscout_dns_published_* for DNS publication.",
@@ -268,6 +272,10 @@ type builtTree struct {
 	nodes     []publishedNode
 	// retain is the last published generation's records, nil until a push has succeeded.
 	retain map[string]string
+	// ranks counts the selected nodes per readiness rank.
+	ranks [rankMismatch + 1]int
+	// readyOnly reports the guarded ready-only variant was published.
+	readyOnly bool
 }
 
 type publishedNode struct {
@@ -294,8 +302,10 @@ func buildTree(cands []candidate, opt selectOpts, seq uint, domain, network stri
 	if err != nil {
 		return builtTree{}, fmt.Errorf("sign tree %s: %w", domain, err)
 	}
+	var ranks [rankMismatch + 1]int
 	published := make([]publishedNode, 0, len(picked))
 	for _, c := range picked {
+		ranks[c.rank]++
 		// record is the re-encoded form the tree carries, not the row's ENR verbatim, so the git
 		// output stays byte-identical to the published TXT leaves.
 		published = append(published, publishedNode{
@@ -310,6 +320,7 @@ func buildTree(cands []candidate, opt selectOpts, seq uint, domain, network stri
 		},
 		signature: tree.Signature(),
 		nodes:     published,
+		ranks:     ranks,
 	}, nil
 }
 
@@ -389,9 +400,13 @@ func runMultiTree(ctx context.Context, st store.Store, layout snapshot.Layout, c
 				issued[out.Domain] = out.Seq
 				cycleTrees = append(cycleTrees, out)
 				mDNSTreeNodes.WithLabelValues(out.Domain).Set(float64(out.Nodes))
+				for rank, label := range []string{"ready", "neutral", "mismatch"} {
+					mDNSTreeReadiness.WithLabelValues(out.Domain, label).Set(float64(out.ranks[rank]))
+				}
 				total += out.Nodes
 				published++
-				slog.Info("wrote tree artifact", "domain", out.Domain, "nodes", out.Nodes, "seq", out.Seq)
+				slog.Info("wrote tree artifact", "domain", out.Domain, "nodes", out.Nodes, "ready", out.ranks[rankReady],
+					"ready_only", out.readyOnly, "seq", out.Seq)
 			}
 			if err := publishNetwork(ctx, cfg, net, trees); err != nil {
 				mDNSPushErrors.Inc()
@@ -478,7 +493,8 @@ func publishNetwork(ctx context.Context, cfg multiConfig, network string, trees 
 		if err := emitArtifact(out.output, cfg.outDir, out.Domain+publishedSuffix); err != nil {
 			return fmt.Errorf("commit published state %s: %w", out.Domain, err)
 		}
-		slog.Info("published tree to DNS", "domain", out.Domain, "nodes", out.Nodes, "seq", out.Seq, "records_changed", changed)
+		slog.Info("published tree to DNS", "domain", out.Domain, "nodes", out.Nodes, "ready", out.ranks[rankReady],
+			"ready_only", out.readyOnly, "seq", out.Seq, "records_changed", changed)
 	}
 	mDNSPublishedTimestamp.SetToCurrentTime()
 	return nil
@@ -496,36 +512,133 @@ func buildNetworkTrees(rows []nodeset.Row, network string, generatedAt, evaluate
 		capabilities = append(capabilities, "snap")
 	}
 	cands := rankCandidates(rows, cfg.sel, evaluatedAt)
+	var ready []candidate
+	cycle := publishCycle(cfg.publishEvery)
+	near := map[string]bool{
+		"el": cfg.sel.layer != "cl" && activationNear(network, "el", evaluatedAt, 2*cycle),
+		"cl": cfg.sel.layer != "el" && activationNear(network, "cl", evaluatedAt, 2*cycle),
+	}
+	if near["el"] || near["cl"] {
+		// A layer with no fork near keeps all its records: that fork cannot stale them. Without a
+		// ready record of a near layer, the other layer alone would pass the guards as "ready-only".
+		readyNear := false
+		for _, c := range cands {
+			if c.rank == rankReady || !near[c.row.Layer] {
+				ready = append(ready, c)
+			}
+			readyNear = readyNear || (c.rank == rankReady && near[c.row.Layer])
+		}
+		if !readyNear {
+			ready = nil
+		}
+	}
 	for _, capability := range capabilities {
 		domain := capability + "." + network + "." + cfg.baseDomain
-		previousNodes, previousSeq, retain, err := baselinesFor(cfg, domain, network, capability)
+		previousNodes, previousSeq, publishedSeq, retain, err := baselinesFor(cfg, domain, network, capability)
 		if err != nil {
 			return nil, skipDecision{"baseline_unreadable", "collapse baseline is unusable, keeping the last published trees",
 				[]any{"domain", domain, "err", err}}, nil
 		}
+		// A fork that activated after the last publish, at least one cycle ago, leaves every record
+		// that was not seen since off the current fork, so the drop is expected. Without this the
+		// baseline, which advances only on success, can hold the domain forever.
+		exempt := publishedSeq > 0 && forkActivatedBetween(network, cfg.sel.layer, time.Unix(int64(publishedSeq), 0), evaluatedAt.Add(-cycle))
 		opt := cfg.sel
 		opt.capability = capability
-		out, err := buildTree(cands, opt, treeSequence(generatedAt, max(previousSeq, issued[domain])), domain, network, cfg.key)
-		if err != nil {
-			return nil, skipDecision{}, err
+		seq := treeSequence(generatedAt, max(previousSeq, issued[domain]))
+		var out builtTree
+		// Records that do not schedule the fork are rejected by post-fork clients, and a tree
+		// built now is served across activation, so near it a ready-only tree is preferred
+		// whenever the guards accept it.
+		if len(ready) > 0 {
+			readyTree, err := buildTree(ready, opt, seq, domain, network, cfg.key)
+			if err != nil {
+				return nil, skipDecision{}, err
+			}
+			if gateTree(readyTree, capability, domain, previousNodes, exempt, cfg).reason == "" {
+				out, out.readyOnly = readyTree, true
+			}
+		}
+		if !out.readyOnly {
+			if out, err = buildTree(cands, opt, seq, domain, network, cfg.key); err != nil {
+				return nil, skipDecision{}, err
+			}
 		}
 		out.retain = retain
-		// An empty tree is signable and would silently replace a working one, so it is never a
-		// publishable state regardless of the configured floor.
-		if out.Nodes == 0 {
-			return nil, skipDecision{"empty_tree", "selected no nodes", []any{"domain", domain}}, nil
+		if skip := gateTree(out, capability, domain, previousNodes, exempt, cfg); skip.reason != "" {
+			return nil, skip, nil
 		}
-		if capability == "all" && out.Nodes < cfg.minTreeNodes {
-			return nil, skipDecision{"below_floor", "all-tree below floor",
-				[]any{"nodes", out.Nodes, "floor", cfg.minTreeNodes}}, nil
-		}
-		if collapsed(out.Nodes, previousNodes, cfg.maxDropPct) {
-			return nil, skipDecision{"collapse", "tree collapsed vs last publish",
-				[]any{"domain", domain, "nodes", out.Nodes, "previous", previousNodes, "max_drop_pct", cfg.maxDropPct}}, nil
+		if exempt && collapsed(out.Nodes, previousNodes, cfg.maxDropPct) {
+			slog.Warn("accepting a tree collapse across a fork activation", "domain", domain,
+				"nodes", out.Nodes, "previous", previousNodes, "max_drop_pct", cfg.maxDropPct)
 		}
 		trees = append(trees, out)
 	}
 	return trees, skipDecision{}, nil
+}
+
+func gateTree(out builtTree, capability, domain string, previousNodes int, collapseExempt bool, cfg multiConfig) skipDecision {
+	// An empty tree is signable and would silently replace a working one, so it is never a
+	// publishable state regardless of the configured floor.
+	if out.Nodes == 0 {
+		return skipDecision{"empty_tree", "selected no nodes", []any{"domain", domain}}
+	}
+	if capability == "all" && out.Nodes < cfg.minTreeNodes {
+		return skipDecision{"below_floor", "all-tree below floor",
+			[]any{"nodes", out.Nodes, "floor", cfg.minTreeNodes}}
+	}
+	if !collapseExempt && collapsed(out.Nodes, previousNodes, cfg.maxDropPct) {
+		return skipDecision{"collapse", "tree collapsed vs last publish",
+			[]any{"domain", domain, "nodes", out.Nodes, "previous", previousNodes, "max_drop_pct", cfg.maxDropPct}}
+	}
+	return skipDecision{}
+}
+
+// publishCycle sets both fork windows. Ready-only trees start two cycles before an activation, so
+// the last tree built before it is ready-only even if one cycle is skipped. The collapse exemption
+// starts one cycle after it, so the first cycle keeps serving the ready pre-fork tree.
+func publishCycle(publishEvery time.Duration) time.Duration {
+	if publishEvery <= 0 {
+		return 6 * time.Hour
+	}
+	return publishEvery
+}
+
+// activationNear reports a scheduled fork of the tree's layer within window of at.
+func activationNear(network, layer string, at time.Time, window time.Duration) bool {
+	target, err := netconf.LayerForkTargetsAt(network, at)
+	if err != nil {
+		return false
+	}
+	near := func(activation time.Time) bool { return activation.After(at) && activation.Sub(at) <= window }
+	if layer != "cl" && target.EL != nil && target.EL.Phase == netconf.PhaseScheduled && near(time.Unix(int64(target.EL.Time), 0)) {
+		return true
+	}
+	return layer != "el" && target.CL != nil && target.CL.Phase == netconf.PhaseScheduled && near(target.CL.Time)
+}
+
+// forkActivatedBetween reports a fork of the tree's layer in the network's own schedule activating in
+// (from, to]. Only that layer's records go stale at it, so a fork of the other layer explains no drop.
+func forkActivatedBetween(network, layer string, from, to time.Time) bool {
+	if !to.After(from) {
+		return false
+	}
+	n, err := netconf.Get(network)
+	if err != nil {
+		return false
+	}
+	if layer != "cl" && n.CurrentForkIDAt(from).Hash != n.CurrentForkIDAt(to).Hash {
+		return true
+	}
+	if layer == "el" {
+		return false
+	}
+	before, err := netconf.CLForkStateAt(network, from)
+	if err != nil {
+		return false
+	}
+	after, err := netconf.CLForkStateAt(network, to)
+	return err == nil && before.Digest != after.Digest
 }
 
 func validateDomain(domain string) error {

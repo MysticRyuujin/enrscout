@@ -158,6 +158,13 @@ func TestForkTargetNeverPairsDifferentInstants(t *testing.T) {
 	if target.EL != nil || target.CL == nil || target.Name != "BPO1" || target.CL.Epoch != 100 || target.CL.Version != "70000038" {
 		t.Fatalf("target = %+v (EL %+v, CL %+v), want the earlier CL BPO1 alone", target, target.EL, target.CL)
 	}
+	layers, err := LayerForkTargetsAt("devnet", at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if layers.EL == nil || layers.EL.Time != 1700050000 || layers.CL == nil || layers.CL.Epoch != 100 {
+		t.Fatalf("layer targets = EL %+v, CL %+v; want both layers kept", layers.EL, layers.CL)
+	}
 	// A spec-compliant record advertises the BPO epoch with the unchanged version, and is ready.
 	state, err := CLForkStateAt("devnet", at)
 	if err != nil {

@@ -1233,12 +1233,14 @@ code.wrap {
 }
 
 .uc-body {
+  position: relative;
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 14px;
   max-width: 1400px;
   margin: 0 auto;
-  padding: 10px 22px 4px;
+  padding: 10px 62px 4px;
 }
 
 .uc-sign {
@@ -1248,9 +1250,10 @@ code.wrap {
 
 .uc-text {
   display: flex;
-  flex: 1;
   flex-direction: column;
+  align-items: center;
   gap: 3px;
+  text-align: center;
   min-width: 0;
   font-size: 13.5px;
   line-height: 1.4;
@@ -1282,7 +1285,9 @@ code.wrap {
 }
 
 .uc-close {
-  align-self: flex-start;
+  position: absolute;
+  top: 10px;
+  right: 22px;
   min-width: 32px;
   min-height: 32px;
   border: 1px solid #3a3210;
@@ -1306,12 +1311,15 @@ code.wrap {
   overflow: hidden;
 }
 
+/* A fixed box makes both ends of the walk and the barricade line up on the strip's center. */
 .uc-worker,
 .uc-cone {
   position: absolute;
   bottom: 2px;
+  width: 24px;
   font-size: 20px;
   line-height: 1;
+  text-align: center;
 }
 
 .uc-worker {
@@ -1327,7 +1335,7 @@ code.wrap {
 }
 
 .uc-cone {
-  left: 50%;
+  left: calc(50% - 12px);
 }
 
 @keyframes uc-tape {
@@ -1381,10 +1389,14 @@ code.wrap {
 
 @media (max-width: 680px) {
   .uc-body {
-    padding: 10px 16px 4px;
+    padding: 10px 52px 4px;
   }
 
-  .uc-sign:last-of-type {
+  .uc-close {
+    right: 12px;
+  }
+
+  .uc-sign {
     display: none;
   }
 }

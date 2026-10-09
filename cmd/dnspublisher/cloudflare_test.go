@@ -276,7 +276,7 @@ func TestFailedPushAdvancesTheSequenceButNotTheBaseline(t *testing.T) {
 	if err := publishNetwork(context.Background(), cfg, "hoodi", []builtTree{{output: built}}); err == nil {
 		t.Fatal("publishNetwork reported success despite the push failing")
 	}
-	nodes, seq, _, err := baselinesFor(cfg, cfDomain, "hoodi", "all")
+	nodes, seq, publishedSeq, _, err := baselinesFor(cfg, cfDomain, "hoodi", "all")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -285,6 +285,9 @@ func TestFailedPushAdvancesTheSequenceButNotTheBaseline(t *testing.T) {
 	}
 	if seq != 6 {
 		t.Errorf("sequence floor = %d, want 6: an attempted publish must not reuse a sequence", seq)
+	}
+	if publishedSeq != 5 {
+		t.Errorf("published sequence = %d, want 5: it dates the baseline DNS serves", publishedSeq)
 	}
 }
 
@@ -299,7 +302,7 @@ func TestSuccessfulPushCommitsThePublishedBaseline(t *testing.T) {
 	if err := publishNetwork(context.Background(), cfg, "hoodi", []builtTree{{output: built}}); err != nil {
 		t.Fatal(err)
 	}
-	nodes, _, _, err := baselinesFor(cfg, cfDomain, "hoodi", "all")
+	nodes, _, _, _, err := baselinesFor(cfg, cfDomain, "hoodi", "all")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -315,7 +318,7 @@ func TestArtifactOnlyModeKeepsItsOwnBaseline(t *testing.T) {
 	cfg := multiConfig{outDir: outDir}
 	seedArtifact(t, outDir, cfDomain, treeOutput(cfDomain, 750, 4))
 
-	nodes, seq, _, err := baselinesFor(cfg, cfDomain, "hoodi", "all")
+	nodes, seq, _, _, err := baselinesFor(cfg, cfDomain, "hoodi", "all")
 	if err != nil {
 		t.Fatal(err)
 	}

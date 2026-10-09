@@ -30,7 +30,8 @@ jobs:
       - name: Vet and gofmt
         run: make lint
       - name: Staticcheck
-        run: make staticcheck
+        # staticcheck 2026.2.1 cannot read Go 1.27.2 export data (dominikh/go-tools#1832).
+        run: GOTOOLCHAIN=go1.27.1 make staticcheck
       - name: Reachable Go vulnerabilities
         run: make vulncheck
       - name: Validate Compose files

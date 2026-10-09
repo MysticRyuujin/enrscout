@@ -594,7 +594,7 @@ func TestParseCLAgent(t *testing.T) {
 		{"caplin/caplin/v3.5.2/linux-amd64/go1.25", "Caplin", "v3.5.2", "linux/x86_64", "go1.25"},
 		{"erigon/caplin/v3.3.9/linux-amd64/go1.25", "Caplin", "v3.3.9", "linux/x86_64", "go1.25"},
 		{"Lighthouse/v8.2.2-e423a66/riscv64-linux", "Lighthouse", "v8.2.2-e423a66", "linux/riscv64", ""},
-	}
+		{"ethlambda/v0.1.0-beacon-chain-integration-5d6f07db/x86_64-unknown-linux-gnu/rustc-v1.92.0", "Ethlambda", "v0.1.0-beacon-chain-integration-5d6f07db", "linux/x86_64", "rustc-v1.92.0"}}
 	for _, c := range cases {
 		client, version, os, lang := parseCLAgent(c.in)
 		if client != c.client || version != c.version || os != c.os || lang != c.lang {

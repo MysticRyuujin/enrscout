@@ -12,6 +12,8 @@ func TestCanonical(t *testing.T) {
 		{"el", "nimbus-eth1", "Nimbus"},
 		{"cl", "erigon", "Caplin"},
 		{"cl", "TEKU", "Teku"},
+		{"cl", "ethlambda", "Ethlambda"},
+		{"cl", "nethermind", "Nethermind"},
 		{"unknown", " custom ", "custom"},
 	}
 	for _, tc := range cases {
@@ -44,14 +46,31 @@ func TestNimbusExecutionClientAlias(t *testing.T) {
 }
 
 func TestRecognized(t *testing.T) {
-	for _, name := range []string{"Geth", "Nethermind", "Reth", "Nimbus", "Lighthouse", "Teku", "Caplin"} {
-		if !Recognized(name) {
-			t.Errorf("%q should be recognized", name)
-		}
+	cases := []struct {
+		layer, name string
+		want        bool
+	}{
+		{"el", "Geth", true},
+		{"el", "Nethermind", true},
+		{"el", "Nimbus", true},
+		{"cl", "Nimbus", true},
+		{"cl", "Lighthouse", true},
+		{"cl", "Caplin", true},
+		{"cl", "Nethermind", true},
+		{"cl", "Ethlambda", true},
+		{"el", "Ethlambda", false},
+		{"cl", "Besu", false},
+		{"el", "Lighthouse", false},
+		{"", "Geth", false},
+		{"el", "OP-Geth", false},
+		{"cl", "hermes", false},
+		{"cl", "rust-libp2p", false},
+		{"el", "", false},
+		{"cl", "Other", false},
 	}
-	for _, name := range []string{"OP-Geth", "github.com", "hermes", "rust-libp2p", "gnode", "r", "", "Other"} {
-		if Recognized(name) {
-			t.Errorf("%q should not be recognized", name)
+	for _, tc := range cases {
+		if got := Recognized(tc.layer, tc.name); got != tc.want {
+			t.Errorf("Recognized(%q, %q) = %v, want %v", tc.layer, tc.name, got, tc.want)
 		}
 	}
 }

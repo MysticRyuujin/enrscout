@@ -89,7 +89,7 @@ func TestOnDemandFailureDoesNotReleaseCrawlerClaim(t *testing.T) {
 	if !set.Observe(n, "v5", time.Now()) || !set.ClaimFingerprint(id) {
 		t.Fatal("crawler claim setup failed")
 	}
-	finishRegisteredProbe(set, id, true, false, true, enrich.Fingerprint{}, errors.New("probe failed"))
+	finishRegisteredProbe(set, id, "el", true, false, true, enrich.Fingerprint{}, errors.New("probe failed"))
 	if set.ClaimFingerprint(id) {
 		t.Fatal("on-demand failure released a fingerprint claim owned by the crawler")
 	}

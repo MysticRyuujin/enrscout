@@ -59,20 +59,21 @@ func ownArtifact(outDir, name, domain, network, capability string) (*output, err
 // Sequence floor tracks the last build, or a reused sequence leaves resolvers on a cached root for
 // changed content. Collapse baseline tracks the last successful publish, or a build a failed push
 // never delivered becomes the number the next cycle measures its drop against.
-// The published artifact's records are returned too, so the push reuses them as its retain set.
-func baselinesFor(cfg multiConfig, domain, network, capability string) (nodes int, seq uint64, retain map[string]string, err error) {
+// The published artifact's records are returned too, so the push reuses them as its retain set, and
+// so is its sequence, which dates the baseline: seq is the build floor, which a failed push advances.
+func baselinesFor(cfg multiConfig, domain, network, capability string) (nodes int, seq, publishedSeq uint64, retain map[string]string, err error) {
 	nodes, seq, err = baselineFor(cfg.outDir, domain, network, capability)
 	if err != nil || cfg.publisher == nil {
-		return nodes, seq, nil, err
+		return nodes, seq, seq, nil, err
 	}
 	published, err := publishedArtifact(cfg.outDir, domain, network, capability)
 	if err != nil {
-		return 0, 0, nil, err
+		return 0, 0, 0, nil, err
 	}
 	if published == nil {
-		return 0, seq, nil, nil
+		return 0, seq, 0, nil, nil
 	}
-	return published.Nodes, seq, published.Records, nil
+	return published.Nodes, seq, published.Seq, published.Records, nil
 }
 
 func emitArtifact(out output, outDir, name string) error {

@@ -101,20 +101,9 @@ var combinedForkNames = map[[2]string]string{
 // ForkTrackingGrace. A CL target includes blob-parameter-only forks, because the ENR's
 // next_fork_epoch advertises them (Fulu p2p spec) while next_fork_version stays unchanged.
 func ForkTargetAt(network string, at time.Time) (ForkTarget, error) {
-	n, err := Get(network)
+	t, err := LayerForkTargetsAt(network, at)
 	if err != nil {
 		return ForkTarget{}, err
-	}
-	var t ForkTarget
-	if el, ok := n.elTargetAt(at); ok {
-		t.EL = &el
-	}
-	if n.cl != nil {
-		if cl, ok, err := n.cl.targetAt(at); err != nil {
-			return ForkTarget{}, err
-		} else if ok {
-			t.CL = &cl
-		}
 	}
 	if t.EL != nil && t.CL != nil && t.CL.Time.Unix() != int64(t.EL.Time) {
 		// Layers with different activation instants are different upgrades and must not share one
@@ -141,6 +130,28 @@ func ForkTargetAt(network string, at time.Time) (ForkTarget, error) {
 		t.Name = t.EL.Name
 	case t.CL != nil:
 		t.Name = capitalize(t.CL.Name)
+	}
+	return t, nil
+}
+
+// LayerForkTargetsAt is each layer's target on its own, unnamed and never dropped for activating at a
+// different instant than the other layer. Per-row consumers need it: ForkTargetAt keeps one upgrade
+// per view, which would leave a layer unranked while the other layer's earlier fork is scheduled.
+func LayerForkTargetsAt(network string, at time.Time) (ForkTarget, error) {
+	n, err := Get(network)
+	if err != nil {
+		return ForkTarget{}, err
+	}
+	var t ForkTarget
+	if el, ok := n.elTargetAt(at); ok {
+		t.EL = &el
+	}
+	if n.cl != nil {
+		if cl, ok, err := n.cl.targetAt(at); err != nil {
+			return ForkTarget{}, err
+		} else if ok {
+			t.CL = &cl
+		}
 	}
 	return t, nil
 }

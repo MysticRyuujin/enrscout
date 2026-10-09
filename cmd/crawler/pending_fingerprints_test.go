@@ -9,6 +9,7 @@ import (
 	"github.com/ethereum/go-ethereum/p2p/enr"
 
 	"github.com/MysticRyuujin/enrscout/internal/enrich"
+	"github.com/MysticRyuujin/enrscout/internal/netconf"
 	"github.com/MysticRyuujin/enrscout/internal/nodeset"
 )
 
@@ -220,5 +221,56 @@ func TestApplyInboundHelloOnlyKeepsMembershipUnverified(t *testing.T) {
 	c.applyInbound(unknown, layerEL, enrich.Fingerprint{Client: "Nethermind"})
 	if _, ok := c.pending.Take(unknown, layerEL, time.Now()); !ok {
 		t.Fatal("hello-only fingerprint for an unknown node was not cached")
+	}
+}
+
+func TestApplyLegacyFingerprintSkipsSharedKeyConsensusRow(t *testing.T) {
+	now := time.Now()
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sign := func(seq uint64, set func(*enr.Record)) *enode.Node {
+		var r enr.Record
+		r.SetSeq(seq)
+		r.Set(enr.IPv4{1, 2, 3, 4})
+		set(&r)
+		if err := enode.SignV4(&r, key); err != nil {
+			t.Fatal(err)
+		}
+		node, err := enode.New(enode.ValidSchemes, &r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return node
+	}
+	state, err := netconf.CLForkStateAt("mainnet", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mainnet, err := netconf.Get("mainnet")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cl := sign(5, func(r *enr.Record) { r.Set(enr.TCP(9000)); r.Set(netconf.Eth2Entry(state.ENRForkID())) })
+	el := sign(1, func(r *enr.Record) { r.Set(enr.TCP(30303)); r.Set(netconf.EthEntry{ForkID: mainnet.CurrentForkID()}) })
+
+	set := nodeset.NewWithLimit(0)
+	set.Observe(cl, "v5", now)
+	c := &crawler{set: set, pending: newPendingFingerprints(time.Minute, 10), pendingLegacy: newPendingLegacyNodes(time.Minute, 10)}
+	besu := enrich.Fingerprint{Client: "Besu", Version: "v26.9.0", Caps: "eth/68", Network: "mainnet", ForkID: mainnet.CurrentForkID()}
+	if c.applyLegacyFingerprint(el, "v4", "inbound", besu) {
+		t.Fatal("stale EL record reported as identified against a CL row")
+	}
+	data, err := set.ParquetForNetwork("mainnet")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := nodeset.RowsFromParquet(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rows[0].Layer != "cl" || rows[0].Client != "" {
+		t.Fatalf("CL row after a stale EL Hello = layer %q client %q", rows[0].Layer, rows[0].Client)
 	}
 }

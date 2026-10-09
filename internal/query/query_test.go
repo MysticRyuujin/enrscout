@@ -1338,19 +1338,59 @@ func TestEngineEndToEnd(t *testing.T) {
 	}
 }
 
-func TestCollapseUnrecognizedClients(t *testing.T) {
-	m := map[string]int{"Geth": 10, "Reth": 5, "OP-Geth": 3, "github.com": 1, "hermes": 42, "rust-libp2p": 72}
-	collapseUnrecognizedClients(m)
-	if m["Geth"] != 10 || m["Reth"] != 5 {
-		t.Fatalf("recognized clients altered: %v", m)
+func TestStatsCollapseClientsUnrecognizedForTheirLayer(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.NewFS(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
 	}
-	if m["Other"] != 3+1+42+72 {
-		t.Fatalf("Other = %d, want %d", m["Other"], 3+1+42+72)
+	eng, err := New(st, []string{"mainnet"}, t.TempDir(), "snapshots")
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, junk := range []string{"OP-Geth", "github.com", "hermes", "rust-libp2p"} {
-		if _, ok := m[junk]; ok {
-			t.Errorf("%q should have collapsed into Other", junk)
-		}
+	defer eng.Close()
+
+	mainnet, err := netconf.Get("mainnet")
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := mainnet.CurrentForkID().Hash
+	currentEL := hex.EncodeToString(current[:])
+	clState, err := netconf.CLForkStateAt("mainnet", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentCL := hex.EncodeToString(clState.Digest[:])
+	fpAt := time.Now().Unix()
+	_, err = eng.db.Exec(`INSERT INTO nodes (network, layer, fork_hash, client, fp_status, fp_at, fp_direction) VALUES
+		('mainnet', 'el', ?, 'Geth', 'ok', ?, 'inbound'),
+		('mainnet', 'el', ?, 'Lighthouse', 'ok', ?, 'inbound'),
+		('mainnet', 'el', ?, 'OP-Geth', 'ok', ?, 'inbound'),
+		('mainnet', 'cl', ?, 'Nimbus', 'ok', ?, 'outbound'),
+		('mainnet', 'cl', ?, 'Nethermind', 'ok', ?, 'outbound'),
+		('mainnet', 'cl', ?, 'Besu', 'ok', ?, 'inbound'),
+		('mainnet', 'cl', ?, 'hermes', 'ok', ?, 'inbound')`,
+		currentEL, fpAt, currentEL, fpAt, currentEL, fpAt,
+		currentCL, fpAt, currentCL, fpAt, currentCL, fpAt, currentCL, fpAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	stats, err := eng.StatsForMembershipAt(ctx, "mainnet", "", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := map[string]int{"Geth": 1, "Other": 2}; !maps.Equal(stats.ByClientEL, want) {
+		t.Fatalf("ByClientEL = %v, want %v", stats.ByClientEL, want)
+	}
+	if want := map[string]int{"Nimbus": 1, "Nethermind": 1, "Other": 2}; !maps.Equal(stats.ByClientCL, want) {
+		t.Fatalf("ByClientCL = %v, want %v", stats.ByClientCL, want)
+	}
+	if want := map[string]int{"Geth": 1, "Nimbus": 1, "Nethermind": 1, "Other": 4}; !maps.Equal(stats.ByClient, want) {
+		t.Fatalf("ByClient = %v, want %v", stats.ByClient, want)
+	}
+	if stats.ELIdentified != 3 || stats.CLIdentified != 4 {
+		t.Fatalf("identified = el %d, cl %d; want 3, 4", stats.ELIdentified, stats.CLIdentified)
 	}
 }
 

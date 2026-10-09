@@ -7,7 +7,14 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
 import { useNavigate } from "react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { clientColor, hexRGB, layerName, OTHER_COLOR, shortId } from "../theme";
+import {
+  clientColor,
+  hexRGB,
+  layerClient,
+  layerName,
+  OTHER_COLOR,
+  shortId,
+} from "../theme";
 import {
   pointAccuracyKM,
   pointClient,
@@ -127,7 +134,8 @@ export default function WorldMap({
       let el = 0;
       let cl = 0;
       for (const point of members) {
-        const client = pointClient(point) || "unknown";
+        const client =
+          layerClient(pointClient(point), pointLayer(point)) || "unknown";
         clients.set(client, (clients.get(client) ?? 0) + 1);
         if (pointLayer(point) === "el") el++;
         if (pointLayer(point) === "cl") cl++;
@@ -165,7 +173,10 @@ export default function WorldMap({
   useEffect(() => {
     // Keep the popup open across background refetches, but drop a selection whose
     // cluster disappeared so it cannot resurrect if the same key reappears later.
-    if (selectedKey && !clusters.some((cluster) => cluster.key === selectedKey)) {
+    if (
+      selectedKey &&
+      !clusters.some((cluster) => cluster.key === selectedKey)
+    ) {
       setSelectedKey(null);
     }
   }, [clusters, selectedKey]);
@@ -375,7 +386,11 @@ export default function WorldMap({
               >
                 <span
                   className="legend-swatch"
-                  style={{ background: clientColor(pointClient(point)) }}
+                  style={{
+                    background: clientColor(
+                      layerClient(pointClient(point), pointLayer(point)),
+                    ),
+                  }}
                 />
                 <span>
                   <strong>{pointClient(point) || "Unknown client"}</strong>

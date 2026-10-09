@@ -310,7 +310,7 @@ func updateFingerprintStateMetrics(byNetwork map[string][]nodeset.Row, candidate
 // mirroring dnspublisher's clientBucket.
 func candidateClientBucket(name string) string {
 	canonical := clientname.Canonical("el", name)
-	if !clientname.Recognized(canonical) {
+	if !clientname.Recognized("el", canonical) {
 		return "unknown"
 	}
 	return canonical
