@@ -335,11 +335,21 @@ func RowForkCurrentAt(layer, network, forkHash string, forkNext uint64, at time.
 var registry = []*Network{
 	{Name: "mainnet", NetworkID: 1, ChainConfig: params.MainnetChainConfig, genesisFn: core.DefaultGenesisBlock,
 		cl: mainnetCL, bootnodes: mainnetELBootnodes, clBootnodes: mainnetCLBootnodes},
-	{Name: "hoodi", NetworkID: 560048, ChainConfig: params.HoodiChainConfig, genesisFn: core.DefaultHoodiGenesisBlock,
+	{Name: "hoodi", NetworkID: 560048, ChainConfig: hoodiChainConfig, genesisFn: core.DefaultHoodiGenesisBlock,
 		cl: hoodiCL, bootnodes: hoodiELBootnodes, clBootnodes: hoodiCLBootnodes},
 	{Name: "sepolia", NetworkID: 11155111, ChainConfig: params.SepoliaChainConfig, genesisFn: core.DefaultSepoliaGenesisBlock,
 		cl: sepoliaCL, bootnodes: sepoliaELBootnodes, clBootnodes: sepoliaCLBootnodes},
 }
+
+const hoodiGlamsterdam = 1793036568
+
+// geth v1.17.8 does not schedule Amsterdam on Hoodi (eth-clients/hoodi#31). Drop this once it does.
+var hoodiChainConfig = func() *params.ChainConfig {
+	cfg := *params.HoodiChainConfig
+	amsterdam := uint64(hoodiGlamsterdam)
+	cfg.AmsterdamTime = &amsterdam
+	return &cfg
+}()
 
 // Execution bootnodes are the NodeOps fleet's dual-stack records (discv4 and discv5 on the EL
 // port), as go-ethereum PR #35682 ships them. They carry no eth entry, so they never need
