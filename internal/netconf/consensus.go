@@ -339,7 +339,7 @@ var (
 		[]blobParams{{412672, 15}, {419072, 21}})
 	hoodiCL = compiledCL("hoodi", "212f13fc4df078b6cb7db228f1c8307566dcecf900867401a92023d7ba99cb5f", 1742213400,
 		[]namedFork{{"phase0", 0, "10000910"}, {"altair", 0, "20000910"}, {"bellatrix", 0, "30000910"}, {"capella", 0, "40000910"},
-			{"deneb", 0, "50000910"}, {"electra", 2048, "60000910"}, {"fulu", 50688, "70000910"}},
+			{"deneb", 0, "50000910"}, {"electra", 2048, "60000910"}, {"fulu", 50688, "70000910"}, {"gloas", 132352, "80000910"}},
 		[]blobParams{{52480, 15}, {54016, 21}})
 	sepoliaCL = compiledCL("sepolia", "d8ea171f3c94aea21ebc42a1ed61052acf3f9209c00e4efbaaddac09ed9b8078", 1655733600,
 		[]namedFork{{"phase0", 0, "90000069"}, {"altair", 50, "90000070"}, {"bellatrix", 100, "90000071"}, {"capella", 56832, "90000072"},

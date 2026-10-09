@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"testing"
 	"time"
+
+	"github.com/ethereum/go-ethereum/params"
 )
 
 func TestForkDigestsAreDisjointAcrossNetworks(t *testing.T) {
@@ -166,34 +168,49 @@ func lastScheduledEpoch(c *clNetwork) uint64 {
 }
 
 // Glamsterdam activates both layers at one instant. The digests are computed
-// independently of this package and the fork ids come from geth's forkid tests.
-func TestSepoliaGlamsterdamTransition(t *testing.T) {
-	const amsterdam = 1791294816
-	n, _ := Get("sepolia")
-	for _, tc := range []struct {
-		unix       int64
-		el, cl     string
-		clNextFork uint64
+// independently of this package. Sepolia's fork ids come from geth's forkid tests;
+// Hoodi's post-Amsterdam id extends geth's BPO2 checksum with the fork time.
+func TestGlamsterdamTransition(t *testing.T) {
+	for _, net := range []struct {
+		name              string
+		amsterdam         int64
+		gloasEpoch        uint64
+		elBefore, elAfter string
+		clBefore, clAfter string
 	}{
-		{amsterdam - 1, "268956b6", "74d01459", 353024},
-		{amsterdam, "6c1d9423", "669e6c11", ^uint64(0)},
+		{"sepolia", sepoliaGlamsterdam, 353024, "268956b6", "6c1d9423", "74d01459", "669e6c11"},
+		{"hoodi", hoodiGlamsterdam, 132352, "23aa1351", "3d068b59", "c6ecb76c", "5ad30129"},
 	} {
-		at := time.Unix(tc.unix, 0)
-		if got := fmt.Sprintf("%x", n.CurrentForkIDAt(at).Hash); got != tc.el {
-			t.Errorf("EL fork id at %d = %s, want %s", tc.unix, got, tc.el)
+		n, _ := Get(net.name)
+		for _, tc := range []struct {
+			unix       int64
+			el, cl     string
+			clNextFork uint64
+		}{
+			{net.amsterdam - 1, net.elBefore, net.clBefore, net.gloasEpoch},
+			{net.amsterdam, net.elAfter, net.clAfter, ^uint64(0)},
+		} {
+			at := time.Unix(tc.unix, 0)
+			if got := fmt.Sprintf("%x", n.CurrentForkIDAt(at).Hash); got != tc.el {
+				t.Errorf("%s EL fork id at %d = %s, want %s", net.name, tc.unix, got, tc.el)
+			}
+			state, err := CLForkStateAt(net.name, at)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := hex.EncodeToString(state.Digest[:]); got != tc.cl {
+				t.Errorf("%s CL digest at %d = %s, want %s", net.name, tc.unix, got, tc.cl)
+			}
+			if state.NextForkEpoch != tc.clNextFork {
+				t.Errorf("%s CL next fork epoch at %d = %d, want %d", net.name, tc.unix, state.NextForkEpoch, tc.clNextFork)
+			}
 		}
-		state, err := CLForkStateAt("sepolia", at)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got := hex.EncodeToString(state.Digest[:]); got != tc.cl {
-			t.Errorf("CL digest at %d = %s, want %s", tc.unix, got, tc.cl)
-		}
-		if state.NextForkEpoch != tc.clNextFork {
-			t.Errorf("CL next fork epoch at %d = %d, want %d", tc.unix, state.NextForkEpoch, tc.clNextFork)
+		digest, _ := parseHash4(net.clAfter)
+		if got := ClassifyCL(digest); got != net.name {
+			t.Errorf("%s Gloas digest classifies as %q", net.name, got)
 		}
 	}
-	if got := ClassifyCL([4]byte{0x66, 0x9e, 0x6c, 0x11}); got != "sepolia" {
-		t.Errorf("Gloas digest classifies as %q", got)
+	if geth := params.HoodiChainConfig.AmsterdamTime; geth != nil && *geth != hoodiGlamsterdam {
+		t.Errorf("geth schedules Hoodi Amsterdam at %d, the override at %d", *geth, hoodiGlamsterdam)
 	}
 }
