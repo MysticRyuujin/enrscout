@@ -1242,12 +1242,15 @@ code.wrap {
   padding: 8px 10px;
   font-size: 12px;
   min-width: 160px;
+  width: max-content;
+  max-width: 100%;
 }
 
 .trend-tip > div {
   display: flex;
   align-items: center;
   gap: 6px;
+  white-space: nowrap;
 }
 
 .trend-tip-time {
