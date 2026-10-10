@@ -1093,6 +1093,51 @@ code.wrap {
   color: var(--text);
 }
 
+.trend-controls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+
+.trend-controls .trend-range {
+  margin-left: 0;
+}
+
+.trend-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.trend-chip[aria-pressed="false"] {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.trend-chip[aria-pressed="false"] .swatch {
+  opacity: 0.35;
+}
+
+.trend-chip-value {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.trend-note {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .forks .nodes-table .num {
   text-align: right;
   font-variant-numeric: tabular-nums;

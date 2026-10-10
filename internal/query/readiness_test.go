@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/MysticRyuujin/enrscout/internal/clientname"
 	"github.com/MysticRyuujin/enrscout/internal/netconf"
 	"github.com/MysticRyuujin/enrscout/internal/snapshot"
 	"github.com/MysticRyuujin/enrscout/internal/store"
@@ -334,5 +335,52 @@ func TestReadinessHistoryFromAnotherScheduleIsWithheld(t *testing.T) {
 	}
 	if got, err := eng.ReadinessHistoryFor(ctx, "sepolia", target); err != nil || got != nil {
 		t.Fatalf("history from the old schedule = %+v, %v; want none", got, err)
+	}
+}
+
+// The crawler counts history points per client with clientname.Charted, so it must select the same
+// rows as the chart condition behind the live per-client counts.
+func TestChartFingerprintMatchesSQLAndGo(t *testing.T) {
+	st, err := store.NewFS(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	eng, err := New(st, []string{"sepolia"}, t.TempDir(), "snapshots")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Close()
+	at := time.Unix(sepoliaAmsterdam, 0)
+	cutoff := at.Add(-clientname.ChartMaxFingerprintAge).Unix()
+	want := map[string]bool{}
+	for i, status := range []string{"ok", "stale", "failed", "pending", ""} {
+		for j, fpAt := range []int64{0, cutoff - 1, cutoff, at.Unix()} {
+			id := fmt.Sprintf("r%d-%d", i, j)
+			if _, err := eng.db.Exec("INSERT INTO nodes (id, network, layer, fp_status, fp_at) VALUES (?, 'sepolia', 'el', NULLIF(?, ''), ?)", id, status, fpAt); err != nil {
+				t.Fatal(err)
+			}
+			want[id] = clientname.Charted(status, fpAt, at)
+		}
+	}
+	cond, arg := chartFingerprintConditionAt(at)
+	rows, err := eng.db.Query("SELECT id, coalesce("+cond+", false) FROM nodes", arg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	seen := 0
+	for rows.Next() {
+		var id string
+		var got bool
+		if err := rows.Scan(&id, &got); err != nil {
+			t.Fatal(err)
+		}
+		seen++
+		if got != want[id] {
+			t.Errorf("%s: SQL %v, Go %v", id, got, want[id])
+		}
+	}
+	if seen != len(want) {
+		t.Fatalf("read %d rows, want %d", seen, len(want))
 	}
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/hex"
+	"reflect"
 	"testing"
 	"time"
 
@@ -32,6 +33,9 @@ func TestRecordReadinessAppendsAcrossRestartsAndKeepsUnreadable(t *testing.T) {
 		{ID: "b", Layer: "el", ForkHash: hex.EncodeToString(hash[:]), Client: "Geth", FPStatus: "ok", FPAt: at.Unix()},
 		{ID: "c", Layer: "el", ForkHash: hex.EncodeToString(hash[:])},
 		{ID: "d", Layer: "el", ForkHash: hex.EncodeToString(hash[:]), ForkNext: sepoliaAmsterdam, Client: "enrscout", FPStatus: "ok", FPAt: at.Unix()},
+		{ID: "e", Layer: "el", ForkHash: hex.EncodeToString(hash[:]), ForkNext: sepoliaAmsterdam, Client: "Besu", FPStatus: "ok", FPAt: at.Add(-8 * 24 * time.Hour).Unix()},
+		{ID: "f", Layer: "el", ForkHash: hex.EncodeToString(hash[:]), Client: "op-geth", FPStatus: "ok", FPAt: at.Unix()},
+		{ID: "g", Layer: "el", ForkHash: "deadbeef", Client: "Geth", FPStatus: "ok", FPAt: at.Unix()},
 	}}
 	key, err := layout.ReadinessHistoryKey("sepolia", "Glamsterdam")
 	if err != nil {
@@ -58,8 +62,12 @@ func TestRecordReadinessAppendsAcrossRestartsAndKeepsUnreadable(t *testing.T) {
 		t.Fatalf("history = %+v, want one point for the Amsterdam time", h)
 	}
 	p := h.Points[0]
-	if p.EL["ready"] != 1 || p.EL["not_ready"] != 2 {
+	if p.EL["ready"] != 2 || p.EL["not_ready"] != 3 || p.EL["stale"] != 1 {
 		t.Fatalf("point = %+v", p)
+	}
+	// Only fresh fingerprints of recognized clients on the current fork, as in the live per-client counts.
+	if want := map[string]map[string]int{"Geth": {"ready": 1, "not_ready": 1}}; !reflect.DeepEqual(p.ELClients, want) {
+		t.Fatalf("EL clients = %v, want %v", p.ELClients, want)
 	}
 
 	// A new process has no memory of the first one's points.

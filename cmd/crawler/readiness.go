@@ -19,21 +19,22 @@ import (
 func readinessPointAt(target netconf.ForkTarget, network string, rows []nodeset.Row, at time.Time) snapshot.ReadinessPoint {
 	point := snapshot.ReadinessPoint{At: at.Unix()}
 	if target.EL != nil {
-		point.EL = map[string]int{}
+		point.EL, point.ELClients = map[string]int{}, map[string]map[string]int{}
 	}
 	if target.CL != nil {
-		point.CL = map[string]int{}
+		point.CL, point.CLClients = map[string]int{}, map[string]map[string]int{}
 	}
 	for _, row := range rows {
 		if strings.EqualFold(row.Client, clientname.Self) {
 			continue
 		}
 		var layer map[string]int
+		var clients map[string]map[string]int
 		switch row.Layer {
 		case "el":
-			layer = point.EL
+			layer, clients = point.EL, point.ELClients
 		case "cl":
-			layer = point.CL
+			layer, clients = point.CL, point.CLClients
 		}
 		if layer == nil {
 			continue
@@ -43,6 +44,13 @@ func readinessPointAt(target netconf.ForkTarget, network string, rows []nodeset.
 			ENRForkDigest: row.ENRForkDigest, ENRNextForkVersion: row.ENRNextForkVersion, ENRNextForkEpoch: row.ENRNextForkEpoch,
 		}, at)
 		layer[string(readiness)]++
+		if readiness == netconf.Stale || !clientname.Charted(row.FPStatus, row.FPAt, at) || !clientname.Recognized(row.Layer, row.Client) {
+			continue
+		}
+		if clients[row.Client] == nil {
+			clients[row.Client] = map[string]int{}
+		}
+		clients[row.Client][string(readiness)]++
 	}
 	return point
 }

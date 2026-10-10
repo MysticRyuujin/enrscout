@@ -39,14 +39,11 @@ const syncStateColumn = "coalesce(sync_state, 'unknown')"
 
 const enrScheduleColumns = "coalesce(enr_fork_digest, ''), coalesce(enr_next_fork_version, ''), coalesce(enr_next_fork_epoch, 0)"
 
-// chartMaxFingerprintAge bounds how old a verified fingerprint may be and still count toward client charts; older identifications remain on node detail as last-known state.
-const chartMaxFingerprintAge = 7 * 24 * time.Hour
-
-// warmupPeriod gates the disclosure banner only — not the same window as chartMaxFingerprintAge.
+// warmupPeriod gates the disclosure banner only — not the same window as clientname.ChartMaxFingerprintAge.
 const warmupPeriod = 48 * time.Hour
 
 func chartFingerprintConditionAt(at time.Time) (string, int64) {
-	return verifiedFingerprintCondition + " AND coalesce(fp_at, 0) >= ?", at.Add(-chartMaxFingerprintAge).Unix()
+	return verifiedFingerprintCondition + " AND coalesce(fp_at, 0) >= ?", at.Add(-clientname.ChartMaxFingerprintAge).Unix()
 }
 
 type sortSpec struct {
@@ -861,7 +858,7 @@ func (e *Engine) StatsForMembershipAt(ctx context.Context, network, membership s
 	generatedAt, run := state.GeneratedAt, state.Run
 	s := Stats{
 		Generation:      state.LastRefresh,
-		ForkEvaluatedAt: at.UTC().Format(time.RFC3339Nano), FingerprintWindowSeconds: int64(chartMaxFingerprintAge.Seconds()),
+		ForkEvaluatedAt: at.UTC().Format(time.RFC3339Nano), FingerprintWindowSeconds: int64(clientname.ChartMaxFingerprintAge.Seconds()),
 		ByNetwork: map[string]int{}, ByClient: map[string]int{}, ByClientEL: map[string]int{}, ByClientCL: map[string]int{},
 		ByDirectionEL: map[string]int{}, ByDirectionCL: map[string]int{},
 		ByCountry: map[string]int{}, ByOrg: map[string]int{}, ByOS: map[string]int{}, ByLayer: map[string]int{}, ByVersion: map[string]int{},

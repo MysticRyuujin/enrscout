@@ -216,6 +216,8 @@ export interface ReadinessPoint {
   at: number;
   el?: Partial<ReadinessCounts>;
   cl?: Partial<ReadinessCounts>;
+  el_clients?: Record<string, Partial<ReadinessCounts>>;
+  cl_clients?: Record<string, Partial<ReadinessCounts>>;
 }
 
 export interface ForkReadiness {

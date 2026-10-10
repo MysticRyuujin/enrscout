@@ -20,11 +20,14 @@ const (
 	maxReadinessBytes = 8 << 20
 )
 
-// ReadinessPoint is one sample of a network's fork readiness: rows per readiness state, per layer.
+// ReadinessPoint is one sample of a network's fork readiness: rows per readiness state, per layer,
+// and per recognized client for the population of the live per-client counts.
 type ReadinessPoint struct {
-	At int64          `json:"at"`
-	EL map[string]int `json:"el,omitempty"`
-	CL map[string]int `json:"cl,omitempty"`
+	At        int64                     `json:"at"`
+	EL        map[string]int            `json:"el,omitempty"`
+	CL        map[string]int            `json:"cl,omitempty"`
+	ELClients map[string]map[string]int `json:"el_clients,omitempty"`
+	CLClients map[string]map[string]int `json:"cl_clients,omitempty"`
 	// Pre-release writers also recorded per-client pairs. They are accepted so those objects stay
 	// decodable and are dropped on the next write.
 	LegacyClientsEL json.RawMessage `json:"clients_el,omitempty"`

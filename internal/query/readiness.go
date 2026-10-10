@@ -77,7 +77,7 @@ func (e *Engine) ForkReadinessAt(ctx context.Context, network string, at time.Ti
 	state := e.State()
 	out := ForkReadiness{
 		Network: network, ForkEvaluatedAt: at.UTC().Format(time.RFC3339Nano),
-		FingerprintWindow: int64(chartMaxFingerprintAge.Seconds()),
+		FingerprintWindow: int64(clientname.ChartMaxFingerprintAge.Seconds()),
 		Layers:            map[string]*LayerReadiness{},
 	}
 	if !state.GeneratedAt.IsZero() {

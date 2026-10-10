@@ -196,6 +196,15 @@ func withForkReadiness(ctx context.Context, st store.Store, layout snapshot.Layo
 			At: at.Unix(),
 			EL: map[string]int{"ready": ready, "not_ready": 4 - ready},
 			CL: map[string]int{"ready": min(ready, 1), "not_ready": 2 - min(ready, 1), "unknown": 1},
+			ELClients: map[string]map[string]int{
+				"Geth":       {"ready": min(ready, 2), "not_ready": 2 - min(ready, 2)},
+				"Nethermind": {"ready": ready / 2, "not_ready": 1 - ready/2},
+				"Besu":       {"not_ready": 1},
+			},
+			CLClients: map[string]map[string]int{
+				"Lighthouse": {"ready": min(ready, 1), "not_ready": 1 - min(ready, 1)},
+				"Prysm":      {"not_ready": 1},
+			},
 		}
 		if activation := target.Activation(); !at.Before(activation) {
 			point.EL = map[string]int{"ready": 1, "pending": 1, "not_ready": 2}
