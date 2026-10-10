@@ -3,6 +3,7 @@ package clientname
 import (
 	"regexp"
 	"strings"
+	"time"
 )
 
 var opGethVersion = regexp.MustCompile(`(?i)^v?1\.10[0-9]{4}\.[0-9]+(?:$|[-+])`)
@@ -115,4 +116,14 @@ var recognized = map[string]map[string]bool{
 
 func Recognized(layer, name string) bool {
 	return recognized[layer][strings.TrimSpace(name)]
+}
+
+// ChartMaxFingerprintAge bounds how old a verified fingerprint may be and still count toward client
+// charts; older identifications remain on node detail as last-known state.
+const ChartMaxFingerprintAge = 7 * 24 * time.Hour
+
+// Charted is the Go form of the query package's chart fingerprint condition, for the crawler,
+// which cannot run SQL over its rows.
+func Charted(fpStatus string, fpAt int64, at time.Time) bool {
+	return (fpStatus == "ok" || fpStatus == "stale") && fpAt >= at.Add(-ChartMaxFingerprintAge).Unix()
 }

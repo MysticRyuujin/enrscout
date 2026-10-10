@@ -4,8 +4,19 @@ import type { ReadinessCounts, ReadinessPoint } from "../types";
 
 export const TREND_COLOR = { el: ACCENT, cl: CATEGORICAL[2] } as const;
 
+// Direct end labels stop being readable past this many lines; the legend names them instead.
+export const MAX_LABELED_SERIES = 4;
+
 const H = 220;
 const PAD = { top: 12, right: 100, bottom: 28, left: 40 };
+
+export interface TrendSeries {
+  key: string;
+  short: string;
+  name: string;
+  color: string;
+  counts: (Partial<ReadinessCounts> | undefined)[];
+}
 
 // Stale rows are off the current fork before activation and long gone after it, so they are not
 // part of the population a fork can be ready in.
@@ -29,7 +40,7 @@ export function readyShare(
 
 // Pending rows scheduled the fork before activation and have not been seen since, so counting them
 // keeps the adoption line continuous across activation instead of dropping to the re-observed few.
-function scheduledShare(
+export function scheduledShare(
   c: Partial<ReadinessCounts> | undefined,
 ): number | null {
   if (!c) return null;
@@ -66,7 +77,7 @@ function fmtClock(unix: number): string {
   });
 }
 
-function fmtTime(unix: number): string {
+export function fmtTime(unix: number): string {
   return new Date(unix * 1000).toLocaleString(undefined, {
     month: "short",
     day: "numeric",
@@ -78,11 +89,14 @@ function fmtTime(unix: number): string {
 export default function ReadinessTrend({
   points,
   activation,
-  layers,
+  series: input,
+  seenLines,
 }: {
   points: ReadinessPoint[];
   activation?: number;
-  layers: ("el" | "cl")[];
+  series: TrendSeries[];
+  // The dashed "seen on the fork" line doubles every series, so only the overall view draws it.
+  seenLines: boolean;
 }) {
   const wrap = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(720);
@@ -117,21 +131,30 @@ export default function ReadinessTrend({
     activation && activation > tLast && activation - tLast <= tLast - t0
       ? activation
       : Math.max(tLast, t0 + 1);
-  const plotW = width - PAD.left - PAD.right;
+  const labeled = input.length <= MAX_LABELED_SERIES;
+  const longestLabel = labeled
+    ? Math.max(
+        0,
+        ...input.map(
+          (s) => `${s.short} 100.0%${seenLines ? " seen" : ""}`.length,
+        ),
+      )
+    : 0;
+  const padRight = Math.max(PAD.right, Math.ceil(longestLabel * 6.5) + 12);
+  const plotW = width - PAD.left - padRight;
   const plotH = H - PAD.top - PAD.bottom;
   const x = (t: number) => PAD.left + ((t - t0) / (t1 - t0)) * plotW;
   const y = (share: number) => PAD.top + (1 - share) * plotH;
 
-  const series = layers.map((layer) => {
-    const counts = points.map((p) => (layer === "el" ? p.el : p.cl));
-    const values = counts.map(scheduledShare);
-    const upgraded = counts.map((c, i) =>
-      activation !== undefined && points[i].at >= activation
+  const series = input.map((s) => {
+    const values = s.counts.map(scheduledShare);
+    const upgraded = s.counts.map((c, i) =>
+      seenLines && activation !== undefined && points[i].at >= activation
         ? readyShare(c)
         : null,
     );
     return {
-      layer,
+      ...s,
       values,
       upgraded,
       d: linePath(values, points, x, y),
@@ -142,14 +165,16 @@ export default function ReadinessTrend({
   });
 
   const labelY: Record<string, number> = {};
-  const placed = series
-    .flatMap((s) => [
-      ...(s.last ? [{ key: s.layer, y: y(s.last.value) + 4 }] : []),
-      ...(s.lastUpgraded
-        ? [{ key: `${s.layer}-up`, y: y(s.lastUpgraded.value) + 4 }]
-        : []),
-    ])
-    .sort((a, b) => a.y - b.y);
+  const placed = labeled
+    ? series
+        .flatMap((s) => [
+          ...(s.last ? [{ key: s.key, y: y(s.last.value) + 4 }] : []),
+          ...(s.lastUpgraded
+            ? [{ key: `${s.key}-up`, y: y(s.lastUpgraded.value) + 4 }]
+            : []),
+        ])
+        .sort((a, b) => a.y - b.y)
+    : [];
   placed.forEach((l, i) => {
     const floor = i === 0 ? PAD.top + 10 : placed[i - 1].y + 13;
     l.y = Math.max(l.y, floor);
@@ -235,11 +260,11 @@ export default function ReadinessTrend({
           </g>
         )}
         {series.map((s) => (
-          <g key={s.layer}>
+          <g key={s.key}>
             <path
               d={s.d}
               fill="none"
-              stroke={TREND_COLOR[s.layer]}
+              stroke={s.color}
               strokeWidth={2}
               strokeLinejoin="round"
             />
@@ -247,20 +272,19 @@ export default function ReadinessTrend({
               <path
                 d={s.dUpgraded}
                 fill="none"
-                stroke={TREND_COLOR[s.layer]}
+                stroke={s.color}
                 strokeWidth={2}
                 strokeDasharray="4 3"
                 strokeLinejoin="round"
               />
             )}
-            {s.lastUpgraded !== null && (
+            {labeled && s.lastUpgraded !== null && (
               <text
                 className="trend-label"
                 x={x(s.lastUpgraded.at) + 6}
-                y={labelY[`${s.layer}-up`]}
+                y={labelY[`${s.key}-up`]}
               >
-                {s.layer.toUpperCase()}{" "}
-                {(s.lastUpgraded.value * 100).toFixed(1)}% seen
+                {s.short} {(s.lastUpgraded.value * 100).toFixed(1)}% seen
               </text>
             )}
             {s.last !== null && (
@@ -268,17 +292,17 @@ export default function ReadinessTrend({
                 cx={x(s.last.at)}
                 cy={y(s.last.value)}
                 r={3.5}
-                fill={TREND_COLOR[s.layer]}
+                fill={s.color}
                 className="trend-dot"
               />
             )}
-            {s.last !== null && (
+            {labeled && s.last !== null && (
               <text
                 className="trend-label"
                 x={x(s.last.at) + 6}
-                y={labelY[s.layer]}
+                y={labelY[s.key]}
               >
-                {s.layer.toUpperCase()} {(s.last.value * 100).toFixed(1)}%
+                {s.short} {(s.last.value * 100).toFixed(1)}%
               </text>
             )}
           </g>
@@ -296,11 +320,11 @@ export default function ReadinessTrend({
               const v = s.values[hover!];
               return v === null ? null : (
                 <circle
-                  key={s.layer}
+                  key={s.key}
                   cx={x(hp.at)}
                   cy={y(v)}
                   r={4}
-                  fill={TREND_COLOR[s.layer]}
+                  fill={s.color}
                   className="trend-dot"
                 />
               );
@@ -324,21 +348,17 @@ export default function ReadinessTrend({
         >
           <div className="trend-tip-time">{fmtTime(hp.at)}</div>
           {series.map((s) => {
-            const c = s.layer === "el" ? hp.el : hp.cl;
+            const c = s.counts[hover!];
             const v = s.values[hover!];
             if (v === null || !c) return null;
-            const up = s.upgraded[hover!];
+            const after = activation !== undefined && hp.at >= activation;
             return (
-              <div key={s.layer}>
-                <span
-                  className="swatch"
-                  style={{ background: TREND_COLOR[s.layer] }}
-                />
-                {s.layer === "el" ? "Execution" : "Consensus"}{" "}
-                {(v * 100).toFixed(1)}%
-                {up === null
-                  ? ` (${num(c.ready ?? 0)} scheduled)`
-                  : ` (${num(c.ready ?? 0)} upgraded, ${num(c.pending ?? 0)} pending)`}
+              <div key={s.key}>
+                <span className="swatch" style={{ background: s.color }} />
+                {s.name} {(v * 100).toFixed(1)}%
+                {after
+                  ? ` (${num(c.ready ?? 0)} upgraded, ${num(c.pending ?? 0)} pending)`
+                  : ` (${num(c.ready ?? 0)} of ${num(readyPool(c))} scheduled)`}
               </div>
             );
           })}

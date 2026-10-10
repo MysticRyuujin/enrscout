@@ -144,8 +144,8 @@ stale-fork rows of the network, which the current-network views exclude. `pendin
 `ready` as the crawler sees the nodes again, so expect most of them to move within the first
 hours after activation.
 
-Client rows and the per-client split cover recognized clients with a verified handshake in the
-last 7 days; every other row is `unidentified`. The crawler's own advertiser identities (client
+Client rows, the per-client split, and the per-client history cover recognized clients with a
+verified handshake in the last 7 days; every other row is `unidentified`. The crawler's own advertiser identities (client
 `enrscout`, which announce every scheduled fork) are excluded from all readiness counts, from the
 readiness history, and from the `readiness` node filter.
 

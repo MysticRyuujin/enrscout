@@ -5,12 +5,17 @@ import { fetchForks } from "../api";
 import { useNetwork } from "../network";
 import StatTiles from "../components/StatTiles";
 import ReadinessTrend, {
+  fmtTime,
+  MAX_LABELED_SERIES,
   readyPool,
   readyShare,
+  scheduledShare,
   TREND_COLOR,
 } from "../components/ReadinessTrend";
+import type { TrendSeries } from "../components/ReadinessTrend";
 import {
   CATEGORICAL,
+  clientColor,
   durationAgo,
   layerName,
   networkColor,
@@ -26,6 +31,7 @@ import type {
   LayerReadiness,
   Readiness,
   ReadinessCounts,
+  ReadinessPoint,
 } from "../types";
 
 const REFRESH_MS = 60_000;
@@ -35,6 +41,55 @@ const ZOOM_MIN_BEFORE_S = 2 * 3600;
 const ZOOM_DEFAULT_FOR_S = 3 * 86400;
 
 type TrendRange = "fork" | "all";
+type TrendView = "overall" | "el" | "cl";
+const MAX_CLIENT_LINES = 8;
+
+function clientsAt(p: ReadinessPoint, layer: "el" | "cl") {
+  return layer === "el" ? p.el_clients : p.cl_clients;
+}
+
+// Every client keeps its own color, so the tail folds into a neutral Other line, not a ninth hue.
+function clientTrendSeries(
+  points: ReadinessPoint[],
+  layer: "el" | "cl",
+): TrendSeries[] {
+  const size = new Map<string, number>();
+  for (const p of points)
+    for (const [client, c] of Object.entries(clientsAt(p, layer) ?? {}))
+      size.set(client, Math.max(size.get(client) ?? 0, readyPool(c)));
+  const ranked = [...size]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([client]) => client);
+  const shown =
+    ranked.length > MAX_CLIENT_LINES
+      ? ranked.slice(0, MAX_CLIENT_LINES - 1)
+      : ranked;
+  const rest = ranked.slice(shown.length);
+  const series: TrendSeries[] = shown.map((client) => ({
+    key: client,
+    short: client,
+    name: client,
+    color: clientColor(client),
+    counts: points.map((p) => clientsAt(p, layer)?.[client]),
+  }));
+  if (rest.length)
+    series.push({
+      key: "Other",
+      short: "Other",
+      name: `Other (${rest.length} clients)`,
+      color: OTHER_COLOR,
+      counts: points.map((p) => {
+        const all = clientsAt(p, layer);
+        if (!all) return undefined;
+        const sum: Partial<ReadinessCounts> = {};
+        for (const client of rest)
+          for (const [state, n] of Object.entries(all[client] ?? {}))
+            sum[state as Readiness] = (sum[state as Readiness] ?? 0) + (n ?? 0);
+        return sum;
+      }),
+    });
+  return series;
+}
 const STATES: Readiness[] = [
   "ready",
   "pending",
@@ -378,6 +433,8 @@ export default function Forks() {
   const [err, setErr] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now() / 1000);
   const [range, setRange] = useState<TrendRange | null>(null);
+  const [view, setView] = useState<TrendView>("overall");
+  const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set());
 
   useEffect(() => {
     let live = true;
@@ -515,6 +572,36 @@ export default function Forks() {
             p.at >= activation - Math.max(now - activation, ZOOM_MIN_BEFORE_S),
         )
       : history;
+  const clientViews = layers.filter((l) =>
+    history.some((p) => clientsAt(p, l)),
+  );
+  const trendView: TrendView =
+    view !== "overall" && clientViews.includes(view) ? view : "overall";
+  const allSeries: TrendSeries[] =
+    trendView === "overall"
+      ? layers.map((l) => ({
+          key: l,
+          short: l.toUpperCase(),
+          name: layerName(l),
+          color: TREND_COLOR[l],
+          counts: trendPoints.map((p) => (l === "el" ? p.el : p.cl)),
+        }))
+      : clientTrendSeries(trendPoints, trendView);
+  const trendSeries = allSeries.filter((s) => !hidden.has(s.key));
+  const clientStart =
+    trendView === "overall"
+      ? -1
+      : trendPoints.findIndex((p) => clientsAt(p, trendView));
+  const chooseView = (v: TrendView) => {
+    setView(v);
+    setHidden(new Set());
+  };
+  const toggleSeries = (key: string) =>
+    setHidden((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(key)) next.add(key);
+      return next;
+    });
   const releases = data.releases;
   const released = releases.filter(hasRelease).length;
   if (releases.length && !activated)
@@ -586,50 +673,113 @@ export default function Forks() {
       <div className="card">
         <h3>Adoption over time</h3>
         <p className="card-subtitle">
-          Share of identities that have the fork in their schedule.
+          Share of identities that have the fork in their schedule
+          {trendView === "overall"
+            ? "."
+            : `, per ${layerName(trendView).toLowerCase()} client with a fresh fingerprint.`}
         </p>
+        {(clientViews.length > 0 || zoomable) && (
+          <div className="trend-controls">
+            {clientViews.length > 0 && (
+              <div className="trend-range" role="group" aria-label="Series">
+                {(["overall", ...clientViews] as const).map((v) => (
+                  <button
+                    key={v}
+                    className={trendView === v ? "active" : undefined}
+                    aria-pressed={trendView === v}
+                    onClick={() => chooseView(v)}
+                  >
+                    {v === "overall" ? "Overall" : `${v.toUpperCase()} clients`}
+                  </button>
+                ))}
+              </div>
+            )}
+            {zoomable && (
+              <div className="trend-range" role="group" aria-label="Time range">
+                {(
+                  [
+                    ["fork", "Around activation"],
+                    ["all", "All history"],
+                  ] as const
+                ).map(([r, label]) => (
+                  <button
+                    key={r}
+                    className={trendRange === r ? "active" : undefined}
+                    aria-pressed={trendRange === r}
+                    onClick={() => setRange(r)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         <div className="rd-legend">
-          {layers.map((l) => (
-            <span key={l}>
-              <span className="swatch" style={{ background: TREND_COLOR[l] }} />
-              {layerName(l)}
-            </span>
-          ))}
-          {activated && (
+          {trendView === "overall" ? (
             <>
-              <span>
-                <LineKey /> scheduled or upgraded
-              </span>
-              <span>
-                <LineKey dashed /> seen on the fork
-              </span>
-            </>
-          )}
-          {zoomable && (
-            <div className="trend-range" role="group" aria-label="Time range">
-              {(
-                [
-                  ["fork", "Around activation"],
-                  ["all", "All history"],
-                ] as const
-              ).map(([r, label]) => (
-                <button
-                  key={r}
-                  className={trendRange === r ? "active" : undefined}
-                  aria-pressed={trendRange === r}
-                  onClick={() => setRange(r)}
-                >
-                  {label}
-                </button>
+              {layers.map((l) => (
+                <span key={l}>
+                  <span
+                    className="swatch"
+                    style={{ background: TREND_COLOR[l] }}
+                  />
+                  {layerName(l)}
+                </span>
               ))}
-            </div>
+              {activated && (
+                <>
+                  <span>
+                    <LineKey /> scheduled or upgraded
+                  </span>
+                  <span>
+                    <LineKey dashed /> seen on the fork
+                  </span>
+                </>
+              )}
+            </>
+          ) : (
+            allSeries.map((s) => {
+              const last = [...s.counts]
+                .reverse()
+                .find((c) => c && readyPool(c));
+              const share = scheduledShare(last);
+              return (
+                <button
+                  key={s.key}
+                  className="trend-chip"
+                  aria-pressed={!hidden.has(s.key)}
+                  onClick={() => toggleSeries(s.key)}
+                >
+                  <span className="swatch" style={{ background: s.color }} />
+                  {s.name}
+                  {share !== null && (
+                    <span className="trend-chip-value">
+                      {(share * 100).toFixed(1)}%
+                    </span>
+                  )}
+                </button>
+              );
+            })
           )}
         </div>
         <ReadinessTrend
           points={trendPoints}
           activation={activation}
-          layers={layers}
+          series={trendSeries}
+          seenLines={trendView === "overall"}
         />
+        {clientStart > 0 && (
+          <p className="trend-note">
+            Per-client history starts {fmtTime(trendPoints[clientStart].at)}.
+          </p>
+        )}
+        {trendView !== "overall" && trendSeries.length > MAX_LABELED_SERIES && (
+          <p className="trend-note">
+            Select up to {MAX_LABELED_SERIES} clients in the legend to label
+            their lines.
+          </p>
+        )}
       </div>
 
       {layers.map((l) => (
