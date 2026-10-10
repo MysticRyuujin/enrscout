@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ACCENT, CATEGORICAL, num } from "../theme";
 import type { ReadinessCounts, ReadinessPoint } from "../types";
 
@@ -99,8 +99,14 @@ export default function ReadinessTrend({
   seenLines: boolean;
 }) {
   const wrap = useRef<HTMLDivElement>(null);
+  const tip = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(720);
   const [hover, setHover] = useState<number | null>(null);
+  const [tipWidth, setTipWidth] = useState(180);
+
+  useLayoutEffect(() => {
+    if (tip.current) setTipWidth(tip.current.offsetWidth);
+  }, [hover, width, input]);
 
   useEffect(() => {
     const el = wrap.current;
@@ -197,6 +203,11 @@ export default function ReadinessTrend({
   };
 
   const hp = hover === null ? null : points[hover];
+  const tipLeft = (px: number) =>
+    Math.max(
+      0,
+      Math.min(px > width / 2 ? px - 12 - tipWidth : px + 12, width - tipWidth),
+    );
   const ticks = [0, 0.25, 0.5, 0.75, 1];
 
   return (
@@ -344,7 +355,8 @@ export default function ReadinessTrend({
       {hp && (
         <div
           className="trend-tip"
-          style={{ left: Math.min(x(hp.at) + 12, width - 180), top: PAD.top }}
+          ref={tip}
+          style={{ left: tipLeft(x(hp.at)), top: PAD.top }}
         >
           <div className="trend-tip-time">{fmtTime(hp.at)}</div>
           {series.map((s) => {
