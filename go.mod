@@ -10,7 +10,7 @@ require (
 	github.com/duckdb/duckdb-go/v2 v2.10506.0
 	github.com/ethereum/go-ethereum v1.17.8
 	github.com/go-git/go-billy/v5 v5.9.2
-	github.com/go-git/go-git/v5 v5.19.2
+	github.com/go-git/go-git/v5 v5.19.3
 	github.com/golang/snappy v1.0.1-0.20260716114414-9ae09f520e93
 	github.com/google/uuid v1.6.0
 	github.com/libp2p/go-libp2p v0.48.0
@@ -142,7 +142,7 @@ require (
 	github.com/pion/transport/v4 v4.1.0 // indirect
 	github.com/pion/turn/v4 v4.0.2 // indirect
 	github.com/pion/webrtc/v4 v4.1.2 // indirect
-	github.com/pjbgf/sha1cd v0.6.0 // indirect
+	github.com/pjbgf/sha1cd v0.7.0 // indirect
 	github.com/prometheus/common v0.70.1 // indirect
 	github.com/prometheus/procfs v0.21.1 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
