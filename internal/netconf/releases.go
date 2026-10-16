@@ -44,7 +44,7 @@ type ClientReleaseTable struct {
 const sepoliaGlamsterdam = 1791294816
 
 var builtinClientReleases = ClientReleaseTable{
-	Updated: "2026-10-16",
+	Updated: "2026-10-17",
 	Releases: []ClientRelease{
 		{Fork: "Glamsterdam", Network: "sepolia", Layer: "el", Client: "Geth", ForkTime: sepoliaGlamsterdam,
 			MinVersions: []string{"1.17.6"}, Released: "2026-09-23", URL: "https://github.com/ethereum/go-ethereum/releases/tag/v1.17.6",
@@ -69,7 +69,7 @@ var builtinClientReleases = ClientReleaseTable{
 			Prerelease: "8.3.0-rc.0", Released: "2026-10-01", URL: "https://github.com/sigp/lighthouse/releases/tag/v8.3.0-rc.0"},
 		{Fork: "Glamsterdam", Network: "sepolia", Layer: "cl", Client: "Prysm", ForkTime: sepoliaGlamsterdam,
 			MinVersions: []string{"7.2.0"}, Released: "2026-09-28", URL: "https://github.com/OffchainLabs/prysm/releases/tag/v7.2.0",
-			Latest: "7.2.1", LatestURL: "https://github.com/OffchainLabs/prysm/releases/tag/v7.2.1"},
+			Latest: "7.3.0", LatestURL: "https://github.com/OffchainLabs/prysm/releases/tag/v7.3.0"},
 		{Fork: "Glamsterdam", Network: "sepolia", Layer: "cl", Client: "Teku", ForkTime: sepoliaGlamsterdam,
 			MinVersions: []string{"26.9.1"}, Released: "2026-09-28", URL: "https://github.com/Consensys-Incorporated/teku/releases/tag/26.9.1",
 			Latest: "26.10.1", LatestURL: "https://github.com/Consensys-Incorporated/teku/releases/tag/26.10.1"},
@@ -89,6 +89,8 @@ var builtinClientReleases = ClientReleaseTable{
 			MinVersions: []string{"2.2.0"}, Released: "2026-10-16", URL: "https://github.com/NethermindEth/nethermind/releases/tag/2.2.0"},
 		{Fork: "Glamsterdam", Network: "hoodi", Layer: "el", Client: "Besu", ForkTime: hoodiGlamsterdam,
 			MinVersions: []string{"26.10.0"}, Released: "2026-10-16", URL: "https://github.com/besu-eth/besu/releases/tag/26.10.0"},
+		{Fork: "Glamsterdam", Network: "hoodi", Layer: "cl", Client: "Prysm", ForkTime: hoodiGlamsterdam,
+			MinVersions: []string{"7.3.0"}, Released: "2026-10-16", URL: "https://github.com/OffchainLabs/prysm/releases/tag/v7.3.0"},
 		{Fork: "Glamsterdam", Network: "hoodi", Layer: "cl", Client: "Teku", ForkTime: hoodiGlamsterdam,
 			MinVersions: []string{"26.10.1"}, Released: "2026-10-15", URL: "https://github.com/Consensys-Incorporated/teku/releases/tag/26.10.1"},
 		{Fork: "Glamsterdam", Network: "hoodi", Layer: "cl", Client: "Nimbus", ForkTime: hoodiGlamsterdam,
