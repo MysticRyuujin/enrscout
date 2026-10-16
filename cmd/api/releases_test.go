@@ -43,7 +43,12 @@ func TestReleasesFileLoadsReloadsAndKeepsLastGood(t *testing.T) {
 		t.Fatal("no Besu entry")
 		return netconf.ClientRelease{}, 0
 	}
-	builtinEntries := len(netconf.BuiltinClientReleases().Releases)
+	var builtinEntries int
+	for _, r := range netconf.BuiltinClientReleases().Releases {
+		if r.Network == "sepolia" {
+			builtinEntries++
+		}
+	}
 
 	start := time.Unix(1_790_000_000, 0)
 	write(`{"updated":"2026-09-25","releases":[{"fork":"Glamsterdam","network":"sepolia","layer":"el","client":"Besu",
