@@ -109,6 +109,15 @@ Reviewed and deliberately not fixed; re-litigate only with new information.
 - **Two overlapping Status exchanges with one peer can store the older head.** `SetHead` keeps the
   last one to finish. Ordering guards were rejected: any time-window heuristic also hides a real head
   drop, such as a peer that restarts behind and reconnects at once, and the next Status corrects it.
+- **Inbound EL Status proves the key, not the endpoint.** An inbound RLPx handshake from IP Y can
+  promote a row whose endpoint came from elsewhere: an unsigned discv4 sighting (`pendingLegacy`, a
+  retained candidate, or the cached Status in `resolverPool.resolve`), or an ENR the key holder signed
+  for any IP. So a key holder can get a `status` row at an address it does not own, and a third party
+  can relay a wrong IP for a real legacy node until it resolves or is dialed. The impact is on the
+  explorer dataset; unsigned rows never reach DNS trees, which need a signed ENR. Binding unsigned
+  rows to the connection IP needs the check inside the nodeset lock, and binding signed rows drops
+  inbound identification for NAT and dual-stack nodes. Two scan-driven fixes were rejected for these
+  reasons.
 - **CORS preflight carries no `Allow-Headers` or `Max-Age`.** Only simple requests are made.
   `Vary: Origin` is unnecessary because `--cors-origin` is static and never reflected.
 - **The final publish quiesces every nodeset writer, and each new one must opt in.** `shutdown`
