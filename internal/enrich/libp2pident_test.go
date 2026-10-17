@@ -123,6 +123,43 @@ func TestInboundCLNodeRequiresAdvertisedAddressMatchingSource(t *testing.T) {
 	}
 }
 
+func TestCLDialGaterAppliesAddressPolicy(t *testing.T) {
+	cases := []struct {
+		addr           string
+		strict, devnet bool
+	}{
+		{"/ip4/8.8.8.8/tcp/9000", true, true},
+		{"/ip6/2001:4860:4860::8888/udp/9001/quic-v1", true, true},
+		{"/ip4/8.8.8.8/tcp/443/tls/ws", true, true},
+		{"/ip4/10.0.0.1/tcp/9000", false, true},
+		{"/ip4/127.0.0.1/tcp/9000", false, false},
+		{"/ip4/169.254.169.254/tcp/80/ws", false, false},
+		{"/ip4/8.8.8.8/tcp/443/tls/sni/metadata.internal/ws", false, false},
+	}
+	for _, allowPrivate := range []bool{false, true} {
+		f, err := NewCLFingerprinterWithLimits(time.Second, nil, allowPrivate, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		dialer, ok := f.host.Network().(interface {
+			CanDial(peer.ID, ma.Multiaddr) bool
+		})
+		if !ok {
+			t.Fatal("libp2p network does not expose CanDial")
+		}
+		for _, c := range cases {
+			want := c.strict
+			if allowPrivate {
+				want = c.devnet
+			}
+			if got := dialer.CanDial(peer.ID("target"), ma.StringCast(c.addr)); got != want {
+				t.Errorf("CanDial(%s, allowPrivate=%v) = %v, want %v", c.addr, allowPrivate, got, want)
+			}
+		}
+	}
+}
+
 func TestCLStatusExchangeClassifiesForkDigest(t *testing.T) {
 	testIP := privateTestIPv4(t)
 	listen := "/ip4/" + testIP.String() + "/tcp/0"
@@ -279,7 +316,7 @@ func serveCLStatus(server *CLFingerprinter, entry []byte) {
 // Close must not return while an inbound identification handler is still running: the handler
 // writes a fingerprint into the caller's nodeset, and the crawler closes before its final publish.
 func TestCLFingerprinterCloseWaitsForInboundHandlers(t *testing.T) {
-	listen := "/ip4/127.0.0.1/tcp/0"
+	listen := "/ip4/" + privateTestIPv4(t).String() + "/tcp/0"
 	server, err := NewCLFingerprinterWithLimits(2*time.Second, nil, true, 32, listen)
 	if err != nil {
 		t.Fatal(err)

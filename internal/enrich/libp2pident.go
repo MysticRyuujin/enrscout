@@ -22,6 +22,7 @@ import (
 	"github.com/golang/snappy"
 	"github.com/libp2p/go-libp2p"
 	mplex "github.com/libp2p/go-libp2p-mplex"
+	"github.com/libp2p/go-libp2p/core/control"
 	libp2pcrypto "github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/event"
 	"github.com/libp2p/go-libp2p/core/host"
@@ -88,6 +89,7 @@ func NewCLFingerprinterWithLimits(timeout time.Duration, key *ecdsa.PrivateKey, 
 		libp2p.Muxer(yamux.ID, yamux.DefaultTransport),
 		// Ethereum consensus clients must support mplex (kept despite general libp2p deprecation).
 		libp2p.Muxer(mplex.ID, mplex.DefaultTransport),
+		libp2p.ConnectionGater(dialPolicyGater{allowPrivate}),
 	}
 	if len(listenAddrs) > 0 {
 		opts = append(opts, libp2p.ListenAddrStrings(listenAddrs...))
@@ -112,6 +114,30 @@ func NewCLFingerprinterWithLimits(timeout time.Duration, key *ecdsa.PrivateKey, 
 		return nil, err
 	}
 	return &CLFingerprinter{host: h, timeout: timeout, allowPrivate: allowPrivate, inboundSem: make(chan struct{}, inboundLimit)}, nil
+}
+
+// Libp2p also dials peer addresses learned through identify, which bypass libp2pAddrsWithPolicy.
+type dialPolicyGater struct{ allowPrivate bool }
+
+func (dialPolicyGater) InterceptPeerDial(peer.ID) bool { return true }
+
+func (g dialPolicyGater) InterceptAddrDial(_ peer.ID, addr ma.Multiaddr) bool {
+	// The websocket transport sends an sni host, not the checked IP, to a proxy from the environment.
+	if _, err := addr.ValueForProtocol(ma.P_SNI); err == nil {
+		return false
+	}
+	ip, _ := manet.ToIP(addr)
+	return netpolicy.Usable(ip, g.allowPrivate)
+}
+
+func (dialPolicyGater) InterceptAccept(libp2pnetwork.ConnMultiaddrs) bool { return true }
+
+func (dialPolicyGater) InterceptSecured(libp2pnetwork.Direction, peer.ID, libp2pnetwork.ConnMultiaddrs) bool {
+	return true
+}
+
+func (dialPolicyGater) InterceptUpgraded(libp2pnetwork.Conn) (bool, control.DisconnectReason) {
+	return true, 0
 }
 
 func (f *CLFingerprinter) PeerID() string { return f.host.ID().String() }
