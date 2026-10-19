@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -395,5 +396,28 @@ func TestReadAcceptsAManifestWithLegacyPopulationHistory(t *testing.T) {
 	}
 	if got.Networks["mainnet"].NodeCount != 1 {
 		t.Fatalf("network count = %d, want 1", got.Networks["mainnet"].NodeCount)
+	}
+}
+
+type casConflictStore struct{ store.ConditionalStore }
+
+func (casConflictStore) PutIfVersion(context.Context, string, string, []byte, string) (string, error) {
+	return "", fmt.Errorf("%w: read-back differs from written object", store.ErrCASConflict)
+}
+
+func TestWriteConditionalReportsStoreConflictCause(t *testing.T) {
+	fs, err := store.NewFS(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	l := Layout{}
+	prev := validManifest(time.Unix(100, 0).UTC())
+	if err := WriteConditional(ctx, fs, l, nil, prev); err != nil {
+		t.Fatal(err)
+	}
+	err = WriteConditional(ctx, casConflictStore{fs.(store.ConditionalStore)}, l, prev, validManifest(time.Unix(101, 0).UTC()))
+	if !errors.Is(err, ErrManifestConflict) || !strings.Contains(err.Error(), "read-back differs") {
+		t.Fatalf("WriteConditional error = %v, want ErrManifestConflict naming the store cause", err)
 	}
 }

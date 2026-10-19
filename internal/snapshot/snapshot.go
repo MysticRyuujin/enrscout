@@ -49,6 +49,9 @@ const genTimeFormat = "2006-01-02T15:04:05.000000000Z"
 
 var ErrNoManifest = errors.New("no snapshot manifest")
 var ErrManifestConflict = errors.New("snapshot manifest changed since restore")
+
+// ErrManifestCompetitor wraps an ErrManifestConflict whose read decoded another writer's manifest.
+var ErrManifestCompetitor = errors.New("another writer advanced the manifest")
 var ErrUnsupportedSchemaVersion = errors.New("unsupported snapshot schema version")
 
 type Layout struct {
@@ -328,7 +331,7 @@ func WriteConditional(ctx context.Context, st store.Store, l Layout, previous, n
 	data, version, err := conditional.GetVersion(ctx, l.ManifestKey())
 	if errors.Is(err, store.ErrNotFound) {
 		if previous != nil {
-			return ErrManifestConflict
+			return fmt.Errorf("%w: manifest missing", ErrManifestConflict)
 		}
 	} else if err != nil {
 		return err
@@ -342,7 +345,7 @@ func WriteConditional(ctx context.Context, st store.Store, l Layout, previous, n
 		// it requires next to keep manifest generations monotonic.
 		ownWrite := current.Run.RunID == next.Run.RunID && next.GeneratedAt.After(current.GeneratedAt)
 		if !ownWrite && (previous == nil || current.CrawlerID != previous.CrawlerID || !current.GeneratedAt.Equal(previous.GeneratedAt)) {
-			return fmt.Errorf("%w: current crawler=%q generation=%s", ErrManifestConflict, current.CrawlerID, current.GeneratedAt.Format(time.RFC3339Nano))
+			return fmt.Errorf("%w: %w: current crawler=%q generation=%s", ErrManifestConflict, ErrManifestCompetitor, current.CrawlerID, current.GeneratedAt.Format(time.RFC3339Nano))
 		}
 		expectedVersion = version
 	}
@@ -353,7 +356,7 @@ func WriteConditional(ctx context.Context, st store.Store, l Layout, previous, n
 	}
 	if _, err := conditional.PutIfVersion(ctx, l.ManifestKey(), expectedVersion, encoded, "application/json"); err != nil {
 		if errors.Is(err, store.ErrCASConflict) {
-			return ErrManifestConflict
+			return fmt.Errorf("%w: %v", ErrManifestConflict, err)
 		}
 		return err
 	}

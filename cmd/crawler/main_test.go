@@ -923,3 +923,270 @@ func TestPublishIntervalShortensNearActivation(t *testing.T) {
 		}
 	}
 }
+
+type casFaultStore struct {
+	store.ConditionalStore
+	putIfVersion  func(ctx context.Context, key, version string, data []byte, contentType string) (string, error)
+	staleManifest []byte
+}
+
+func (s *casFaultStore) PutIfVersion(ctx context.Context, key, version string, data []byte, contentType string) (string, error) {
+	if fault := s.putIfVersion; fault != nil {
+		s.putIfVersion = nil
+		return fault(ctx, key, version, data, contentType)
+	}
+	return s.ConditionalStore.PutIfVersion(ctx, key, version, data, contentType)
+}
+
+func (s *casFaultStore) Get(ctx context.Context, key string) ([]byte, error) {
+	if s.staleManifest != nil && key == (snapshot.Layout{}).ManifestKey() {
+		return s.staleManifest, nil
+	}
+	return s.ConditionalStore.Get(ctx, key)
+}
+
+func newConflictTestPublisher(t *testing.T) (*publisher, *casFaultStore) {
+	t.Helper()
+	fs, err := store.NewFS(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := &casFaultStore{ConditionalStore: fs.(store.ConditionalStore)}
+	started := time.Now().UTC().Add(-time.Hour)
+	p := &publisher{
+		store: st, layout: snapshot.Layout{}, set: nodeset.NewWithLimit(0),
+		distinct: distinct.New("test", distinct.DefaultPrecision), crawlerID: "crawler", networks: []string{"mainnet"},
+		distinctKey: "state/distinct.json.gz",
+		run: &snapshot.RunMetadata{
+			RunID: "run", SourceRevision: "revision", SourceURL: "https://example.com/source",
+			ConfigSHA256: hex.EncodeToString(make([]byte, sha256.Size)), CrawlerStartedAt: started,
+			MethodologyStartedAt: started, MethodologyVersion: snapshot.MethodologyVersion, MethodologyID: "method",
+		},
+	}
+	if err := p.Publish(context.Background()); err != nil || p.prev == nil {
+		t.Fatalf("first publish: err=%v prev=%v, want a committed manifest", err, p.prev)
+	}
+	return p, st
+}
+
+func casConflict(context.Context, string, string, []byte, string) (string, error) {
+	return "", fmt.Errorf("%w: precheck: object missing", store.ErrCASConflict)
+}
+
+func storedManifest(t *testing.T, st *casFaultStore) *snapshot.Manifest {
+	t.Helper()
+	m, err := snapshot.Read(context.Background(), st.ConditionalStore, snapshot.Layout{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
+func TestPublishSurvivesConflictThatLeftManifestUnchanged(t *testing.T) {
+	ctx := context.Background()
+	p, st := newConflictTestPublisher(t)
+	prev := p.prev
+	st.putIfVersion = casConflict
+	if err := p.Publish(ctx); err != nil {
+		t.Fatalf("publish over a false conflict = %v, want nil", err)
+	}
+	if p.prev != prev {
+		t.Fatal("prev advanced past an uncommitted manifest")
+	}
+	if err := p.Publish(ctx); err != nil {
+		t.Fatalf("retry publish: %v", err)
+	}
+	if !p.prev.GeneratedAt.After(prev.GeneratedAt) || !storedManifest(t, st).GeneratedAt.Equal(p.prev.GeneratedAt) {
+		t.Fatal("retry publish did not commit")
+	}
+}
+
+func TestPublishStopsOnCompetingWriter(t *testing.T) {
+	ctx := context.Background()
+	p, st := newConflictTestPublisher(t)
+	competitor := *p.prev
+	competitor.CrawlerID = "crawler-2"
+	competitor.Run.RunID = "run-2"
+	competitor.GeneratedAt = p.prev.GeneratedAt.Add(time.Second)
+	ns := p.prev.Networks["mainnet"]
+	ns.GenerationKey = p.layout.GenerationKey("mainnet", competitor.GeneratedAt)
+	competitor.Networks = map[string]snapshot.NetworkSnapshot{"mainnet": ns}
+	if err := snapshot.Write(ctx, st.ConditionalStore, snapshot.Layout{}, &competitor); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Publish(ctx); !errors.Is(err, snapshot.ErrManifestConflict) {
+		t.Fatalf("publish behind a competing writer = %v, want ErrManifestConflict", err)
+	}
+}
+
+func TestPublishAdoptsCommitReportedAsConflict(t *testing.T) {
+	p, st := newConflictTestPublisher(t)
+	st.putIfVersion = func(ctx context.Context, key, version string, data []byte, contentType string) (string, error) {
+		if _, err := st.ConditionalStore.PutIfVersion(ctx, key, version, data, contentType); err != nil {
+			return "", err
+		}
+		return casConflict(ctx, key, version, data, contentType)
+	}
+	if err := p.Publish(context.Background()); err != nil {
+		t.Fatalf("publish = %v, want nil", err)
+	}
+	if !storedManifest(t, st).GeneratedAt.Equal(p.prev.GeneratedAt) {
+		t.Fatal("prev is not the landed manifest")
+	}
+}
+
+func TestPublishKeepsUploadsWhenStaleReadHidesCommit(t *testing.T) {
+	ctx := context.Background()
+	p, st := newConflictTestPublisher(t)
+	prev := p.prev
+	stale, err := st.ConditionalStore.Get(ctx, snapshot.Layout{}.ManifestKey())
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.putIfVersion = func(ctx context.Context, key, version string, data []byte, contentType string) (string, error) {
+		if _, err := st.ConditionalStore.PutIfVersion(ctx, key, version, data, contentType); err != nil {
+			return "", err
+		}
+		st.staleManifest = stale
+		return casConflict(ctx, key, version, data, contentType)
+	}
+	if err := p.Publish(ctx); err != nil {
+		t.Fatalf("publish = %v, want nil", err)
+	}
+	landed := storedManifest(t, st)
+	if landed.GeneratedAt.Equal(prev.GeneratedAt) {
+		t.Fatal("fault did not commit the manifest")
+	}
+	for network, ns := range landed.Networks {
+		if _, err := st.ConditionalStore.Get(ctx, ns.GenerationKey); err != nil {
+			t.Fatalf("%s generation of the landed manifest was deleted: %v", network, err)
+		}
+	}
+	st.staleManifest = nil
+	if err := p.Publish(ctx); err != nil {
+		t.Fatalf("publish after the stale read cleared: %v", err)
+	}
+	if !p.prev.GeneratedAt.After(landed.GeneratedAt) {
+		t.Fatal("next publish did not advance past the landed manifest")
+	}
+}
+
+func TestForcedPublishConflictKeepsForcePending(t *testing.T) {
+	p, st := newConflictTestPublisher(t)
+	big := *p.prev
+	big.Networks = map[string]snapshot.NetworkSnapshot{"mainnet": {NodeCount: 20000, CurrentNodeCount: 18000}}
+	p.prev = &big
+	p.cfg = publishConfig{forcePublish: true, maxCollapsePct: 50}
+	st.putIfVersion = casConflict
+	if err := p.Publish(context.Background()); err != nil {
+		t.Fatalf("forced publish over a false conflict = %v, want nil", err)
+	}
+	if !p.forcePending {
+		t.Fatal("ambiguous forced publish did not set forcePending")
+	}
+	if admitted, _ := p.admit(guardManifest(100, 90)); admitted {
+		t.Fatal("a second forced shrink was admitted while the first is unsettled")
+	}
+}
+
+func TestPublishStopsOnSameCrawlerFromAnotherRun(t *testing.T) {
+	ctx := context.Background()
+	p, st := newConflictTestPublisher(t)
+	overlap := *p.prev
+	overlap.Run.RunID = "run-2"
+	overlap.GeneratedAt = p.prev.GeneratedAt.Add(time.Second)
+	ns := p.prev.Networks["mainnet"]
+	ns.GenerationKey = p.layout.GenerationKey("mainnet", overlap.GeneratedAt)
+	overlap.Networks = map[string]snapshot.NetworkSnapshot{"mainnet": ns}
+	if err := snapshot.Write(ctx, st.ConditionalStore, snapshot.Layout{}, &overlap); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Publish(ctx); !errors.Is(err, snapshot.ErrManifestConflict) {
+		t.Fatalf("publish behind another run of this crawler = %v, want ErrManifestConflict", err)
+	}
+}
+
+func TestPublishAdoptsEarlierCommitHiddenByStaleReads(t *testing.T) {
+	ctx := context.Background()
+	p, st := newConflictTestPublisher(t)
+	stale, err := st.ConditionalStore.Get(ctx, snapshot.Layout{}.ManifestKey())
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.putIfVersion = func(ctx context.Context, key, version string, data []byte, contentType string) (string, error) {
+		if _, err := st.ConditionalStore.PutIfVersion(ctx, key, version, data, contentType); err != nil {
+			return "", err
+		}
+		st.staleManifest = stale
+		return casConflict(ctx, key, version, data, contentType)
+	}
+	if err := p.Publish(ctx); err != nil {
+		t.Fatalf("first publish = %v, want nil", err)
+	}
+	landed := storedManifest(t, st)
+	st.putIfVersion = func(ctx context.Context, key, version string, data []byte, contentType string) (string, error) {
+		st.staleManifest = nil
+		return casConflict(ctx, key, version, data, contentType)
+	}
+	if err := p.Publish(ctx); err != nil {
+		t.Fatalf("second publish = %v, want nil", err)
+	}
+	if !p.prev.GeneratedAt.Equal(landed.GeneratedAt) {
+		t.Fatalf("prev = %s, want the hidden commit %s", p.prev.GeneratedAt, landed.GeneratedAt)
+	}
+	if err := p.Publish(ctx); err != nil || !storedManifest(t, st).GeneratedAt.Equal(p.prev.GeneratedAt) {
+		t.Fatalf("third publish = %v, want a commit", err)
+	}
+}
+
+func TestPublishStopsWhenStaleReadHidesCompetitor(t *testing.T) {
+	ctx := context.Background()
+	p, st := newConflictTestPublisher(t)
+	stale, err := st.ConditionalStore.Get(ctx, snapshot.Layout{}.ManifestKey())
+	if err != nil {
+		t.Fatal(err)
+	}
+	competitor := *p.prev
+	competitor.CrawlerID = "crawler-2"
+	competitor.Run.RunID = "run-2"
+	competitor.GeneratedAt = p.prev.GeneratedAt.Add(time.Second)
+	ns := p.prev.Networks["mainnet"]
+	ns.GenerationKey = p.layout.GenerationKey("mainnet", competitor.GeneratedAt)
+	competitor.Networks = map[string]snapshot.NetworkSnapshot{"mainnet": ns}
+	if err := snapshot.Write(ctx, st.ConditionalStore, snapshot.Layout{}, &competitor); err != nil {
+		t.Fatal(err)
+	}
+	st.staleManifest = stale
+	if err := p.Publish(ctx); !errors.Is(err, snapshot.ErrManifestConflict) {
+		t.Fatalf("publish after a seen competitor = %v, want ErrManifestConflict", err)
+	}
+}
+
+func TestAdoptedCommitConsumesForceOverride(t *testing.T) {
+	ctx := context.Background()
+	p, st := newConflictTestPublisher(t)
+	hidden := *p.prev
+	hidden.GeneratedAt = p.prev.GeneratedAt.Add(time.Microsecond)
+	ns := p.prev.Networks["mainnet"]
+	ns.GenerationKey = p.layout.GenerationKey("mainnet", hidden.GeneratedAt)
+	ns.NodeCount, ns.CurrentNodeCount = 20000, 18000
+	hidden.Networks = map[string]snapshot.NetworkSnapshot{"mainnet": ns}
+	if err := snapshot.Write(ctx, st.ConditionalStore, snapshot.Layout{}, &hidden); err != nil {
+		t.Fatal(err)
+	}
+	big := *p.prev
+	big.Networks = map[string]snapshot.NetworkSnapshot{"mainnet": {NodeCount: 20000, CurrentNodeCount: 18000}}
+	p.prev = &big
+	p.cfg = publishConfig{forcePublish: true, maxCollapsePct: 50}
+	st.putIfVersion = casConflict
+	if err := p.Publish(ctx); err != nil {
+		t.Fatalf("forced publish over an earlier own commit = %v, want nil", err)
+	}
+	if !p.prev.GeneratedAt.Equal(hidden.GeneratedAt) || !p.forceUsed || p.forcePending {
+		t.Fatalf("prev=%s forceUsed=%v forcePending=%v, want the adopted commit to settle the override",
+			p.prev.GeneratedAt, p.forceUsed, p.forcePending)
+	}
+	if admitted, _ := p.admit(guardManifest(100, 90)); admitted {
+		t.Fatal("force override was reusable after an adopted commit")
+	}
+}

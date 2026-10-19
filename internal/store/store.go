@@ -502,7 +502,7 @@ func (s *s3Store) GetVersion(ctx context.Context, key string) ([]byte, string, e
 	data, err := io.ReadAll(io.LimitReader(obj, MaxObjectBytes+1))
 	if err != nil {
 		if minio.ToErrorResponse(err).Code == minio.PreconditionFailed {
-			return nil, "", ErrCASConflict
+			return nil, "", fmt.Errorf("%w: object changed between stat and read", ErrCASConflict)
 		}
 		return nil, "", err
 	}
@@ -530,7 +530,7 @@ func (s *s3Store) PutIfVersion(ctx context.Context, key, expectedVersion string,
 	}
 	info, err := s.client.PutObject(ctx, s.bucket, key, bytes.NewReader(data), int64(len(data)), opts)
 	if err != nil && minio.ToErrorResponse(err).Code == minio.PreconditionFailed {
-		return "", ErrCASConflict
+		return "", fmt.Errorf("%w: precondition failed", ErrCASConflict)
 	}
 	if err != nil {
 		return "", err
@@ -542,12 +542,12 @@ func (s *s3Store) putIfVersionVerified(ctx context.Context, key, expectedVersion
 	_, currentVersion, err := s.GetVersion(ctx, key)
 	if errors.Is(err, ErrNotFound) {
 		if expectedVersion != "" {
-			return "", ErrCASConflict
+			return "", fmt.Errorf("%w: precheck: object missing", ErrCASConflict)
 		}
 	} else if err != nil {
 		return "", err
 	} else if expectedVersion == "" || currentVersion != expectedVersion {
-		return "", ErrCASConflict
+		return "", fmt.Errorf("%w: precheck: version %q, want %q", ErrCASConflict, currentVersion, expectedVersion)
 	}
 	if err := s.Put(ctx, key, data, contentType); err != nil {
 		return "", err
@@ -557,7 +557,7 @@ func (s *s3Store) putIfVersionVerified(ctx context.Context, key, expectedVersion
 		return "", err
 	}
 	if !bytes.Equal(written, data) {
-		return "", ErrCASConflict
+		return "", fmt.Errorf("%w: read-back differs from written object", ErrCASConflict)
 	}
 	return version, nil
 }
