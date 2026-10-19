@@ -44,7 +44,7 @@ type ClientReleaseTable struct {
 const sepoliaGlamsterdam = 1791294816
 
 var builtinClientReleases = ClientReleaseTable{
-	Updated: "2026-10-17",
+	Updated: "2026-10-19",
 	Releases: []ClientRelease{
 		{Fork: "Glamsterdam", Network: "sepolia", Layer: "el", Client: "Geth", ForkTime: sepoliaGlamsterdam,
 			MinVersions: []string{"1.17.6"}, Released: "2026-09-23", URL: "https://github.com/ethereum/go-ethereum/releases/tag/v1.17.6",
@@ -67,7 +67,7 @@ var builtinClientReleases = ClientReleaseTable{
 			MinVersions: []string{"0.4.2"}, Released: "2026-09-29", URL: "https://github.com/status-im/nimbus-eth1/releases/tag/v0.4.2",
 			Latest: "0.4.3", LatestURL: "https://github.com/status-im/nimbus-eth1/releases/tag/v0.4.3"},
 		{Fork: "Glamsterdam", Network: "sepolia", Layer: "cl", Client: "Lighthouse", ForkTime: sepoliaGlamsterdam,
-			Prerelease: "8.3.0-rc.0", Released: "2026-10-01", URL: "https://github.com/sigp/lighthouse/releases/tag/v8.3.0-rc.0"},
+			MinVersions: []string{"8.3.0"}, Released: "2026-10-19", URL: "https://github.com/sigp/lighthouse/releases/tag/v8.3.0"},
 		{Fork: "Glamsterdam", Network: "sepolia", Layer: "cl", Client: "Prysm", ForkTime: sepoliaGlamsterdam,
 			MinVersions: []string{"7.2.0"}, Released: "2026-09-28", URL: "https://github.com/OffchainLabs/prysm/releases/tag/v7.2.0",
 			Latest: "7.3.0", LatestURL: "https://github.com/OffchainLabs/prysm/releases/tag/v7.3.0"},
@@ -92,6 +92,8 @@ var builtinClientReleases = ClientReleaseTable{
 			MinVersions: []string{"26.10.0"}, Released: "2026-10-16", URL: "https://github.com/besu-eth/besu/releases/tag/26.10.0"},
 		{Fork: "Glamsterdam", Network: "hoodi", Layer: "el", Client: "Nimbus", ForkTime: hoodiGlamsterdam,
 			MinVersions: []string{"0.4.3"}, Released: "2026-10-17", URL: "https://github.com/status-im/nimbus-eth1/releases/tag/v0.4.3"},
+		{Fork: "Glamsterdam", Network: "hoodi", Layer: "cl", Client: "Lighthouse", ForkTime: hoodiGlamsterdam,
+			MinVersions: []string{"8.3.0"}, Released: "2026-10-19", URL: "https://github.com/sigp/lighthouse/releases/tag/v8.3.0"},
 		{Fork: "Glamsterdam", Network: "hoodi", Layer: "cl", Client: "Prysm", ForkTime: hoodiGlamsterdam,
 			MinVersions: []string{"7.3.0"}, Released: "2026-10-16", URL: "https://github.com/OffchainLabs/prysm/releases/tag/v7.3.0"},
 		{Fork: "Glamsterdam", Network: "hoodi", Layer: "cl", Client: "Teku", ForkTime: hoodiGlamsterdam,
@@ -100,6 +102,8 @@ var builtinClientReleases = ClientReleaseTable{
 			MinVersions: []string{"26.10.1"}, Released: "2026-10-16", URL: "https://github.com/status-im/nimbus-eth2/releases/tag/v26.10.1"},
 		{Fork: "Glamsterdam", Network: "hoodi", Layer: "cl", Client: "Lodestar", ForkTime: hoodiGlamsterdam,
 			MinVersions: []string{"1.50.0"}, Released: "2026-10-12", URL: "https://github.com/ChainSafe/lodestar/releases/tag/v1.50.0"},
+		{Fork: "Glamsterdam", Network: "hoodi", Layer: "cl", Client: "Grandine", ForkTime: hoodiGlamsterdam,
+			Prerelease: "3.0.0-rc.1", Released: "2026-10-19", URL: "https://github.com/grandinetech/grandine/releases/tag/3.0.0-rc.1"},
 	},
 }
 
