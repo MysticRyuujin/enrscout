@@ -87,17 +87,27 @@ func (p *publisher) Publish(ctx context.Context) error {
 		return nil
 	}
 	err := snapshot.WriteConditional(ctx, p.store, p.layout, p.prev, m)
-	if err != nil && !errors.Is(err, snapshot.ErrManifestConflict) && p.storedIsOwn(ctx, m) {
+	// One read decides both checks, so two inconsistent reads cannot hide a competing writer.
+	var stored *snapshot.Manifest
+	if err != nil {
+		stored, _ = snapshot.Read(ctx, p.store, p.layout)
+	}
+	if err != nil && storedIsOwn(stored, m) {
 		// The error was only on the response: the stored manifest is this very write.
 		slog.Warn("manifest write reported an error but the commit landed", "err", err)
 		err = nil
 	}
 	if err != nil {
 		mPublishFailures.Inc()
-		cleanupOrphanGenerations(ctx, p.store, p.layout, uploaded)
 		if errors.Is(err, snapshot.ErrManifestConflict) {
-			return err
+			if errors.Is(err, snapshot.ErrManifestCompetitor) || !p.recoverConflict(stored, m, forced, err) {
+				cleanupOrphanGenerations(ctx, p.store, p.layout, uploaded)
+				return err
+			}
+			// A stale read may hide this write, so leave the uploads to generation pruning.
+			return nil
 		}
+		cleanupOrphanGenerations(ctx, p.store, p.layout, uploaded)
 		if forced {
 			// Still ambiguous (the reconcile read failed too): the forced shrink may have
 			// committed. forcePending blocks further forced admits until a successful
@@ -120,9 +130,37 @@ func (p *publisher) Publish(ctx context.Context) error {
 
 // storedIsOwn reports whether the stored manifest is exactly the one this publish attempted,
 // i.e. an errored PutIfVersion actually committed before the response was lost.
-func (p *publisher) storedIsOwn(ctx context.Context, m *snapshot.Manifest) bool {
-	stored, err := snapshot.Read(ctx, p.store, p.layout)
-	return err == nil && stored.Run.RunID == m.Run.RunID && stored.GeneratedAt.Equal(m.GeneratedAt)
+func storedIsOwn(stored, m *snapshot.Manifest) bool {
+	return stored != nil && stored.Run.RunID == m.Run.RunID && stored.GeneratedAt.Equal(m.GeneratedAt)
+}
+
+// recoverConflict reports whether no other writer caused the conflict; a failed read keeps it fatal.
+func (p *publisher) recoverConflict(stored, m *snapshot.Manifest, forced bool, conflict error) bool {
+	if p.prev == nil || stored == nil {
+		return false
+	}
+	switch {
+	case stored.Run.RunID == m.Run.RunID && stored.GeneratedAt.After(p.prev.GeneratedAt):
+		slog.Warn("manifest conflict over an earlier commit from this run; adopting it", "err", conflict,
+			"generation", stored.GeneratedAt)
+		p.prev = stored
+		// The adopted write may be a forced one, so it settles the override like a commit does.
+		if forced || p.forcePending {
+			p.forceUsed = true
+			p.forcePending = false
+		}
+	case stored.CrawlerID == p.prev.CrawlerID && stored.GeneratedAt.Equal(p.prev.GeneratedAt):
+		if forced {
+			p.forcePending = true
+			slog.Warn("forced manifest write unsettled after a conflict; restart with --force-publish to retry it",
+				"err", conflict)
+		} else {
+			slog.Warn("manifest conflict but the stored manifest is unchanged; retrying next publish", "err", conflict)
+		}
+	default:
+		return false
+	}
+	return true
 }
 
 // Generation keys and manifests must stay monotonic across a wall-clock step backwards.
