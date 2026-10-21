@@ -259,5 +259,5 @@ export interface ForkReadiness {
   releases: ClientRelease[];
   layers: Partial<Record<"el" | "cl", LayerReadiness>>;
   history?: { points: ReadinessPoint[] | null };
-  schedule: ScheduledFork[];
+  schedule?: ScheduledFork[];
 }

@@ -289,10 +289,10 @@ function ForkSchedule({
   now,
 }: {
   network: string;
-  schedule: ScheduledFork[];
+  schedule?: ScheduledFork[];
   now: number;
 }) {
-  if (!schedule.length) return null;
+  if (!schedule?.length) return null;
   return (
     <div className="card">
       <h3>Fork schedule</h3>
