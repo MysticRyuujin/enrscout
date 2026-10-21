@@ -95,14 +95,14 @@ func TestReleasesFileLoadsReloadsAndKeepsLastGood(t *testing.T) {
 }
 
 func TestDecodeReleasesYAMLWithComments(t *testing.T) {
-	table, err := decodeReleases([]byte(`# Operator override: Besu shipped the Sepolia schedule.
+	table, err := decodeReleases([]byte(`# Operator override: Besu shipped the Hoodi schedule.
 updated: 2026-09-25
 releases:
   - fork: Glamsterdam
-    network: sepolia
+    network: hoodi
     layer: el
     client: Besu
-    fork_time: 1791294816 # Sepolia Glamsterdam, checked in the tagged genesis
+    fork_time: 1793036568 # Hoodi Glamsterdam, checked in the tagged genesis
     min_versions: ["26.9.0"]
     released: 2026-09-25
 `))
@@ -110,7 +110,7 @@ releases:
 		t.Fatal(err)
 	}
 	if table.Updated != "2026-09-25" || len(table.Releases) != 1 || table.Releases[0].Released != "2026-09-25" ||
-		table.Releases[0].ForkTime != 1791294816 || table.Releases[0].MinVersions[0] != "26.9.0" {
+		table.Releases[0].ForkTime != 1793036568 || table.Releases[0].MinVersions[0] != "26.9.0" {
 		t.Fatalf("decoded %+v", table)
 	}
 	if err := table.Validate(); err != nil {
@@ -119,7 +119,7 @@ releases:
 	for name, body := range map[string]string{
 		"misspelt key":    "updated: x\nrelease: []\n",
 		"second document": "updated: x\nreleases: []\n---\nupdated: y\n",
-		"response field":  "updated: x\nreleases:\n  - {fork: G, network: sepolia, layer: el, client: Geth, outdated: true}\n",
+		"response field":  "updated: x\nreleases:\n  - {fork: G, network: hoodi, layer: el, client: Geth, outdated: true}\n",
 	} {
 		if _, err := decodeReleases([]byte(body)); err == nil {
 			t.Errorf("%s accepted", name)

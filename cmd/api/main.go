@@ -166,6 +166,8 @@ func refreshLoop(ctx context.Context, eng *query.Engine, releases *releasesFile,
 	}
 }
 
+var forksNow = time.Now
+
 func routes(eng *query.Engine, cors string, maxAge time.Duration, networks []string) http.Handler {
 	mux := http.NewServeMux()
 	known := make(map[string]bool, len(networks))
@@ -384,7 +386,7 @@ func routes(eng *query.Engine, cors string, maxAge time.Duration, networks []str
 			writeClientErr(w, err)
 			return
 		}
-		at := time.Now()
+		at := forksNow()
 		era, nextTransition, err := forkEra(at, network)
 		if err != nil {
 			writeErr(w, err)

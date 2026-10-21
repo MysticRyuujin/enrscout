@@ -2,6 +2,7 @@ package query
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"math"
 	"strconv"
@@ -11,11 +12,12 @@ import (
 
 	"github.com/MysticRyuujin/enrscout/internal/clientname"
 	"github.com/MysticRyuujin/enrscout/internal/netconf"
+	"github.com/MysticRyuujin/enrscout/internal/netconf/netconftest"
 	"github.com/MysticRyuujin/enrscout/internal/snapshot"
 	"github.com/MysticRyuujin/enrscout/internal/store"
 )
 
-const sepoliaAmsterdam = 1791294816
+var forkTime = uint64(netconftest.Activation.Unix())
 
 type readinessRow struct {
 	id string
@@ -24,7 +26,7 @@ type readinessRow struct {
 
 func readinessCorpus(t *testing.T) []readinessRow {
 	t.Helper()
-	target, err := netconf.ForkTargetAt("sepolia", time.Unix(sepoliaAmsterdam-1, 0))
+	target, err := netconf.ForkTargetAt(netconftest.Network, netconftest.Activation.Add(-time.Second))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,14 +35,14 @@ func readinessCorpus(t *testing.T) []readinessRow {
 		rows = append(rows, readinessRow{id: fmt.Sprintf("r%03d", len(rows)), ev: ev})
 	}
 	for _, hash := range []string{target.EL.PreHash, target.EL.PostHash, "deadbeef"} {
-		for _, next := range []uint64{0, sepoliaAmsterdam, sepoliaAmsterdam + 1, 30_000_005, math.MaxUint64} {
+		for _, next := range []uint64{0, forkTime, forkTime + 1, 30_000_005, math.MaxUint64} {
 			add(netconf.ReadinessEvidence{Layer: "el", ForkHash: hash, ForkNext: next})
 		}
 	}
 	for _, hash := range []string{target.CL.PreDigest, target.CL.PostDigest, "12345678"} {
 		for _, enrDigest := range []string{"", hash, "12345678"} {
-			for _, version := range []string{"", "90000076", "90000077"} {
-				for _, epoch := range []uint64{0, 353024, 353025, math.MaxUint64} {
+			for _, version := range []string{"", target.CL.Version, "ffffffff"} {
+				for _, epoch := range []uint64{0, target.CL.Epoch, target.CL.Epoch + 1, math.MaxUint64} {
 					add(netconf.ReadinessEvidence{Layer: "cl", ForkHash: hash, ENRForkDigest: enrDigest, ENRNextForkVersion: version, ENRNextForkEpoch: epoch})
 				}
 			}
@@ -55,7 +57,7 @@ func TestReadinessMatchesSQLAndGo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	eng, err := New(st, []string{"sepolia"}, t.TempDir(), "snapshots")
+	eng, err := New(st, []string{netconftest.Network}, t.TempDir(), "snapshots")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +67,7 @@ func TestReadinessMatchesSQLAndGo(t *testing.T) {
 	var args []any
 	for _, r := range rows {
 		// Unsigned values bind as strings: database/sql rejects a uint64 with the high bit set.
-		tuples = append(tuples, "(?, 'sepolia', ?, ?, CAST(? AS UBIGINT), ?, ?, CAST(? AS UBIGINT))")
+		tuples = append(tuples, "(?, 'hoodi', ?, ?, CAST(? AS UBIGINT), ?, ?, CAST(? AS UBIGINT))")
 		args = append(args, r.id, r.ev.Layer, r.ev.ForkHash, strconv.FormatUint(r.ev.ForkNext, 10),
 			r.ev.ENRForkDigest, r.ev.ENRNextForkVersion, strconv.FormatUint(r.ev.ENRNextForkEpoch, 10))
 	}
@@ -76,25 +78,25 @@ func TestReadinessMatchesSQLAndGo(t *testing.T) {
 	// NULL columns reach Go as zero values, so they must classify the same as the empty evidence.
 	for _, layer := range []string{"el", "cl"} {
 		id := "null-" + layer
-		if _, err := eng.db.Exec("INSERT INTO nodes (id, network, layer, fork_hash, fork_next, enr_fork_digest, enr_next_fork_version, enr_next_fork_epoch) VALUES (?, 'sepolia', ?, NULL, NULL, NULL, NULL, NULL)", id, layer); err != nil {
+		if _, err := eng.db.Exec("INSERT INTO nodes (id, network, layer, fork_hash, fork_next, enr_fork_digest, enr_next_fork_version, enr_next_fork_epoch) VALUES (?, 'hoodi', ?, NULL, NULL, NULL, NULL, NULL)", id, layer); err != nil {
 			t.Fatal(err)
 		}
 		rows = append(rows, readinessRow{id: id, ev: netconf.ReadinessEvidence{Layer: layer}})
 	}
 
-	activation := time.Unix(sepoliaAmsterdam, 0)
+	activation := netconftest.Activation
 	for name, at := range map[string]time.Time{
 		"a day before": activation.Add(-24 * time.Hour), "a second before": activation.Add(-time.Second),
 		"at activation": activation, "late in grace": activation.Add(netconf.ForkTrackingGrace - time.Second),
 	} {
 		t.Run(name, func(t *testing.T) {
-			target, err := netconf.ForkTargetAt("sepolia", at)
+			target, err := netconf.ForkTargetAt(netconftest.Network, at)
 			if err != nil {
 				t.Fatal(err)
 			}
 			seen := map[string]netconf.Readiness{}
 			for _, want := range netconf.Readinesses {
-				clause, args, err := Filter{Network: "sepolia", Readiness: string(want), ForkAt: at}.where([]string{"sepolia"})
+				clause, args, err := Filter{Network: netconftest.Network, Readiness: string(want), ForkAt: at}.where([]string{netconftest.Network})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -126,7 +128,7 @@ func TestReadinessMatchesSQLAndGo(t *testing.T) {
 				t.Fatalf("corpus covers %v, want %v", covered, wantCovered)
 			}
 			for _, r := range rows {
-				if got, want := seen[r.id], netconf.ReadinessAt(target, "sepolia", r.ev, at); got != want {
+				if got, want := seen[r.id], netconf.ReadinessAt(target, netconftest.Network, r.ev, at); got != want {
 					t.Errorf("%s %+v: SQL %q, Go %q", r.id, r.ev, got, want)
 				}
 			}
@@ -140,7 +142,7 @@ func TestForkReadinessAggregate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	eng, err := New(st, []string{"sepolia"}, t.TempDir(), "snapshots")
+	eng, err := New(st, []string{netconftest.Network}, t.TempDir(), "snapshots")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,40 +153,45 @@ func TestForkReadinessAggregate(t *testing.T) {
 		}
 	}()
 	if err := netconf.SetClientReleases(netconf.ClientReleaseTable{Releases: []netconf.ClientRelease{
-		{Fork: "Glamsterdam", Network: "sepolia", Layer: "el", Client: "Geth", ForkTime: sepoliaAmsterdam, MinVersions: []string{"1.17.6"}},
+		{Fork: netconftest.Fork, Network: netconftest.Network, Layer: "el", Client: "Geth", ForkTime: forkTime, MinVersions: []string{"1.17.6"}},
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	at := time.Unix(sepoliaAmsterdam-86400, 0)
-	target, err := netconf.ForkTargetAt("sepolia", at)
+	at := netconftest.Before
+	target, err := netconf.ForkTargetAt(netconftest.Network, at)
 	if err != nil {
 		t.Fatal(err)
 	}
 	el, cl := target.EL.PreHash, target.CL.PreDigest
+	state, err := netconf.CLForkStateAt(netconftest.Network, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := hex.EncodeToString(state.CurrentVersion[:])
 	fresh := at.Unix()
 	_, err = eng.db.Exec(`INSERT INTO nodes (id, network, layer, fork_hash, fork_next, enr_fork_digest, enr_next_fork_version, enr_next_fork_epoch,
 		client, client_version, fp_status, fp_at) VALUES
-		('g1', 'sepolia', 'el', ?, ?, '', '', 0, 'Geth', 'v1.17.6-stable-3d84c6b2', 'ok', ?),
-		('g2', 'sepolia', 'el', ?, 0, '', '', 0, 'Geth', 'v1.17.5-stable-9621c6ad', 'ok', ?),
-		('g3', 'sepolia', 'el', ?, 0, '', '', 0, 'Geth', 'v1.17.5-stable-9621c6ad', 'ok', ?),
-		('n1', 'sepolia', 'el', ?, ?, '', '', 0, 'Nethermind', 'v2.0.0+bec830cd-hp', 'ok', ?),
-		('u1', 'sepolia', 'el', ?, 0, '', '', 0, 'Geth', 'v1.17.6', '', 0),
-		('l1', 'sepolia', 'cl', ?, 0, ?, '90000075', CAST('18446744073709551615' AS UBIGINT), 'Lighthouse', 'v8.2.2', 'ok', ?),
-		('p1', 'sepolia', 'cl', ?, 0, '', '', 0, 'Prysm', 'v7.1.8', 'ok', ?),
-		('s1', 'sepolia', 'el', 'deadbeef', 0, '', '', 0, 'Geth', 'v1.16.0', 'ok', ?),
-		('o1', 'sepolia', 'el', ?, ?, '', '', 0, 'Silkworm', 'v0.1.0', 'ok', ?),
-		('e1', 'sepolia', 'el', ?, ?, '', '', 0, 'enrscout', '', 'ok', ?)`,
-		el, sepoliaAmsterdam, fresh, el, fresh, el, fresh, el, sepoliaAmsterdam, fresh, el,
-		cl, cl, fresh, cl, fresh, fresh, el, sepoliaAmsterdam, fresh, el, sepoliaAmsterdam, fresh)
+		('g1', 'hoodi', 'el', ?, ?, '', '', 0, 'Geth', 'v1.17.6-stable-3d84c6b2', 'ok', ?),
+		('g2', 'hoodi', 'el', ?, 0, '', '', 0, 'Geth', 'v1.17.5-stable-9621c6ad', 'ok', ?),
+		('g3', 'hoodi', 'el', ?, 0, '', '', 0, 'Geth', 'v1.17.5-stable-9621c6ad', 'ok', ?),
+		('n1', 'hoodi', 'el', ?, ?, '', '', 0, 'Nethermind', 'v2.0.0+bec830cd-hp', 'ok', ?),
+		('u1', 'hoodi', 'el', ?, 0, '', '', 0, 'Geth', 'v1.17.6', '', 0),
+		('l1', 'hoodi', 'cl', ?, 0, ?, ?, CAST('18446744073709551615' AS UBIGINT), 'Lighthouse', 'v8.2.2', 'ok', ?),
+		('p1', 'hoodi', 'cl', ?, 0, '', '', 0, 'Prysm', 'v7.1.8', 'ok', ?),
+		('s1', 'hoodi', 'el', 'deadbeef', 0, '', '', 0, 'Geth', 'v1.16.0', 'ok', ?),
+		('o1', 'hoodi', 'el', ?, ?, '', '', 0, 'Silkworm', 'v0.1.0', 'ok', ?),
+		('e1', 'hoodi', 'el', ?, ?, '', '', 0, 'enrscout', '', 'ok', ?)`,
+		el, forkTime, fresh, el, fresh, el, fresh, el, forkTime, fresh, el,
+		cl, cl, current, fresh, cl, fresh, fresh, el, forkTime, fresh, el, forkTime, fresh)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	r, err := eng.ForkReadinessAt(ctx, "sepolia", at)
+	r, err := eng.ForkReadinessAt(ctx, netconftest.Network, at)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Phase != netconf.PhaseScheduled || r.Fork.Name != "Glamsterdam" || len(r.Releases) == 0 {
+	if r.Phase != netconf.PhaseScheduled || r.Fork.Name != netconftest.Fork || len(r.Releases) == 0 {
 		t.Fatalf("header = phase %q fork %q releases %d", r.Phase, r.Fork.Name, len(r.Releases))
 	}
 	elr := r.Layers["el"]
@@ -221,11 +228,11 @@ func TestForkReadinessAggregate(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Readiness spans forks, so the default current-fork filter must not hide its stale rows.
-	stale, err := eng.Nodes(ctx, Filter{Network: "sepolia", Readiness: "stale", ForkAt: at})
+	stale, err := eng.Nodes(ctx, Filter{Network: netconftest.Network, Readiness: "stale", ForkAt: at})
 	if err != nil || stale.Total != 1 || stale.Nodes[0].ID != "s1" {
 		t.Fatalf("readiness=stale = %+v, %v; want s1", stale, err)
 	}
-	ready, err := eng.Nodes(ctx, Filter{Network: "sepolia", Readiness: "ready", ForkAt: at})
+	ready, err := eng.Nodes(ctx, Filter{Network: netconftest.Network, Readiness: "ready", ForkAt: at})
 	if err != nil || ready.Total != 3 {
 		t.Fatalf("readiness=ready = %+v, %v; want g1, n1, o1", ready, err)
 	}
@@ -235,7 +242,7 @@ func TestForkReadinessAggregate(t *testing.T) {
 		}
 	}
 
-	none, err := eng.ForkReadinessAt(ctx, "sepolia", time.Unix(sepoliaAmsterdam, 0).Add(netconf.ForkTrackingGrace+time.Hour))
+	none, err := eng.ForkReadinessAt(ctx, netconftest.Network, netconftest.Activation.Add(netconf.ForkTrackingGrace+time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,19 +257,19 @@ func TestReadinessHistoryDownsamplesKeepingEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	eng, err := New(st, []string{"sepolia"}, t.TempDir(), "snapshots")
+	eng, err := New(st, []string{netconftest.Network}, t.TempDir(), "snapshots")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer eng.Close()
-	target, err := netconf.ForkTargetAt("sepolia", time.Unix(sepoliaAmsterdam-86400, 0))
+	target, err := netconf.ForkTargetAt(netconftest.Network, netconftest.Before)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if h, err := eng.ReadinessHistoryFor(ctx, "sepolia", target); err != nil || h != nil {
+	if h, err := eng.ReadinessHistoryFor(ctx, netconftest.Network, target); err != nil || h != nil {
 		t.Fatalf("missing history = %+v, %v; want nil, nil", h, err)
 	}
-	h := &snapshot.ReadinessHistory{Version: snapshot.ReadinessHistoryVersion, Network: "sepolia", Fork: "Glamsterdam",
+	h := &snapshot.ReadinessHistory{Version: snapshot.ReadinessHistoryVersion, Network: netconftest.Network, Fork: netconftest.Fork,
 		ELTime: target.EL.Time, CLEpoch: target.CL.Epoch}
 	for i := range 2881 {
 		h.Points = append(h.Points, snapshot.ReadinessPoint{At: int64(1_790_000_000 + i*900)})
@@ -271,14 +278,14 @@ func TestReadinessHistoryDownsamplesKeepingEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	key, err := snapshot.Layout{Prefix: "snapshots"}.ReadinessHistoryKey("sepolia", "Glamsterdam")
+	key, err := snapshot.Layout{Prefix: "snapshots"}.ReadinessHistoryKey(netconftest.Network, netconftest.Fork)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := st.Put(ctx, key, data, "application/json"); err != nil {
 		t.Fatal(err)
 	}
-	got, err := eng.ReadinessHistoryFor(ctx, "sepolia", target)
+	got, err := eng.ReadinessHistoryFor(ctx, netconftest.Network, target)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,7 +296,7 @@ func TestReadinessHistoryDownsamplesKeepingEndpoints(t *testing.T) {
 }
 
 func TestThinHistoryKeepsTheActivationWindow(t *testing.T) {
-	activation := time.Unix(sepoliaAmsterdam, 0)
+	activation := netconftest.Activation
 	start := activation.Add(-20 * 24 * time.Hour)
 	var points []snapshot.ReadinessPoint
 	for at := start; at.Before(activation.Add(10 * 24 * time.Hour)); {
@@ -320,30 +327,30 @@ func TestReadinessHistoryFromAnotherScheduleIsWithheld(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	eng, err := New(st, []string{"sepolia"}, t.TempDir(), "snapshots")
+	eng, err := New(st, []string{netconftest.Network}, t.TempDir(), "snapshots")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer eng.Close()
-	target, err := netconf.ForkTargetAt("sepolia", time.Unix(sepoliaAmsterdam-86400, 0))
+	target, err := netconf.ForkTargetAt(netconftest.Network, netconftest.Before)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Recorded by a crawler that still had the fork an hour earlier.
-	h := &snapshot.ReadinessHistory{Version: snapshot.ReadinessHistoryVersion, Network: "sepolia", Fork: target.Name,
+	h := &snapshot.ReadinessHistory{Version: snapshot.ReadinessHistoryVersion, Network: netconftest.Network, Fork: target.Name,
 		ELTime: target.EL.Time - 3600, CLEpoch: target.CL.Epoch, Points: []snapshot.ReadinessPoint{{At: 1}}}
 	data, err := h.Encode()
 	if err != nil {
 		t.Fatal(err)
 	}
-	key, err := snapshot.Layout{Prefix: "snapshots"}.ReadinessHistoryKey("sepolia", target.Name)
+	key, err := snapshot.Layout{Prefix: "snapshots"}.ReadinessHistoryKey(netconftest.Network, target.Name)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := st.Put(ctx, key, data, "application/json"); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := eng.ReadinessHistoryFor(ctx, "sepolia", target); err != nil || got != nil {
+	if got, err := eng.ReadinessHistoryFor(ctx, netconftest.Network, target); err != nil || got != nil {
 		t.Fatalf("history from the old schedule = %+v, %v; want none", got, err)
 	}
 }
@@ -355,18 +362,18 @@ func TestChartFingerprintMatchesSQLAndGo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	eng, err := New(st, []string{"sepolia"}, t.TempDir(), "snapshots")
+	eng, err := New(st, []string{netconftest.Network}, t.TempDir(), "snapshots")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer eng.Close()
-	at := time.Unix(sepoliaAmsterdam, 0)
+	at := netconftest.Activation
 	cutoff := at.Add(-clientname.ChartMaxFingerprintAge).Unix()
 	want := map[string]bool{}
 	for i, status := range []string{"ok", "stale", "failed", "pending", ""} {
 		for j, fpAt := range []int64{0, cutoff - 1, cutoff, at.Unix()} {
 			id := fmt.Sprintf("r%d-%d", i, j)
-			if _, err := eng.db.Exec("INSERT INTO nodes (id, network, layer, fp_status, fp_at) VALUES (?, 'sepolia', 'el', NULLIF(?, ''), ?)", id, status, fpAt); err != nil {
+			if _, err := eng.db.Exec("INSERT INTO nodes (id, network, layer, fp_status, fp_at) VALUES (?, 'hoodi', 'el', NULLIF(?, ''), ?)", id, status, fpAt); err != nil {
 				t.Fatal(err)
 			}
 			want[id] = clientname.Charted(status, fpAt, at)

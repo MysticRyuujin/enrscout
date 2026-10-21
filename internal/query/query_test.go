@@ -763,7 +763,7 @@ func TestForkConditionFailureIsScoped(t *testing.T) {
 		t.Errorf("map points scoped to healthy mainnet failed: %v", err)
 	}
 	// An unserved network matched nothing before; it must not start erroring.
-	if res, err := eng.Nodes(ctx, Filter{Network: "sepolia", ForkStatus: "current", Limit: 10}); err != nil || res.Total != 0 {
+	if res, err := eng.Nodes(ctx, Filter{Network: "hoodi", ForkStatus: "current", Limit: 10}); err != nil || res.Total != 0 {
 		t.Errorf("unserved network = %+v, %v; want an empty result and no error", res, err)
 	}
 }

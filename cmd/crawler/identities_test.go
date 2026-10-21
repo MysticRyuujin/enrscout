@@ -3,7 +3,7 @@ package main
 import "testing"
 
 func TestIdentitySpecs(t *testing.T) {
-	specs, err := identitySpecs([]string{"mainnet", "hoodi", "sepolia"}, 30303, 1, 1, true)
+	specs, err := identitySpecs([]string{"mainnet", "hoodi"}, 30303, 1, 1, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -12,8 +12,6 @@ func TestIdentitySpecs(t *testing.T) {
 		{Network: "mainnet", Layer: layerCL, Walker: true, DiscoveryPort: 30304, TCPPort: 30305, QUICPort: 30305},
 		{Network: "hoodi", Layer: layerEL, Walker: true, DiscoveryPort: 30306, TCPPort: 30306},
 		{Network: "hoodi", Layer: layerCL, Walker: true, DiscoveryPort: 30307, TCPPort: 30308, QUICPort: 30308},
-		{Network: "sepolia", Layer: layerEL, Walker: true, DiscoveryPort: 30309, TCPPort: 30309},
-		{Network: "sepolia", Layer: layerCL, Walker: true, DiscoveryPort: 30310, TCPPort: 30311, QUICPort: 30311},
 	}
 	if len(specs) != len(want) {
 		t.Fatalf("got %d specs, want %d", len(specs), len(want))

@@ -8,12 +8,13 @@ import (
 	"time"
 
 	"github.com/MysticRyuujin/enrscout/internal/netconf"
+	"github.com/MysticRyuujin/enrscout/internal/netconf/netconftest"
 	"github.com/MysticRyuujin/enrscout/internal/nodeset"
 	"github.com/MysticRyuujin/enrscout/internal/snapshot"
 	"github.com/MysticRyuujin/enrscout/internal/store"
 )
 
-const sepoliaAmsterdam = 1791294816
+var forkTime = uint64(netconftest.Activation.Unix())
 
 func TestRecordReadinessAppendsAcrossRestartsAndKeepsUnreadable(t *testing.T) {
 	ctx := context.Background()
@@ -22,22 +23,22 @@ func TestRecordReadinessAppendsAcrossRestartsAndKeepsUnreadable(t *testing.T) {
 		t.Fatal(err)
 	}
 	layout := snapshot.Layout{}
-	at := time.Unix(sepoliaAmsterdam-86400, 0)
-	nw, err := netconf.Get("sepolia")
+	at := netconftest.Before
+	nw, err := netconf.Get(netconftest.Network)
 	if err != nil {
 		t.Fatal(err)
 	}
 	hash := nw.CurrentForkIDAt(at).Hash
-	rows := map[string][]nodeset.Row{"sepolia": {
-		{ID: "a", Layer: "el", ForkHash: hex.EncodeToString(hash[:]), ForkNext: sepoliaAmsterdam, Client: "Geth", FPStatus: "ok", FPAt: at.Unix()},
+	rows := map[string][]nodeset.Row{netconftest.Network: {
+		{ID: "a", Layer: "el", ForkHash: hex.EncodeToString(hash[:]), ForkNext: forkTime, Client: "Geth", FPStatus: "ok", FPAt: at.Unix()},
 		{ID: "b", Layer: "el", ForkHash: hex.EncodeToString(hash[:]), Client: "Geth", FPStatus: "ok", FPAt: at.Unix()},
 		{ID: "c", Layer: "el", ForkHash: hex.EncodeToString(hash[:])},
-		{ID: "d", Layer: "el", ForkHash: hex.EncodeToString(hash[:]), ForkNext: sepoliaAmsterdam, Client: "enrscout", FPStatus: "ok", FPAt: at.Unix()},
-		{ID: "e", Layer: "el", ForkHash: hex.EncodeToString(hash[:]), ForkNext: sepoliaAmsterdam, Client: "Besu", FPStatus: "ok", FPAt: at.Add(-8 * 24 * time.Hour).Unix()},
+		{ID: "d", Layer: "el", ForkHash: hex.EncodeToString(hash[:]), ForkNext: forkTime, Client: "enrscout", FPStatus: "ok", FPAt: at.Unix()},
+		{ID: "e", Layer: "el", ForkHash: hex.EncodeToString(hash[:]), ForkNext: forkTime, Client: "Besu", FPStatus: "ok", FPAt: at.Add(-8 * 24 * time.Hour).Unix()},
 		{ID: "f", Layer: "el", ForkHash: hex.EncodeToString(hash[:]), Client: "op-geth", FPStatus: "ok", FPAt: at.Unix()},
 		{ID: "g", Layer: "el", ForkHash: "deadbeef", Client: "Geth", FPStatus: "ok", FPAt: at.Unix()},
 	}}
-	key, err := layout.ReadinessHistoryKey("sepolia", "Glamsterdam")
+	key, err := layout.ReadinessHistoryKey(netconftest.Network, netconftest.Fork)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,11 +55,11 @@ func TestRecordReadinessAppendsAcrossRestartsAndKeepsUnreadable(t *testing.T) {
 		return h
 	}
 
-	first := &publisher{store: st, layout: layout, networks: []string{"sepolia"}}
+	first := &publisher{store: st, layout: layout, networks: []string{netconftest.Network}}
 	first.recordReadiness(ctx, rows, at)
 	first.recordReadiness(ctx, rows, at.Add(time.Minute))
 	h := read()
-	if len(h.Points) != 1 || h.ELTime != sepoliaAmsterdam {
+	if len(h.Points) != 1 || h.ELTime != forkTime {
 		t.Fatalf("history = %+v, want one point for the Amsterdam time", h)
 	}
 	p := h.Points[0]
@@ -71,7 +72,7 @@ func TestRecordReadinessAppendsAcrossRestartsAndKeepsUnreadable(t *testing.T) {
 	}
 
 	// A new process has no memory of the first one's points.
-	restarted := &publisher{store: st, layout: layout, networks: []string{"sepolia"}}
+	restarted := &publisher{store: st, layout: layout, networks: []string{netconftest.Network}}
 	restarted.recordReadiness(ctx, rows, at.Add(time.Minute))
 	restarted.recordReadiness(ctx, rows, at.Add(snapshot.ReadinessInterval))
 	if got := len(read().Points); got != 2 {
@@ -82,7 +83,7 @@ func TestRecordReadinessAppendsAcrossRestartsAndKeepsUnreadable(t *testing.T) {
 	if err := st.Put(ctx, key, unreadable, "application/json"); err != nil {
 		t.Fatal(err)
 	}
-	later := &publisher{store: st, layout: layout, networks: []string{"sepolia"}}
+	later := &publisher{store: st, layout: layout, networks: []string{netconftest.Network}}
 	later.recordReadiness(ctx, rows, at.Add(2*snapshot.ReadinessInterval))
 	if data, _ := st.Get(ctx, key); string(data) != string(unreadable) {
 		t.Fatalf("unreadable history was overwritten with %s", data)
@@ -96,13 +97,13 @@ func TestRecordReadinessIsDenseAroundActivation(t *testing.T) {
 		t.Fatal(err)
 	}
 	layout := snapshot.Layout{}
-	rows := map[string][]nodeset.Row{"sepolia": {{ID: "a", Layer: "el"}}}
-	key, err := layout.ReadinessHistoryKey("sepolia", "Glamsterdam")
+	rows := map[string][]nodeset.Row{netconftest.Network: {{ID: "a", Layer: "el"}}}
+	key, err := layout.ReadinessHistoryKey(netconftest.Network, netconftest.Fork)
 	if err != nil {
 		t.Fatal(err)
 	}
-	pub := &publisher{store: st, layout: layout, networks: []string{"sepolia"}}
-	activation := time.Unix(sepoliaAmsterdam, 0)
+	pub := &publisher{store: st, layout: layout, networks: []string{netconftest.Network}}
+	activation := netconftest.Activation
 	for _, at := range []time.Time{
 		activation.Add(-snapshot.ReadinessDenseWindow - 10*time.Minute),
 		activation.Add(-snapshot.ReadinessDenseWindow - 5*time.Minute),

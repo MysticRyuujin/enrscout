@@ -89,7 +89,7 @@ func TestSetExecutionStatusRefreshesVerifiedFork(t *testing.T) {
 	if row.ForkHash != "01020304" || row.ForkNext != 99 {
 		t.Fatalf("execution Status fields = %s/%d", row.ForkHash, row.ForkNext)
 	}
-	if !s.SetExecutionStatus(n.ID(), "sepolia", fork) || s.NetworkOf(n.ID()) != "sepolia" {
+	if !s.SetExecutionStatus(n.ID(), "hoodi", fork) || s.NetworkOf(n.ID()) != "hoodi" {
 		t.Fatal("authenticated live Status did not replace stale network metadata")
 	}
 }
@@ -114,7 +114,7 @@ func TestMembershipSourceAndDirectionProvenance(t *testing.T) {
 	if got := s.rows("mainnet")[0].MembershipSource; got != "status" {
 		t.Fatalf("later ENR observation downgraded source to %q", got)
 	}
-	sepolia, err := netconf.Get("sepolia")
+	hoodi, err := netconf.Get("hoodi")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,17 +122,17 @@ func TestMembershipSourceAndDirectionProvenance(t *testing.T) {
 	changed.SetSeq(n.Seq() + 1)
 	changed.Set(enr.IPv4{1, 2, 3, 44})
 	changed.Set(enr.TCP(30303))
-	changed.Set(netconf.EthEntry{ForkID: sepolia.CurrentForkID()})
+	changed.Set(netconf.EthEntry{ForkID: hoodi.CurrentForkID()})
 	changedNetwork := enode.SignNull(&changed, n.ID())
 	s.Observe(changedNetwork, "v5", now.Add(2*time.Second))
-	row = s.rows("sepolia")[0]
+	row = s.rows("hoodi")[0]
 	if row.MembershipSource != "enr" {
 		t.Fatalf("network-changing ENR retained source %q, want enr", row.MembershipSource)
 	}
 
 	restored := NewWithLimit(0)
-	restored.Ingest(s.SnapshotNetworks([]string{"sepolia"})["sepolia"])
-	row = restored.rows("sepolia")[0]
+	restored.Ingest(s.SnapshotNetworks([]string{"hoodi"})["hoodi"])
+	row = restored.rows("hoodi")[0]
 	if row.MembershipSource != "enr" || row.FPDirection != "inbound" {
 		t.Fatalf("restored provenance = %q/%q", row.MembershipSource, row.FPDirection)
 	}
@@ -1279,7 +1279,7 @@ func TestIngestDoesNotPromoteSelfDeclaredClientToFingerprint(t *testing.T) {
 }
 
 func TestRowsFromEmptyParquet(t *testing.T) {
-	data, err := NewWithLimit(0).ParquetForNetwork("sepolia")
+	data, err := NewWithLimit(0).ParquetForNetwork("hoodi")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1318,8 +1318,8 @@ func TestParquetPerNetworkFilters(t *testing.T) {
 	if got := len(s.SnapshotNetworks([]string{"mainnet"})["mainnet"]); got != 1 {
 		t.Errorf("mainnet count = %d, want 1", got)
 	}
-	if got := len(s.SnapshotNetworks([]string{"sepolia"})["sepolia"]); got != 0 {
-		t.Errorf("sepolia count = %d, want 0", got)
+	if got := len(s.SnapshotNetworks([]string{"hoodi"})["hoodi"]); got != 0 {
+		t.Errorf("hoodi count = %d, want 0", got)
 	}
 	data, err := s.ParquetForNetwork("mainnet")
 	if err != nil {
@@ -1893,16 +1893,16 @@ func TestStatusCreditForAnotherNetworkStartsOver(t *testing.T) {
 	now := time.Unix(1700000000, 0)
 	s.ObserveAuthenticatedEL(n, "inbound", "mainnet", "07c9462e", 0, now)
 	fork := forkid.ID{Hash: [4]byte{0x07, 0xc9, 0x46, 0x2e}}
-	if !s.SetExecutionStatusAt(id, "sepolia", fork, now.Add(statusReverifyGap+time.Minute)) {
+	if !s.SetExecutionStatusAt(id, "hoodi", fork, now.Add(statusReverifyGap+time.Minute)) {
 		t.Fatal("reclassifying status rejected")
 	}
-	if got := len(s.SnapshotNetworks([]string{"sepolia"})["sepolia"]); got != 0 {
+	if got := len(s.SnapshotNetworks([]string{"hoodi"})["hoodi"]); got != 0 {
 		t.Fatalf("snapshot rows after a network switch = %d, want 0 until re-confirmed", got)
 	}
-	if !s.SetExecutionStatusAt(id, "sepolia", fork, now.Add(2*(statusReverifyGap+time.Minute))) {
+	if !s.SetExecutionStatusAt(id, "hoodi", fork, now.Add(2*(statusReverifyGap+time.Minute))) {
 		t.Fatal("confirming status rejected")
 	}
-	if got := len(s.SnapshotNetworks([]string{"sepolia"})["sepolia"]); got != 1 {
+	if got := len(s.SnapshotNetworks([]string{"hoodi"})["hoodi"]); got != 1 {
 		t.Fatalf("snapshot rows after re-confirmation = %d, want 1", got)
 	}
 }
@@ -2176,7 +2176,7 @@ func TestHeadFollowsStatusAndNetwork(t *testing.T) {
 	if row := s.rows("mainnet")[0]; row.Head != 0 {
 		t.Fatalf("a CL slot was stored on an EL row: %d", row.Head)
 	}
-	s.SetHead(n.ID(), "el", "sepolia", 7, now)
+	s.SetHead(n.ID(), "el", "hoodi", 7, now)
 	if row := s.rows("mainnet")[0]; row.Head != 0 {
 		t.Fatalf("a head for another network was applied: %d", row.Head)
 	}
@@ -2189,7 +2189,7 @@ func TestHeadFollowsStatusAndNetwork(t *testing.T) {
 	}
 	s.SetExecutionStatus(n.ID(), "mainnet", forkid.ID{})
 	s.SetHead(n.ID(), "el", "mainnet", 24_000_000, now)
-	sepolia, err := netconf.Get("sepolia")
+	hoodi, err := netconf.Get("hoodi")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2197,9 +2197,9 @@ func TestHeadFollowsStatusAndNetwork(t *testing.T) {
 	r.SetSeq(n.Seq() + 1)
 	r.Set(enr.IPv4{1, 2, 3, 61})
 	r.Set(enr.TCP(30303))
-	r.Set(netconf.EthEntry{ForkID: sepolia.CurrentForkID()})
+	r.Set(netconf.EthEntry{ForkID: hoodi.CurrentForkID()})
 	s.Observe(enode.SignNull(&r, n.ID()), "v5", now.Add(time.Minute))
-	rows := s.rows("sepolia")
+	rows := s.rows("hoodi")
 	if len(rows) != 1 || rows[0].Head != 0 {
 		t.Fatalf("after moving networks rows = %+v, want the mainnet head dropped", rows)
 	}

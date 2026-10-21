@@ -12,24 +12,24 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 )
 
-func TestForkTargetSepoliaGlamsterdam(t *testing.T) {
-	before := time.Unix(sepoliaGlamsterdam-86400, 0)
-	target, err := ForkTargetAt("sepolia", before)
+func TestForkTargetHoodiGlamsterdam(t *testing.T) {
+	before := time.Unix(hoodiGlamsterdam-86400, 0)
+	target, err := ForkTargetAt("hoodi", before)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if target.Name != "Glamsterdam" || target.Phase() != PhaseScheduled {
 		t.Fatalf("target = %q phase %q, want Glamsterdam scheduled", target.Name, target.Phase())
 	}
-	if el := target.EL; el == nil || el.Name != "Amsterdam" || el.Time != sepoliaGlamsterdam || el.PreHash != "268956b6" || el.PostHash != "6c1d9423" {
+	if el := target.EL; el == nil || el.Name != "Amsterdam" || el.Time != hoodiGlamsterdam || el.PreHash != "23aa1351" || el.PostHash != "3d068b59" {
 		t.Fatalf("EL target = %+v", target.EL)
 	}
-	if cl := target.CL; cl == nil || cl.Name != "gloas" || cl.Epoch != 353024 || cl.Version != "90000076" ||
-		cl.PreDigest != "74d01459" || cl.PostDigest != "669e6c11" || cl.Time.Unix() != sepoliaGlamsterdam {
+	if cl := target.CL; cl == nil || cl.Name != "gloas" || cl.Epoch != 132352 || cl.Version != "80000910" ||
+		cl.PreDigest != "c6ecb76c" || cl.PostDigest != "5ad30129" || cl.Time.Unix() != hoodiGlamsterdam {
 		t.Fatalf("CL target = %+v", target.CL)
 	}
 
-	after, err := ForkTargetAt("sepolia", time.Unix(sepoliaGlamsterdam, 0))
+	after, err := ForkTargetAt("hoodi", time.Unix(hoodiGlamsterdam, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +37,7 @@ func TestForkTargetSepoliaGlamsterdam(t *testing.T) {
 		t.Fatalf("at activation target = %+v", after)
 	}
 
-	expired, err := ForkTargetAt("sepolia", time.Unix(sepoliaGlamsterdam, 0).Add(ForkTrackingGrace))
+	expired, err := ForkTargetAt("hoodi", time.Unix(hoodiGlamsterdam, 0).Add(ForkTrackingGrace))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,8 +58,8 @@ func TestForkTargetNoneScheduled(t *testing.T) {
 }
 
 func TestReadinessAt(t *testing.T) {
-	before := time.Unix(sepoliaGlamsterdam-86400, 0)
-	target, err := ForkTargetAt("sepolia", before)
+	before := time.Unix(hoodiGlamsterdam-86400, 0)
+	target, err := ForkTargetAt("hoodi", before)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,26 +71,26 @@ func TestReadinessAt(t *testing.T) {
 		at   time.Time
 		want Readiness
 	}{
-		{"el scheduled", ReadinessEvidence{Layer: "el", ForkHash: cur, ForkNext: sepoliaGlamsterdam}, before, Ready},
+		{"el scheduled", ReadinessEvidence{Layer: "el", ForkHash: cur, ForkNext: hoodiGlamsterdam}, before, Ready},
 		{"el not scheduled", ReadinessEvidence{Layer: "el", ForkHash: cur}, before, NotReady},
-		{"el other future time", ReadinessEvidence{Layer: "el", ForkHash: cur, ForkNext: sepoliaGlamsterdam + 1}, before, Mismatch},
-		{"el older fork", ReadinessEvidence{Layer: "el", ForkHash: "deadbeef", ForkNext: sepoliaGlamsterdam}, before, Stale},
-		{"cl scheduled", ReadinessEvidence{Layer: "cl", ForkHash: digest, ENRForkDigest: digest, ENRNextForkVersion: "90000076", ENRNextForkEpoch: 353024}, before, Ready},
-		{"cl right epoch wrong version", ReadinessEvidence{Layer: "cl", ForkHash: digest, ENRForkDigest: digest, ENRNextForkVersion: "90000077", ENRNextForkEpoch: 353024}, before, Mismatch},
-		{"cl not scheduled", ReadinessEvidence{Layer: "cl", ForkHash: digest, ENRForkDigest: digest, ENRNextForkVersion: "90000075", ENRNextForkEpoch: math.MaxUint64}, before, NotReady},
+		{"el other future time", ReadinessEvidence{Layer: "el", ForkHash: cur, ForkNext: hoodiGlamsterdam + 1}, before, Mismatch},
+		{"el older fork", ReadinessEvidence{Layer: "el", ForkHash: "deadbeef", ForkNext: hoodiGlamsterdam}, before, Stale},
+		{"cl scheduled", ReadinessEvidence{Layer: "cl", ForkHash: digest, ENRForkDigest: digest, ENRNextForkVersion: "80000910", ENRNextForkEpoch: 132352}, before, Ready},
+		{"cl right epoch wrong version", ReadinessEvidence{Layer: "cl", ForkHash: digest, ENRForkDigest: digest, ENRNextForkVersion: "80000911", ENRNextForkEpoch: 132352}, before, Mismatch},
+		{"cl not scheduled", ReadinessEvidence{Layer: "cl", ForkHash: digest, ENRForkDigest: digest, ENRNextForkVersion: "70000910", ENRNextForkEpoch: math.MaxUint64}, before, NotReady},
 		{"cl without ENR", ReadinessEvidence{Layer: "cl", ForkHash: digest}, before, Unknown},
 		// Status replaced the digest but the ENR still pairs its epoch with another one.
-		{"cl status digest differs from ENR", ReadinessEvidence{Layer: "cl", ForkHash: digest, ENRForkDigest: "12345678", ENRNextForkVersion: "90000076", ENRNextForkEpoch: 353024}, before, Unknown},
-		{"cl older digest", ReadinessEvidence{Layer: "cl", ForkHash: "12345678", ENRForkDigest: "12345678", ENRNextForkVersion: "90000076", ENRNextForkEpoch: 353024}, before, Stale},
+		{"cl status digest differs from ENR", ReadinessEvidence{Layer: "cl", ForkHash: digest, ENRForkDigest: "12345678", ENRNextForkVersion: "80000910", ENRNextForkEpoch: 132352}, before, Unknown},
+		{"cl older digest", ReadinessEvidence{Layer: "cl", ForkHash: "12345678", ENRForkDigest: "12345678", ENRNextForkVersion: "80000910", ENRNextForkEpoch: 132352}, before, Stale},
 	}
 	for _, tc := range cases {
-		if got := ReadinessAt(target, "sepolia", tc.ev, tc.at); got != tc.want {
+		if got := ReadinessAt(target, "hoodi", tc.ev, tc.at); got != tc.want {
 			t.Errorf("%s: ReadinessAt = %q, want %q", tc.name, got, tc.want)
 		}
 	}
 
-	activation := time.Unix(sepoliaGlamsterdam, 0)
-	activated, err := ForkTargetAt("sepolia", activation)
+	activation := time.Unix(hoodiGlamsterdam, 0)
+	activated, err := ForkTargetAt("hoodi", activation)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,18 +101,18 @@ func TestReadinessAt(t *testing.T) {
 	}{
 		{"el upgraded", ReadinessEvidence{Layer: "el", ForkHash: activated.EL.PostHash}, Ready},
 		{"el left behind", ReadinessEvidence{Layer: "el", ForkHash: activated.EL.PreHash}, NotReady},
-		{"el scheduled, not seen on it yet", ReadinessEvidence{Layer: "el", ForkHash: activated.EL.PreHash, ForkNext: sepoliaGlamsterdam}, Pending},
+		{"el scheduled, not seen on it yet", ReadinessEvidence{Layer: "el", ForkHash: activated.EL.PreHash, ForkNext: hoodiGlamsterdam}, Pending},
 		{"el long stale", ReadinessEvidence{Layer: "el", ForkHash: "deadbeef"}, Stale},
 		{"cl upgraded", ReadinessEvidence{Layer: "cl", ForkHash: activated.CL.PostDigest}, Ready},
 		{"cl scheduled, not seen on it yet", ReadinessEvidence{Layer: "cl", ForkHash: activated.CL.PreDigest,
-			ENRForkDigest: activated.CL.PreDigest, ENRNextForkVersion: "90000076", ENRNextForkEpoch: 353024}, Pending},
+			ENRForkDigest: activated.CL.PreDigest, ENRNextForkVersion: "80000910", ENRNextForkEpoch: 132352}, Pending},
 		{"cl schedule under another digest", ReadinessEvidence{Layer: "cl", ForkHash: activated.CL.PreDigest,
-			ENRForkDigest: "12345678", ENRNextForkVersion: "90000076", ENRNextForkEpoch: 353024}, Unknown},
+			ENRForkDigest: "12345678", ENRNextForkVersion: "80000910", ENRNextForkEpoch: 132352}, Unknown},
 		{"cl without ENR", ReadinessEvidence{Layer: "cl", ForkHash: activated.CL.PreDigest}, Unknown},
 		{"cl never scheduled", ReadinessEvidence{Layer: "cl", ForkHash: activated.CL.PreDigest,
-			ENRForkDigest: activated.CL.PreDigest, ENRNextForkVersion: "70000076", ENRNextForkEpoch: math.MaxUint64}, NotReady},
+			ENRForkDigest: activated.CL.PreDigest, ENRNextForkVersion: "60000910", ENRNextForkEpoch: math.MaxUint64}, NotReady},
 	} {
-		if got := ReadinessAt(activated, "sepolia", tc.ev, activation); got != tc.want {
+		if got := ReadinessAt(activated, "hoodi", tc.ev, activation); got != tc.want {
 			t.Errorf("%s: ReadinessAt = %q, want %q", tc.name, got, tc.want)
 		}
 	}
@@ -182,21 +182,21 @@ func TestForkTargetNeverPairsDifferentInstants(t *testing.T) {
 
 func TestReadinessUntrackedLayerHasNoState(t *testing.T) {
 	target := ForkTarget{Name: "Gloas", CL: &CLForkTarget{Name: "gloas", Epoch: 1, Phase: PhaseScheduled}}
-	if got := ReadinessAt(target, "sepolia", ReadinessEvidence{Layer: "el", ForkHash: "268956b6"}, time.Unix(sepoliaGlamsterdam-86400, 0)); got != "" {
+	if got := ReadinessAt(target, "hoodi", ReadinessEvidence{Layer: "el", ForkHash: "23aa1351"}, time.Unix(hoodiGlamsterdam-86400, 0)); got != "" {
 		t.Fatalf("EL row under a CL-only target = %q, want no state", got)
 	}
 }
 
 func TestELTargetKeepsOneNameAcrossTiedActivation(t *testing.T) {
-	cfg := *params.SepoliaChainConfig
-	tied := uint64(sepoliaGlamsterdam)
-	cfg.BogotaTime = &tied
-	n := &Network{Name: "tied", ChainConfig: &cfg, genesisFn: core.DefaultSepoliaGenesisBlock}
-	before, ok := n.elTargetAt(time.Unix(sepoliaGlamsterdam-60, 0))
+	cfg := *params.HoodiChainConfig
+	tied := uint64(hoodiGlamsterdam)
+	cfg.AmsterdamTime, cfg.BogotaTime = &tied, &tied
+	n := &Network{Name: "tied", ChainConfig: &cfg, genesisFn: core.DefaultHoodiGenesisBlock}
+	before, ok := n.elTargetAt(time.Unix(hoodiGlamsterdam-60, 0))
 	if !ok {
 		t.Fatal("no scheduled target")
 	}
-	after, ok := n.elTargetAt(time.Unix(sepoliaGlamsterdam, 0))
+	after, ok := n.elTargetAt(time.Unix(hoodiGlamsterdam, 0))
 	if !ok {
 		t.Fatal("no activated target")
 	}
