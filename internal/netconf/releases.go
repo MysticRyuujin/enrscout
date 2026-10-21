@@ -44,11 +44,11 @@ type ClientReleaseTable struct {
 const sepoliaGlamsterdam = 1791294816
 
 var builtinClientReleases = ClientReleaseTable{
-	Updated: "2026-10-20",
+	Updated: "2026-10-21",
 	Releases: []ClientRelease{
 		{Fork: "Glamsterdam", Network: "sepolia", Layer: "el", Client: "Geth", ForkTime: sepoliaGlamsterdam,
 			MinVersions: []string{"1.17.6"}, Released: "2026-09-23", URL: "https://github.com/ethereum/go-ethereum/releases/tag/v1.17.6",
-			Latest: "1.17.8", LatestURL: "https://github.com/ethereum/go-ethereum/releases/tag/v1.17.8"},
+			Latest: "1.17.9", LatestURL: "https://github.com/ethereum/go-ethereum/releases/tag/v1.17.9"},
 		{Fork: "Glamsterdam", Network: "sepolia", Layer: "el", Client: "Nethermind", ForkTime: sepoliaGlamsterdam,
 			MinVersions: []string{"2.1.0"}, Released: "2026-10-01", URL: "https://github.com/NethermindEth/nethermind/releases/tag/2.1.0",
 			Latest: "2.2.0", LatestURL: "https://github.com/NethermindEth/nethermind/releases/tag/2.2.0"},
@@ -89,6 +89,8 @@ var builtinClientReleases = ClientReleaseTable{
 			MinVersions: []string{"3.7.1"}, Released: "2026-10-02", URL: "https://github.com/erigontech/erigon/releases/tag/v3.7.1"},
 		{Fork: "Glamsterdam", Network: "hoodi", Layer: "el", Client: "Erigon", ForkTime: hoodiGlamsterdam,
 			MinVersions: []string{"3.8.0"}, Released: "2026-10-20", URL: "https://github.com/erigontech/erigon/releases/tag/v3.8.0"},
+		{Fork: "Glamsterdam", Network: "hoodi", Layer: "el", Client: "Geth", ForkTime: hoodiGlamsterdam,
+			MinVersions: []string{"1.17.9"}, Released: "2026-10-21", URL: "https://github.com/ethereum/go-ethereum/releases/tag/v1.17.9"},
 		{Fork: "Glamsterdam", Network: "hoodi", Layer: "el", Client: "Reth", ForkTime: hoodiGlamsterdam,
 			MinVersions: []string{"2.8.0"}, Released: "2026-10-20", URL: "https://github.com/paradigmxyz/reth/releases/tag/v2.8.0"},
 		{Fork: "Glamsterdam", Network: "hoodi", Layer: "el", Client: "Ethrex", ForkTime: hoodiGlamsterdam,
