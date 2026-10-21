@@ -2230,3 +2230,28 @@ func TestHeadKeepsStatusReceiveTimeAndDropsOnLayerChange(t *testing.T) {
 		t.Fatalf("after moving to CL row = %s head %d, want the EL block number dropped", row.Layer, row.Head)
 	}
 }
+
+func TestUnchangedENRKeepsLaterStatusFork(t *testing.T) {
+	s := NewWithLimit(0)
+	now := time.Unix(1700000000, 0)
+	n := elNode(t, 61)
+	s.Observe(n, "v5", now)
+	upgraded := forkid.ID{Hash: [4]byte{1, 2, 3, 4}}
+	if !s.SetExecutionStatus(n.ID(), "mainnet", upgraded) {
+		t.Fatal("execution status rejected")
+	}
+	s.Observe(n, "v5", now.Add(time.Minute))
+	if row := s.rows("mainnet")[0]; row.ForkHash != "01020304" || row.ForkSource != "status" {
+		t.Fatalf("re-seen record replaced the Status fork: %s from %s", row.ForkHash, row.ForkSource)
+	}
+
+	var next enr.Record
+	next.SetSeq(n.Seq() + 1)
+	next.Set(enr.IPv4{1, 2, 3, 61})
+	next.Set(enr.TCP(30303))
+	next.Set(netconf.EthEntry{ForkID: forkid.ID{Hash: [4]byte{5, 6, 7, 8}}})
+	s.Observe(enode.SignNull(&next, n.ID()), "v5", now.Add(2*time.Minute))
+	if row := s.rows("mainnet")[0]; row.ForkHash != "05060708" || row.ForkSource != "enr" {
+		t.Fatalf("newer record did not apply its fork: %s from %s", row.ForkHash, row.ForkSource)
+	}
+}
