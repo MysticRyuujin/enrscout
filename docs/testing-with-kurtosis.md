@@ -285,14 +285,16 @@ network_params:
   seconds_per_slot: 12
   deneb_fork_epoch: 0      # chain starts on Deneb
   electra_fork_epoch: 1
-  fulu_fork_epoch: 3
-  bpo_1_epoch: 5
+  fulu_fork_epoch: 2
+  bpo_1_epoch: 3
   bpo_1_max_blobs: 12
 ```
 
 **Epoch arithmetic.** With the mainnet preset an epoch is 32 slots, so at 12s
 slots one epoch is 384s (6.4 min): the schedule above transitions at roughly
-T+6m, T+19m and T+32m, and the whole run wants ~50 minutes. The `minimal` preset
+T+6m, T+13m and T+19m, and the whole run wants ~30 minutes. Put each fork in the
+next epoch: an empty epoch between forks only adds 6.4 minutes of waiting. Start
+ENRScout right after genesis so it still sees the scheduled phase. The `minimal` preset
 uses 8 slots per epoch and is far faster, but it selects a different set of
 client images and constrains `seconds_per_slot` (Nimbus rejects anything other
 than 6s on minimal, and anything below 12s on mainnet), so prefer the mainnet
@@ -323,7 +325,7 @@ EPOCH=$((32 * SPS))   # mainnet preset; 8 * SPS for the minimal preset
 # GNU date wants -d @<epoch>; BSD/macOS date wants -r <epoch>.
 epoch_utc() { date -u -d "@$1" +%H:%M:%S 2>/dev/null || date -u -r "$1" +%H:%M:%S; }
 
-for e in 1 3 5; do
+for e in 1 2 3; do
   printf 'epoch %s -> %s UTC\n' "$e" "$(epoch_utc $((G + e*EPOCH)))"
 done
 ```
