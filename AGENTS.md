@@ -109,6 +109,10 @@ Reviewed and deliberately not fixed; re-litigate only with new information.
 - **Two overlapping Status exchanges with one peer can store the older head.** `SetHead` keeps the
   last one to finish. Ordering guards were rejected: any time-window heuristic also hides a real head
   drop, such as a peer that restarts behind and reconnects at once, and the next Status corrects it.
+  The same holds for the fork id: a re-seen identical ENR no longer replaces a Status fork id (Besu
+  serves its startup ENR over discv5 forever), so a Status that loses such a race to another Status or
+  to a record install with equal fork fields keeps its fork id until the next Status, not the next
+  ENR sighting.
 - **Inbound EL Status proves the key, not the endpoint.** An inbound RLPx handshake from IP Y can
   promote a row whose endpoint came from elsewhere: an unsigned discv4 sighting (`pendingLegacy`, a
   retained candidate, or the cached Status in `resolverPool.resolve`), or an ENR the key holder signed
