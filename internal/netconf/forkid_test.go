@@ -2,6 +2,7 @@ package netconf
 
 import (
 	"math"
+	"math/big"
 	"reflect"
 	"slices"
 	"strings"
@@ -101,13 +102,29 @@ func TestRegisterDevnetUnknownELFork(t *testing.T) {
 }
 
 func TestRegisterDevnetRejectsMalformedForkTime(t *testing.T) {
-	cfg := devnetConfig()
-	cfg.ELGenesisJSON = []byte(strings.Replace(devnetGenesisJSON, `"osakaTime": 0`, `"osakaTime": 0, "futureforkTime": "soon"`, 1))
 	t.Cleanup(func() {
 		registry = slices.DeleteFunc(registry, func(n *Network) bool { return n.Name == "devnet" })
 	})
-	if err := RegisterDevnet(cfg); err == nil {
-		t.Fatal("non-numeric fork time accepted")
+	for name, keys := range map[string]string{
+		"non-numeric":      `"futureforkTime": "soon"`,
+		"case duplicate":   `"bpo6Time": 1700050000, "BPO6Time": null`,
+		"lowercase suffix": `"futureforktime": 1, "futureforkTime": 2`,
+	} {
+		cfg := devnetConfig()
+		cfg.ELGenesisJSON = []byte(strings.Replace(devnetGenesisJSON, `"osakaTime": 0`, `"osakaTime": 0, `+keys, 1))
+		if err := RegisterDevnet(cfg); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}
+
+func TestForkIDMatchesGethOnNegativeBlock(t *testing.T) {
+	cfg := *params.HoodiChainConfig
+	cfg.HomesteadBlock = big.NewInt(-1)
+	n := &Network{Name: "negative", ChainConfig: &cfg, genesisFn: registry[1].genesisFn}
+	n.load()
+	if got, want := n.forkIDAt(hoodiGlamsterdam), forkid.NewID(&cfg, n.genesis, forkHeadBlock, hoodiGlamsterdam); got != want {
+		t.Fatalf("fork id %x/%d, geth %x/%d", got.Hash, got.Next, want.Hash, want.Next)
 	}
 }
 

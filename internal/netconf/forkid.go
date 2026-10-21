@@ -40,7 +40,8 @@ func checksumBytes(sum uint32) [4]byte {
 	return b
 }
 
-// forkBlocks lists the block-numbered forks of cfg. Block 0 is the genesis ruleset, not a fork.
+// forkBlocks lists the block-numbered forks of cfg. Block 0 is the genesis ruleset, not a fork. Every
+// value goes through big.Int.Uint64, as in go-ethereum, so even a nonsensical negative block matches it.
 func forkBlocks(cfg *params.ChainConfig) []uint64 {
 	v := reflect.ValueOf(cfg).Elem()
 	t := v.Type()
@@ -49,12 +50,16 @@ func forkBlocks(cfg *params.ChainConfig) []uint64 {
 		if !strings.HasSuffix(t.Field(i).Name, "Block") {
 			continue
 		}
-		if b, ok := v.Field(i).Interface().(*big.Int); ok && b != nil && b.Sign() > 0 {
+		if b, ok := v.Field(i).Interface().(*big.Int); ok && b != nil {
 			out = append(out, b.Uint64())
 		}
 	}
 	slices.Sort(out)
-	return slices.Compact(out)
+	out = slices.Compact(out)
+	if len(out) > 0 && out[0] == 0 {
+		out = out[1:]
+	}
+	return out
 }
 
 // idForkTimes lists the distinct activation times after genesis, the time half of EIP-2124's fork

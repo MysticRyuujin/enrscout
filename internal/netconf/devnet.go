@@ -160,12 +160,23 @@ func unknownELForks(genesisJSON []byte) ([]elForkTime, error) {
 		tag, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
 		known[strings.ToLower(tag)] = true
 	}
+	// encoding/json matches keys case-insensitively, so two spellings of one unknown key would leave
+	// clients disagreeing on which one counts.
+	seen := map[string]bool{}
 	var out []elForkTime
 	for key, value := range raw.Config {
-		name, ok := strings.CutSuffix(key, "Time")
-		if !ok || name == "" || known[strings.ToLower(key)] || string(value) == "null" {
+		lower := strings.ToLower(key)
+		if !strings.HasSuffix(lower, "time") || lower == "time" || known[lower] {
 			continue
 		}
+		if seen[lower] {
+			return nil, fmt.Errorf("genesis config %s: duplicate key", key)
+		}
+		seen[lower] = true
+		if string(value) == "null" {
+			continue
+		}
+		name := key[:len(key)-len("time")]
 		var at uint64
 		if err := json.Unmarshal(value, &at); err != nil {
 			return nil, fmt.Errorf("genesis config %s: %w", key, err)
