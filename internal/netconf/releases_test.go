@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+const sepoliaGlamsterdam = 1791294816
+
 func TestReleaseStatus(t *testing.T) {
 	cases := []struct {
 		floors  []string
@@ -46,18 +48,19 @@ func TestBuiltinClientReleasesMatchConfiguredForks(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, r := range table.Releases {
-		target, err := ForkTargetAt(r.Network, time.Unix(sepoliaGlamsterdam-86400, 0))
+		before := time.Unix(int64(r.ForkTime)-86400, 0)
+		target, err := ForkTargetAt(r.Network, before)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if target.Name != r.Fork {
 			t.Errorf("%s/%s: no configured %s fork (target %q)", r.Network, r.Client, r.Fork, target.Name)
 		}
-	}
-	_, got := ClientReleasesAt("sepolia", mustTarget(t, "sepolia", time.Unix(sepoliaGlamsterdam-86400, 0)))
-	for _, r := range got {
-		if r.Outdated {
-			t.Errorf("%s: built-in entry is outdated against the configured fork time", r.Client)
+		_, got := ClientReleasesAt(r.Network, target)
+		for _, g := range got {
+			if g.Client == r.Client && g.Layer == r.Layer && g.Outdated {
+				t.Errorf("%s/%s: built-in entry is outdated against the configured fork time", r.Network, r.Client)
+			}
 		}
 	}
 }
