@@ -145,6 +145,16 @@ func TestForkReadinessAggregate(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer eng.Close()
+	defer func() {
+		if err := netconf.SetClientReleases(netconf.BuiltinClientReleases()); err != nil {
+			t.Fatal(err)
+		}
+	}()
+	if err := netconf.SetClientReleases(netconf.ClientReleaseTable{Releases: []netconf.ClientRelease{
+		{Fork: "Glamsterdam", Network: "sepolia", Layer: "el", Client: "Geth", ForkTime: sepoliaAmsterdam, MinVersions: []string{"1.17.6"}},
+	}}); err != nil {
+		t.Fatal(err)
+	}
 	at := time.Unix(sepoliaAmsterdam-86400, 0)
 	target, err := netconf.ForkTargetAt("sepolia", at)
 	if err != nil {

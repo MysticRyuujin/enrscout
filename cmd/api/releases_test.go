@@ -25,16 +25,16 @@ func TestReleasesFileLoadsReloadsAndKeepsLastGood(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	target, err := netconf.ForkTargetAt("sepolia", time.Unix(1791294816-86400, 0))
+	target, err := netconf.ForkTargetAt("hoodi", time.Unix(1793036568-86400, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
 	updated := func() string {
-		u, _ := netconf.ClientReleasesAt("sepolia", target)
+		u, _ := netconf.ClientReleasesAt("hoodi", target)
 		return u
 	}
 	besu := func() (netconf.ClientRelease, int) {
-		_, rs := netconf.ClientReleasesAt("sepolia", target)
+		_, rs := netconf.ClientReleasesAt("hoodi", target)
 		for _, r := range rs {
 			if r.Layer == "el" && r.Client == "Besu" {
 				return r, len(rs)
@@ -45,14 +45,14 @@ func TestReleasesFileLoadsReloadsAndKeepsLastGood(t *testing.T) {
 	}
 	var builtinEntries int
 	for _, r := range netconf.BuiltinClientReleases().Releases {
-		if r.Network == "sepolia" {
+		if r.Network == "hoodi" {
 			builtinEntries++
 		}
 	}
 
 	start := time.Unix(1_790_000_000, 0)
-	write(`{"updated":"2026-09-25","releases":[{"fork":"Glamsterdam","network":"sepolia","layer":"el","client":"Besu",
-		"fork_time":1791294816,"min_versions":["26.9.9"]}]}`, start)
+	write(`{"updated":"2026-09-25","releases":[{"fork":"Glamsterdam","network":"hoodi","layer":"el","client":"Besu",
+		"fork_time":1793036568,"min_versions":["26.9.9"]}]}`, start)
 	f := &releasesFile{path: path}
 	if err := f.load(); err != nil {
 		t.Fatal(err)
@@ -65,13 +65,13 @@ func TestReleasesFileLoadsReloadsAndKeepsLastGood(t *testing.T) {
 	}
 
 	write(`{"updated":"2026-09-26","releases":[
-		{"fork":"Glamsterdam","network":"sepolia","layer":"el","client":"Besu"},
-		{"fork":"glamsterdam","network":"sepolia","layer":"el","client":"Besu"}]}`, start.Add(30*time.Second))
+		{"fork":"Glamsterdam","network":"hoodi","layer":"el","client":"Besu"},
+		{"fork":"glamsterdam","network":"hoodi","layer":"el","client":"Besu"}]}`, start.Add(30*time.Second))
 	if err := f.load(); err == nil {
 		t.Fatal("duplicate key inside the file accepted")
 	}
 
-	write(`{"updated":"2026-09-26","releases":[{"fork":"Glamsterdam","network":"sepolia","layer":"el","client":"besu"}]}`, start.Add(time.Minute))
+	write(`{"updated":"2026-09-26","releases":[{"fork":"Glamsterdam","network":"hoodi","layer":"el","client":"besu"}]}`, start.Add(time.Minute))
 	if err := f.load(); err == nil {
 		t.Fatal("non-canonical client name accepted")
 	}
