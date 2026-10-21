@@ -5,8 +5,6 @@ import (
 	"math"
 	"strings"
 	"time"
-
-	"github.com/ethereum/go-ethereum/core/forkid"
 )
 
 // ForkTrackingGrace keeps an activated fork tracked, so the cutover stays visible after it lands.
@@ -186,8 +184,8 @@ func (n *Network) elTargetAt(at time.Time) (ELForkTarget, bool) {
 		}
 		chosen, phase = last, PhaseActivated
 	}
-	pre := forkid.NewID(n.ChainConfig, n.genesis, forkHeadBlock, chosen.time-1).Hash
-	post := forkid.NewID(n.ChainConfig, n.genesis, forkHeadBlock, chosen.time).Hash
+	pre := n.forkIDAt(chosen.time - 1).Hash
+	post := n.forkIDAt(chosen.time).Hash
 	return ELForkTarget{
 		Name: chosen.name, Time: chosen.time, Phase: phase,
 		PreHash: hex.EncodeToString(pre[:]), PostHash: hex.EncodeToString(post[:]),

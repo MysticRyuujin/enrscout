@@ -12,6 +12,8 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 )
 
+const hoodiGlamsterdam = 1793036568
+
 func TestForkTargetHoodiGlamsterdam(t *testing.T) {
 	before := time.Unix(hoodiGlamsterdam-86400, 0)
 	target, err := ForkTargetAt("hoodi", before)

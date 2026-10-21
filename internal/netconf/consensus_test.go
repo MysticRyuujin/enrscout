@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"testing"
 	"time"
-
-	"github.com/ethereum/go-ethereum/params"
 )
 
 func TestForkDigestsAreDisjointAcrossNetworks(t *testing.T) {
@@ -208,8 +206,5 @@ func TestGlamsterdamTransition(t *testing.T) {
 		if got := ClassifyCL(digest); got != net.name {
 			t.Errorf("%s Gloas digest classifies as %q", net.name, got)
 		}
-	}
-	if geth := params.HoodiChainConfig.AmsterdamTime; geth != nil && *geth != hoodiGlamsterdam {
-		t.Errorf("geth schedules Hoodi Amsterdam at %d, the override at %d", *geth, hoodiGlamsterdam)
 	}
 }

@@ -76,8 +76,12 @@ procedures are defined in [measurement-operations.md](measurement-operations.md)
 
 ## Fork-upgrade runbook
 
-Before every scheduled execution fork, upgrade go-ethereum so its chain configuration
-contains the activation. Before every consensus fork or blob-parameter-only transition,
+Before every scheduled execution fork, make the activation part of the network's EL schedule.
+If the pinned go-ethereum already carries it, nothing is needed. Otherwise add an entry to
+`elScheduleOverrides` in `internal/netconf/netconf.go` (fork name without "Time", such as
+`Amsterdam`, and the activation timestamp). A go-ethereum upgrade is not required. When a later
+go-ethereum upgrade carries the fork, `TestELScheduleOverridesAreStillNeeded` fails; delete the
+entry in that upgrade. Before every consensus fork or blob-parameter-only transition,
 update and verify `internal/netconf/consensus.go`. Deploy before activation and confirm
 the advertiser `eth`/`eth2`/`nfd` values and API `fork_evaluated_at` boundary tests.
 If these tables lag, current classification collapses toward lagging peers and the
@@ -89,7 +93,7 @@ their synced head, so all of them read stale until they re-publish past the boun
 more publishes may quarantine with `collapse_current` and then recover on their own;
 `--force-publish` forces a single cycle through if a stale snapshot is worse than the dip.
 `TestForkHeadBlockCoversConfiguredBlockForks` deliberately fails when a geth upgrade
-adds a configured block-numbered fork beyond `netconf.ForkHeadBlock`; it does not track
+adds a configured block-numbered fork beyond `forkHeadBlock` (`internal/netconf/netconf.go`); it does not track
 the live chain head. Advance that constant with the dependency upgrade. Timestamp
 forks use the request evaluation time and need no head guess.
 

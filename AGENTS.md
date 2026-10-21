@@ -136,9 +136,13 @@ Reviewed and deliberately not fixed; re-litigate only with new information.
   (`netconf.gatherHashes`). Genesis-sharing forks (PulseChain) reuse mainnet's ancient
   Frontier hash `fc64ec04`; an all-history sweep misclassifies them as mainnet.
   Guarded by `TestAncientForkDoesNotClassify`; don't widen the window back to genesis.
-- **Fork upgrades are pre-activation work.** Upgrade geth before every EL fork and
-  update `internal/netconf/consensus.go` before every CL fork/BPO. The CI head-bound
-  assertion tells you when `ForkHeadBlock` must advance. A missed update collapses
+- **Fork upgrades are pre-activation work, but not go-ethereum upgrades.** EL fork ids are
+  computed in `netconf/forkid.go` from go-ethereum's `ChainConfig` plus `elScheduleOverrides`, so
+  an EL fork that the pinned geth lacks gets an override entry, not a dependency bump;
+  `TestELScheduleOverridesAreStillNeeded` fails once a geth upgrade carries it, and
+  `TestForkIDMatchesGeth` pins the computation to geth's. Devnet `genesis.json` fork keys that geth
+  has no field for become extra forks the same way. Update `internal/netconf/consensus.go` before
+  every CL fork/BPO. The CI head-bound assertion tells you when `forkHeadBlock` must advance. A missed update collapses
   current classification and should trip the current-node floor.
 - **Devnet registration is startup-only and singular.** `RegisterDevnet` mutates the
   process-global network registry before crawler goroutines start and reserves the
