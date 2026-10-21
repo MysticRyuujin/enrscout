@@ -560,6 +560,28 @@ branch images. `/api/v1/forks?network=devnet` tracked Fusaka from the first snap
   slots, so older EL heads projected slightly ahead of the median (`head_lag` of -4). See
   DEFINITIONS.md "Sync state".
 
+### Fork schedule run on 2026-10-21
+
+Upstream ethereum-package, all seven pairs with their curated images, bootnodoor as the only crawler
+seed, mainnet preset with 12-second slots. Electra is at genesis (19:45:34 UTC), Fulu at epoch 2,
+BPO1 at epoch 4 and BPO2 at epoch 6.
+
+- **Schedule.** The first snapshot listed Fusaka (tracked), BPO1 and BPO2 in `schedule`, and the
+  Forks page showed all three. After each activation the tracker moved to the next upgrade, and after
+  BPO2 it showed BPO2 as activated with the whole schedule activated.
+- **Transitions.** Every identity was current again 89 s after Fusaka, 78 s after BPO1 and 67 s after
+  BPO2. `fork=current` plus `fork=stale` equalled the total in all 77 samples, and the verified class
+  equalled the nodeset size (15) at the end.
+- **Release file.** Devnet entries hot-reloaded without a restart and labelled versions `meets`,
+  `below` and `dev_build`. An entry with another `fork_time` read as outdated, and an invalid edit kept
+  the last good table.
+- **Besu ENR over discv5.** Besu `26.10-develop-90d559a` re-publishes `seq=2` with the new fork id
+  (`admin_nodeInfo`), but its discv5 service keeps serving the startup `seq=1` record (`devp2p discv5
+  resolve`): `PeerDiscoveryAgentV5.updateNodeRecord` updates `NodeRecordManager` and never the
+  discovery system. bootnodoor therefore relays the stale record. ENRScout let each re-sighting of
+  that unchanged record replace the fresher Status fork id, so the row flapped between current and
+  stale. Now only a newer record replaces a Status fork id; Besu held `status` through BPO2.
+
 ### Earlier discovery findings
 
 No ENRScout code defect was found in these omissions. Every EL client that could not join
