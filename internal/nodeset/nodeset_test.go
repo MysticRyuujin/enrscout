@@ -2245,6 +2245,21 @@ func TestUnchangedENRKeepsLaterStatusFork(t *testing.T) {
 		t.Fatalf("re-seen record replaced the Status fork: %s from %s", row.ForkHash, row.ForkSource)
 	}
 
+	hoodi, err := netconf.Get("hoodi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !s.SetExecutionStatus(n.ID(), "hoodi", hoodi.CurrentForkID()) {
+		t.Fatal("hoodi status rejected")
+	}
+	s.Observe(n, "v5", now.Add(80*time.Second))
+	if row := s.rows("mainnet"); len(row) != 1 || row[0].ForkSource != "enr" {
+		t.Fatalf("re-seen mainnet record kept another network's Status fork: %+v", row)
+	}
+	if !s.SetExecutionStatus(n.ID(), "mainnet", upgraded) {
+		t.Fatal("execution status rejected")
+	}
+
 	var sameSeq enr.Record
 	sameSeq.SetSeq(n.Seq())
 	sameSeq.Set(enr.IPv4{1, 2, 3, 61})
