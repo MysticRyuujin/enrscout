@@ -2245,6 +2245,19 @@ func TestUnchangedENRKeepsLaterStatusFork(t *testing.T) {
 		t.Fatalf("re-seen record replaced the Status fork: %s from %s", row.ForkHash, row.ForkSource)
 	}
 
+	var sameSeq enr.Record
+	sameSeq.SetSeq(n.Seq())
+	sameSeq.Set(enr.IPv4{1, 2, 3, 61})
+	sameSeq.Set(enr.TCP(30303))
+	sameSeq.Set(netconf.EthEntry{ForkID: forkid.ID{Hash: [4]byte{9, 9, 9, 9}}})
+	s.Observe(enode.SignNull(&sameSeq, n.ID()), "v5", now.Add(90*time.Second))
+	if row := s.rows("mainnet")[0]; row.ForkHash != "09090909" || row.ForkSource != "enr" {
+		t.Fatalf("a different record at the same seq did not apply its fork: %s from %s", row.ForkHash, row.ForkSource)
+	}
+	if !s.SetExecutionStatus(n.ID(), "mainnet", upgraded) {
+		t.Fatal("execution status rejected")
+	}
+
 	var next enr.Record
 	next.SetSeq(n.Seq() + 1)
 	next.Set(enr.IPv4{1, 2, 3, 61})
