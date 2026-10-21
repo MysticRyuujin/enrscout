@@ -135,6 +135,14 @@ func TestForksEndpoint(t *testing.T) {
 		if tracked[network] && (body.History == nil || len(body.History.Points) != 1) {
 			t.Errorf("%s: history = %+v, want the stored point", network, body.History)
 		}
+		if len(body.Schedule) == 0 {
+			t.Errorf("%s: no fork schedule, even with no fork tracked", network)
+		}
+		for _, f := range body.Schedule {
+			if f.Tracked != (f.Name == target.Name && f.Time == target.Activation().Unix()) {
+				t.Errorf("%s: schedule entry %+v disagrees with target %s", network, f, target.Name)
+			}
+		}
 		if rr.Header().Get("Cache-Control") == "" {
 			t.Errorf("%s: no Cache-Control", network)
 		}

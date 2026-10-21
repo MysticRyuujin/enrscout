@@ -109,12 +109,19 @@ default node results just like stale execution observations.
 ## Upcoming fork readiness
 
 The fork tracker evaluates each row of a network against that network's next scheduled fork.
-Each layer has its own target: the next EL fork time from the go-ethereum chain configuration,
+Each layer has its own target: the next EL fork time from the go-ethereum chain configuration
+(with `elScheduleOverrides`, and devnet `genesis.json` fork keys that go-ethereum has no field for),
 and the next CL fork version change from `internal/netconf/consensus.go`. When both activate at
 the same instant they share one name, such as Glamsterdam (Amsterdam and Gloas). When the two
 layers' forks fall at different instants they are different upgrades: the tracker follows the next
 scheduled one, or else the most recently activated one. A fork stays tracked for 14 days after
 activation unless a later fork is already scheduled.
+
+The fork schedule (`schedule`) lists every timestamp-scheduled upgrade after genesis with the same
+pairing and names. Block-numbered EL forks, before the Merge, have no activation time and are left out.
+Forks active at genesis are the genesis ruleset, not upgrades: an EL fork at or before the genesis
+timestamp (EIP-6122), and a CL fork at epoch 0. A FAR_FUTURE epoch is not scheduled. `tracked` marks
+the upgrade that the readiness counts refer to.
 
 Readiness is taken from the fork schedule that the node itself advertises, not from its version
 string:

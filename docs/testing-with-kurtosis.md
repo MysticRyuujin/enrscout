@@ -333,7 +333,8 @@ The devnet bundle also records the schedule itself (`*_FORK_EPOCH` and
 verify your arithmetic against it rather than against the args file. A `genesis.json` fork key
 that the pinned go-ethereum has no field for (a fork newer than its release, or `bpo6Time` and
 later) is still tracked: the crawler and the API log `devnet EL fork unknown to go-ethereum` at
-startup and include it in the EL fork id.
+startup and include it in the EL fork id. The Forks page and `/api/v1/forks` `schedule` list every
+upgrade the bundle schedules, from the first snapshot, not only the next one.
 
 ### What to watch on each side
 

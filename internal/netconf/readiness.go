@@ -89,10 +89,11 @@ func (t ForkTarget) Activation() time.Time {
 }
 
 var combinedForkNames = map[[2]string]string{
-	{"cancun", "deneb"}:    "Dencun",
-	{"prague", "electra"}:  "Pectra",
-	{"osaka", "fulu"}:      "Fusaka",
-	{"amsterdam", "gloas"}: "Glamsterdam",
+	{"shanghai", "capella"}: "Shapella",
+	{"cancun", "deneb"}:     "Dencun",
+	{"prague", "electra"}:   "Pectra",
+	{"osaka", "fulu"}:       "Fusaka",
+	{"amsterdam", "gloas"}:  "Glamsterdam",
 }
 
 // ForkTargetAt picks each layer's next scheduled fork, or else the one activated within
@@ -115,21 +116,31 @@ func ForkTargetAt(network string, at time.Time) (ForkTarget, error) {
 			t.EL = nil
 		}
 	}
-	switch {
-	case t.EL != nil && t.CL != nil:
-		t.Name = combinedForkNames[[2]string{strings.ToLower(t.EL.Name), strings.ToLower(t.CL.Name)}]
-		if t.Name == "" && t.EL.Name == t.CL.Name {
-			t.Name = t.EL.Name
-		}
-		if t.Name == "" {
-			t.Name = t.EL.Name + "-" + capitalize(t.CL.Name)
-		}
-	case t.EL != nil:
-		t.Name = t.EL.Name
-	case t.CL != nil:
-		t.Name = capitalize(t.CL.Name)
+	var el, cl string
+	if t.EL != nil {
+		el = t.EL.Name
 	}
+	if t.CL != nil {
+		cl = t.CL.Name
+	}
+	t.Name = upgradeName(el, cl)
 	return t, nil
+}
+
+func upgradeName(el, cl string) string {
+	switch {
+	case el != "" && cl != "":
+		if name := combinedForkNames[[2]string{strings.ToLower(el), strings.ToLower(cl)}]; name != "" {
+			return name
+		}
+		if el == cl {
+			return el
+		}
+		return el + "-" + capitalize(cl)
+	case el != "":
+		return el
+	}
+	return capitalize(cl)
 }
 
 // LayerForkTargetsAt is each layer's target on its own, unnamed and never dropped for activating at a
@@ -167,6 +178,9 @@ func (n *Network) elTargetAt(at time.Time) (ELForkTarget, bool) {
 	var next, last *elForkTime
 	for i := range n.elForks {
 		f := &n.elForks[i]
+		if f.time <= n.genesis.Time() {
+			continue
+		}
 		// Fields are in activation order, so on a tie the last one names the era, before and after it
 		// activates alike; otherwise the target's name, and the history key it selects, would change at
 		// activation.
@@ -179,7 +193,7 @@ func (n *Network) elTargetAt(at time.Time) (ELForkTarget, bool) {
 	}
 	chosen, phase := next, PhaseScheduled
 	if chosen == nil {
-		if last == nil || last.time == 0 || at.Sub(time.Unix(int64(last.time), 0)) >= ForkTrackingGrace {
+		if last == nil || at.Sub(time.Unix(int64(last.time), 0)) >= ForkTrackingGrace {
 			return ELForkTarget{}, false
 		}
 		chosen, phase = last, PhaseActivated
