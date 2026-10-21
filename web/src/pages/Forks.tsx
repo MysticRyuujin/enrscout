@@ -662,9 +662,15 @@ export default function Forks() {
           {activated
             ? "Upgraded means the identity advertises the new fork. Pending means it scheduled the fork, but the crawler has not seen it on the fork yet. Left behind means it did not advertise the fork."
             : "Ready means the identity itself advertises the fork: the execution fork ID names the fork time, or the consensus record names the fork version and epoch."}{" "}
-          This is the node&apos;s own schedule, not its version string. Release
-          labels come from a hand-curated table, updated {data.releases_updated}
-          . <Link to="/about#fork-readiness">Methodology</Link>
+          This is the node&apos;s own schedule, not its version string.
+          {releases.length > 0 && (
+            <>
+              {" "}
+              Release labels come from an operator-maintained release file
+              {data.releases_updated && <>, updated {data.releases_updated}</>}.
+            </>
+          )}{" "}
+          <Link to="/about#fork-readiness">Methodology</Link>
         </span>
       </section>
 

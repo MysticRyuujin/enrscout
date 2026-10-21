@@ -101,8 +101,9 @@ from the fork schedule that each node advertises. The client release table only 
 
 When a fork is scheduled:
 
-1. Add one `internal/netconf/releases.go` entry per client for that network and fork, with no
-   release yet. Ship it with the fork schedule update.
+1. Add one release file entry per client for that network and fork, with no release yet. The
+   file is the one named by the API's `--client-releases-file` (format in the README, "Client
+   release table"). It needs no ENRScout release.
 2. If the upgrade pairs an EL and a CL fork under a new common name, add the pair to
    `combinedForkNames` in `internal/netconf/readiness.go`.
 
@@ -114,15 +115,11 @@ As each client ships a release that carries the schedule:
    A release candidate goes in `prerelease` instead. A backport to an older release line gets its
    own floor in `min_versions`. A later release on a line already listed does not change the
    floor. Set it as `latest` and `latest_url`, so the page recommends it for its fixes.
-3. For a fast fix, edit the YAML file named by `--client-releases-file` (format in the README,
-   "Client release table"). Comment each entry with where you verified the schedule. The API reloads it on its next snapshot refresh. List only the
-   entries that change: each one replaces the built-in entry with the same network, fork, layer,
-   and client, or adds a new one.
-4. Fold the change into `releases.go` at the next ENRScout release. The API then logs a warning
-   for each file entry that matches the built-in entry; delete those entries. Once the file has
-   no entries left, remove `--client-releases-file` from the API's configuration and restart it,
-   then delete the file. The API refuses to start when the flag names a missing or invalid file.
-   A file removed while the API runs is only logged; the table already loaded stays in use.
+3. Edit the release file. Comment each entry with where you verified the schedule. The API reloads
+   it on its next snapshot refresh. The file is the whole table, so keep every entry for every
+   tracked fork. The API refuses to start when the flag names a missing or invalid file. A file
+   removed or broken while the API runs is only logged; the table already loaded stays in use.
+4. After a fork leaves the tracker, its entries no longer show. Delete them when convenient.
 
 If a fork is rescheduled, update the fork schedule first. Entries verified against the old time then
 show as outdated, and their labels stay hidden until each one is checked again and its `fork_time`

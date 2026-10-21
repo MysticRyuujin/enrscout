@@ -148,7 +148,7 @@ func TestForkReadinessAggregate(t *testing.T) {
 	}
 	defer eng.Close()
 	defer func() {
-		if err := netconf.SetClientReleases(netconf.BuiltinClientReleases()); err != nil {
+		if err := netconf.SetClientReleases(netconf.ClientReleaseTable{}); err != nil {
 			t.Fatal(err)
 		}
 	}()

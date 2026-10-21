@@ -40,29 +40,6 @@ func TestReleaseStatus(t *testing.T) {
 	}
 }
 
-func TestBuiltinClientReleasesMatchConfiguredForks(t *testing.T) {
-	table := BuiltinClientReleases()
-	if err := table.Validate(); err != nil {
-		t.Fatal(err)
-	}
-	for _, r := range table.Releases {
-		before := time.Unix(int64(r.ForkTime)-86400, 0)
-		target, err := ForkTargetAt(r.Network, before)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if target.Name != r.Fork {
-			t.Errorf("%s/%s: no configured %s fork (target %q)", r.Network, r.Client, r.Fork, target.Name)
-		}
-		_, got := ClientReleasesAt(r.Network, target)
-		for _, g := range got {
-			if g.Client == r.Client && g.Layer == r.Layer && g.Outdated {
-				t.Errorf("%s/%s: built-in entry is outdated against the configured fork time", r.Network, r.Client)
-			}
-		}
-	}
-}
-
 func TestClientReleaseTableValidate(t *testing.T) {
 	good := ClientRelease{Fork: "Glamsterdam", Network: "hoodi", Layer: "el", Client: "Geth", ForkTime: 1, MinVersions: []string{"1.17.6"}}
 	for name, tc := range map[string]struct {
@@ -81,6 +58,7 @@ func TestClientReleaseTableValidate(t *testing.T) {
 		"latest below floor":   {func(r *ClientRelease) { r.Latest = "1.17.5" }, "meets min_versions"},
 		"latest rc":            {func(r *ClientRelease) { r.Latest = "1.17.8-rc.1" }, "meets min_versions"},
 		"latest without floor": {func(r *ClientRelease) { r.MinVersions, r.Latest = nil, "1.17.7" }, "meets min_versions"},
+		"released not a date":  {func(r *ClientRelease) { r.Released = "Oct 16" }, "YYYY-MM-DD"},
 	} {
 		r := good
 		tc.mutate(&r)
@@ -100,7 +78,7 @@ func TestClientReleaseTableValidate(t *testing.T) {
 
 func TestClientReleasesRescheduledForkIsOutdated(t *testing.T) {
 	defer func() {
-		if err := SetClientReleases(BuiltinClientReleases()); err != nil {
+		if err := SetClientReleases(ClientReleaseTable{}); err != nil {
 			t.Fatal(err)
 		}
 	}()
@@ -124,46 +102,6 @@ func TestClientReleasesRescheduledForkIsOutdated(t *testing.T) {
 	}
 	if updated, _ := ClientReleasesAt("hoodi", mustTarget(t, "hoodi", time.Unix(hoodiGlamsterdam-86400, 0))); updated != "2026-09-25" {
 		t.Fatalf("an invalid table replaced the good one (updated %q)", updated)
-	}
-}
-
-func TestClientReleaseTableOverlay(t *testing.T) {
-	geth := ClientRelease{Fork: "Glamsterdam", Network: "hoodi", Layer: "el", Client: "Geth", ForkTime: 1,
-		MinVersions: []string{"1.17.6"}, Latest: "1.17.7", URL: "https://example.com/geth"}
-	besu := ClientRelease{Fork: "Glamsterdam", Network: "hoodi", Layer: "el", Client: "Besu", ForkTime: 1, MinVersions: []string{"26.9.0"}}
-	prysm := ClientRelease{Fork: "Glamsterdam", Network: "hoodi", Layer: "cl", Client: "Prysm"}
-	base := ClientReleaseTable{Updated: "2026-09-01", Releases: []ClientRelease{geth, besu, prysm}}
-
-	newGeth := ClientRelease{Fork: "glamsterdam", Network: "hoodi", Layer: "el", Client: "Geth", ForkTime: 1, MinVersions: []string{"1.18.0"}}
-	teku := ClientRelease{Fork: "Glamsterdam", Network: "hoodi", Layer: "cl", Client: "Teku"}
-	sameBesu := besu
-	sameBesu.MinVersions = []string{"26.9.0"}
-	merged, redundant := base.Overlay(ClientReleaseTable{Releases: []ClientRelease{newGeth, teku, sameBesu}})
-
-	if merged.Updated != "2026-09-01" {
-		t.Errorf("updated = %q, want the base date when the overlay sets none", merged.Updated)
-	}
-	if len(merged.Releases) != 4 {
-		t.Fatalf("got %d entries, want 4: %+v", len(merged.Releases), merged.Releases)
-	}
-	if got := merged.Releases[0]; got.Client != "Geth" || got.MinVersions[0] != "1.18.0" || got.Latest != "" || got.URL != "" {
-		t.Errorf("slot 0 = %+v, want the overlay Geth in Geth's slot, with omitted fields cleared", got)
-	}
-	if merged.Releases[1].Client != "Besu" || merged.Releases[2].Client != "Prysm" || merged.Releases[3].Client != "Teku" {
-		t.Errorf("order = %v, want base order with the new entry appended", merged.Releases)
-	}
-	if len(redundant) != 1 || redundant[0] != releaseKey(besu) {
-		t.Errorf("redundant = %v, want only the unchanged Besu entry", redundant)
-	}
-
-	merged.Releases[1].MinVersions[0] = "mutated"
-	if base.Releases[1].MinVersions[0] != "26.9.0" || besu.MinVersions[0] != "26.9.0" {
-		t.Error("the merged table aliases the base table")
-	}
-
-	dated, _ := base.Overlay(ClientReleaseTable{Updated: "2026-10-01"})
-	if dated.Updated != "2026-10-01" || len(dated.Releases) != 3 {
-		t.Errorf("an empty overlay with a date gave %+v", dated)
 	}
 }
 

@@ -47,7 +47,7 @@ func run() error {
 		corsOrigin  = flag.String("cors-origin", "", "Access-Control-Allow-Origin response value (empty disables cross-origin response sharing; not an authorization control)")
 		pprofAddr   = flag.String("pprof", "", "serve net/http/pprof on this address (empty = off)")
 		metricsAddr = flag.String("metrics-addr", "127.0.0.1:9101", "serve Prometheus metrics on this private listener (empty = disabled)")
-		releasesF   = flag.String("client-releases-file", "", "YAML (or JSON) client release entries that replace or add to the built-in table by network/fork/layer/client; reloaded when it changes (empty = built-in)")
+		releasesF   = flag.String("client-releases-file", "", "YAML (or JSON) client release table for /api/v1/forks labels; reloaded when it changes (empty = no labels)")
 		storeFlags  = store.BindFlags(flag.CommandLine, "data", "filesystem snapshot dir")
 	)
 	flag.Parse()

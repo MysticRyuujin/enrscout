@@ -120,9 +120,10 @@ every fork.
 
 ### Client release table
 
-The release labels ("✓ 2.0.0", "no release yet") come from a hand-curated table. It never changes
-the readiness counts. The built-in table is `internal/netconf/releases.go`. Each entry lists the
-first fork-ready release of each release line, so a backport counts:
+The release labels ("✓ 2.0.0", "no release yet") come from a release file that the operator
+maintains. ENRScout has no built-in table, so a new client release never needs an ENRScout release.
+The labels never change the readiness counts. Without a file, the page shows no release labels.
+Each entry lists the first fork-ready release of each release line, so a backport counts:
 
 - With `min_versions: ["2.0.0"]`, versions `2.0.0`, `2.0.1`, and `2.1.0` all meet the entry.
 - With `min_versions: ["1.39.4", "2.0.0"]`, `1.39.5` also meets it. `1.40.0` does not, because
@@ -134,40 +135,39 @@ Every entry with a release also records the fork time (`fork_time`) it was verif
 fork is rescheduled, the entry no longer matches: its labels are hidden and it shows as outdated
 until someone checks it again.
 
-To publish a newly shipped release without an ENRScout release, give the API an override file:
+Give the API the file:
 
 ```bash
 api --client-releases-file=/etc/enrscout/client-releases.yaml
 ```
 
 ```yaml
-# List only the entries that change. Each one replaces the built-in entry with the
-# same network, fork, layer, and client, or adds a new one.
-updated: 2026-10-01 # optional; the built-in date stays when it is left out
+# The file is the whole table: list every client entry for every tracked fork.
+updated: 2026-10-01 # optional; the page shows it as the table date
 releases:
   - fork: Glamsterdam
-    network: sepolia
+    network: hoodi
     layer: el
     client: Nethermind
-    fork_time: 1791294816 # the activation this entry was checked against
-    min_versions: ["2.1.0"] # one floor per release line; add a backport line's floor here
-    released: 2026-10-01
-    url: https://github.com/NethermindEth/nethermind/releases/tag/2.1.0
-    latest: 2.1.1 # optional: newest fork-ready release to recommend; must meet min_versions; set it when there are several floors
-    latest_url: https://github.com/NethermindEth/nethermind/releases/tag/2.1.1
+    fork_time: 1793036568 # the activation this entry was checked against
+    min_versions: ["2.2.0"] # one floor per release line; add a backport line's floor here
+    released: 2026-10-16
+    url: https://github.com/NethermindEth/nethermind/releases/tag/2.2.0
+    latest: 2.2.1 # optional: newest fork-ready release to recommend; must meet min_versions; set it when there are several floors
+    latest_url: https://github.com/NethermindEth/nethermind/releases/tag/2.2.1
 ```
 
-The file is YAML, so it can carry comments; a JSON file also loads, because JSON is valid YAML.
-Unknown keys are rejected, so a misspelt field fails validation instead of being ignored. An entry
-replaces the built-in entry as a whole: a field it leaves out is empty, not kept from the built-in
-entry. To withdraw a client's labels, give it an entry with no `min_versions` or `prerelease`, and
-the page shows "no release yet". Client names must be the canonical names the charts show (`Geth`,
-`Nethermind`, `Lighthouse`, and so on). The API validates the file at startup and refuses to start
-when it is missing or invalid. After startup it re-reads the file on every snapshot refresh
-(`--refresh`) and reloads it when its contents change. A file that fails to decode or validate is
-logged and ignored, and the table already in use stays in place. Fold overrides back into
-`releases.go` at the next release. After that, the API logs a warning for each file entry that
-matches the built-in entry; delete those entries.
+[`deploy/e2e/client-releases.yaml`](deploy/e2e/client-releases.yaml) is a complete example, and a
+test loads it. The file is YAML, so it can carry comments; a JSON file also loads, because JSON is
+valid YAML. Unknown keys are rejected, so a misspelt field fails validation instead of being
+ignored. `updated` and `released` must be `YYYY-MM-DD` dates. To show a client as "no release
+yet", give it an entry with no `min_versions` or `prerelease`; a client with no entry shows "not
+tracked". Client names must be the canonical names the charts show (`Geth`, `Nethermind`,
+`Lighthouse`, and so on). Entries for a devnet use the network name `devnet` and need the API's
+`--devnet-dir`. The API validates the file at startup and refuses to start when it is missing or
+invalid. After startup it re-reads the file on every snapshot refresh (`--refresh`) and reloads it
+when its contents change. A file that fails to decode or validate is logged and ignored, and the
+table already in use stays in place.
 
 ## DNS tree publisher
 

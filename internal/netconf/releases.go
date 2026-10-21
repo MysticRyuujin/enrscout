@@ -4,19 +4,18 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"reflect"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/MysticRyuujin/enrscout/internal/clientname"
 )
 
-// ClientRelease lists the releases of one client that ship a network's fork schedule. It is curated
-// by hand as clients ship (docs/operations.md, fork runbook); readiness itself never depends on it,
-// only the "known ready release" label does.
+// ClientRelease lists the releases of one client that ship a network's fork schedule. It comes only
+// from the operator's release file (docs/operations.md, fork runbook); readiness itself never depends
+// on it, only the "known ready release" label does.
 type ClientRelease struct {
 	Fork    string `json:"fork" yaml:"fork"`
 	Network string `json:"network" yaml:"network"`
@@ -41,47 +40,11 @@ type ClientReleaseTable struct {
 	Releases []ClientRelease `json:"releases" yaml:"releases"`
 }
 
-var builtinClientReleases = ClientReleaseTable{
-	Updated: "2026-10-21",
-	Releases: []ClientRelease{
-		{Fork: "Glamsterdam", Network: "hoodi", Layer: "cl", Client: "Caplin", ForkTime: hoodiGlamsterdam,
-			MinVersions: []string{"3.8.0"}, Released: "2026-10-20", URL: "https://github.com/erigontech/erigon/releases/tag/v3.8.0"},
-		{Fork: "Glamsterdam", Network: "hoodi", Layer: "el", Client: "Erigon", ForkTime: hoodiGlamsterdam,
-			MinVersions: []string{"3.8.0"}, Released: "2026-10-20", URL: "https://github.com/erigontech/erigon/releases/tag/v3.8.0"},
-		{Fork: "Glamsterdam", Network: "hoodi", Layer: "el", Client: "Geth", ForkTime: hoodiGlamsterdam,
-			MinVersions: []string{"1.17.9"}, Released: "2026-10-21", URL: "https://github.com/ethereum/go-ethereum/releases/tag/v1.17.9"},
-		{Fork: "Glamsterdam", Network: "hoodi", Layer: "el", Client: "Reth", ForkTime: hoodiGlamsterdam,
-			MinVersions: []string{"2.8.0"}, Released: "2026-10-20", URL: "https://github.com/paradigmxyz/reth/releases/tag/v2.8.0"},
-		{Fork: "Glamsterdam", Network: "hoodi", Layer: "el", Client: "Ethrex", ForkTime: hoodiGlamsterdam,
-			MinVersions: []string{"30.0.0"}, Released: "2026-10-16", URL: "https://github.com/lambdaclass/ethrex/releases/tag/v30.0.0"},
-		{Fork: "Glamsterdam", Network: "hoodi", Layer: "el", Client: "Nethermind", ForkTime: hoodiGlamsterdam,
-			MinVersions: []string{"2.2.0"}, Released: "2026-10-16", URL: "https://github.com/NethermindEth/nethermind/releases/tag/2.2.0"},
-		{Fork: "Glamsterdam", Network: "hoodi", Layer: "el", Client: "Besu", ForkTime: hoodiGlamsterdam,
-			MinVersions: []string{"26.10.0"}, Released: "2026-10-16", URL: "https://github.com/besu-eth/besu/releases/tag/26.10.0"},
-		{Fork: "Glamsterdam", Network: "hoodi", Layer: "el", Client: "Nimbus", ForkTime: hoodiGlamsterdam,
-			MinVersions: []string{"0.4.3"}, Released: "2026-10-17", URL: "https://github.com/status-im/nimbus-eth1/releases/tag/v0.4.3"},
-		{Fork: "Glamsterdam", Network: "hoodi", Layer: "cl", Client: "Lighthouse", ForkTime: hoodiGlamsterdam,
-			MinVersions: []string{"8.3.0"}, Released: "2026-10-19", URL: "https://github.com/sigp/lighthouse/releases/tag/v8.3.0"},
-		{Fork: "Glamsterdam", Network: "hoodi", Layer: "cl", Client: "Prysm", ForkTime: hoodiGlamsterdam,
-			MinVersions: []string{"7.3.0"}, Released: "2026-10-16", URL: "https://github.com/OffchainLabs/prysm/releases/tag/v7.3.0"},
-		{Fork: "Glamsterdam", Network: "hoodi", Layer: "cl", Client: "Teku", ForkTime: hoodiGlamsterdam,
-			MinVersions: []string{"26.10.1"}, Released: "2026-10-15", URL: "https://github.com/Consensys-Incorporated/teku/releases/tag/26.10.1"},
-		{Fork: "Glamsterdam", Network: "hoodi", Layer: "cl", Client: "Nimbus", ForkTime: hoodiGlamsterdam,
-			MinVersions: []string{"26.10.1"}, Released: "2026-10-16", URL: "https://github.com/status-im/nimbus-eth2/releases/tag/v26.10.1"},
-		{Fork: "Glamsterdam", Network: "hoodi", Layer: "cl", Client: "Lodestar", ForkTime: hoodiGlamsterdam,
-			MinVersions: []string{"1.50.0"}, Released: "2026-10-12", URL: "https://github.com/ChainSafe/lodestar/releases/tag/v1.50.0"},
-		{Fork: "Glamsterdam", Network: "hoodi", Layer: "cl", Client: "Grandine", ForkTime: hoodiGlamsterdam,
-			Prerelease: "3.0.0-rc.1", Released: "2026-10-19", URL: "https://github.com/grandinetech/grandine/releases/tag/3.0.0-rc.1"},
-	},
-}
-
 var (
 	releasesMu        sync.RWMutex
-	clientReleases    = builtinClientReleases
+	clientReleases    ClientReleaseTable
 	clientReleasesGen uint64
 )
-
-func BuiltinClientReleases() ClientReleaseTable { return builtinClientReleases }
 
 func ClientReleasesGeneration() uint64 {
 	releasesMu.RLock()
@@ -106,57 +69,19 @@ func releaseKey(r ClientRelease) string {
 	return r.Network + "/" + strings.ToLower(r.Fork) + "/" + r.Layer + "/" + r.Client
 }
 
-// Overlay replaces each entry of t whose key o also has, whole-entry so an omitted field is empty
-// rather than inherited, and appends o's new keys. redundant names o entries that equal t's.
-func (t ClientReleaseTable) Overlay(o ClientReleaseTable) (merged ClientReleaseTable, redundant []string) {
-	merged.Updated = t.Updated
-	if o.Updated != "" {
-		merged.Updated = o.Updated
-	}
-	merged.Releases = make([]ClientRelease, 0, len(t.Releases)+len(o.Releases))
-	slot := make(map[string]int, len(t.Releases))
-	for _, r := range t.Releases {
-		slot[releaseKey(r)] = len(merged.Releases)
-		merged.Releases = append(merged.Releases, cloneRelease(r))
-	}
-	for _, r := range o.Releases {
-		key := releaseKey(r)
-		i, ok := slot[key]
-		if !ok {
-			slot[key] = len(merged.Releases)
-			merged.Releases = append(merged.Releases, cloneRelease(r))
-			continue
-		}
-		if sameRelease(merged.Releases[i], r) {
-			redundant = append(redundant, key)
-		}
-		merged.Releases[i] = cloneRelease(r)
-	}
-	return merged, redundant
-}
-
-func cloneRelease(r ClientRelease) ClientRelease {
-	r.MinVersions = slices.Clone(r.MinVersions)
-	return r
-}
-
-// sameRelease treats an empty and an absent min_versions as equal, since both decode from a file.
-func sameRelease(a, b ClientRelease) bool {
-	if !slices.Equal(a.MinVersions, b.MinVersions) {
-		return false
-	}
-	a.MinVersions, b.MinVersions = nil, nil
-	return reflect.DeepEqual(a, b)
-}
-
 func (t ClientReleaseTable) Validate() error {
 	var errs []error
+	if t.Updated != "" && !isDate(t.Updated) {
+		errs = append(errs, fmt.Errorf("updated %q is not a YYYY-MM-DD date", t.Updated))
+	}
 	seen := map[string]bool{}
 	for _, r := range t.Releases {
 		key := releaseKey(r)
 		switch {
 		case r.Network == "" || r.Fork == "":
 			errs = append(errs, fmt.Errorf("%s: network and fork are required", key))
+		case r.Released != "" && !isDate(r.Released):
+			errs = append(errs, fmt.Errorf("%s: released %q is not a YYYY-MM-DD date", key, r.Released))
 		case !knownNetwork(r.Network):
 			errs = append(errs, fmt.Errorf("%s: unknown network %q", key, r.Network))
 		case r.URL != "" && !httpURL(r.URL):
@@ -182,6 +107,11 @@ func (t ClientReleaseTable) Validate() error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+func isDate(s string) bool {
+	_, err := time.Parse(time.DateOnly, s)
+	return err == nil
 }
 
 func knownNetwork(name string) bool {

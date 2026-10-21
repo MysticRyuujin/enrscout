@@ -149,8 +149,8 @@ verified handshake in the last 7 days; every other row is `unidentified`. The cr
 `enrscout`, which announce every scheduled fork) are excluded from all readiness counts, from the
 readiness history, and from the `readiness` node filter.
 
-The release table is curated by hand: built into `internal/netconf/releases.go`, and overlaid entry by entry at
-runtime with the API's `--client-releases-file`. For each client it lists the first release of
+The release table is the API's `--client-releases-file`, which the operator maintains. There is no
+built-in table, so without the file no version is labelled. For each client it lists the first release of
 each release line that ships the schedule (`min_versions`). A reported version is labelled:
 
 - `meets`: a release build at or above the floor of its own major.minor line, or at or above the
