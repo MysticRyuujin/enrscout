@@ -308,7 +308,7 @@ func (s *Set) ObserveAuthenticatedEL(n *enode.Node, via, network, forkHash strin
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if cur := s.m[n.ID()]; cur != nil {
+	if cur := s.m[n.ID()]; cur != nil && cur.Layer == "el" {
 		cur.MembershipSource = "status"
 		cur.MembershipVerifiedAt = now
 		cur.LastResolved = now
@@ -337,7 +337,7 @@ func (s *Set) ObserveAuthenticatedCL(n *enode.Node, network, forkHash string, no
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if cur := s.m[n.ID()]; cur != nil {
+	if cur := s.m[n.ID()]; cur != nil && cur.Layer == "cl" {
 		cur.MembershipSource = "status"
 		cur.MembershipVerifiedAt = now
 		cur.LastResolved = now
