@@ -140,6 +140,15 @@ Reviewed and deliberately not fixed; re-litigate only with new information.
   (`netconf.gatherHashes`). Genesis-sharing forks (PulseChain) reuse mainnet's ancient
   Frontier hash `fc64ec04`; an all-history sweep misclassifies them as mainnet.
   Guarded by `TestAncientForkDoesNotClassify`; don't widen the window back to genesis.
+- **A cancelled fork is runtime data, applied at startup.** `--fork-file` `cancelled_forks` go through
+  `netconf.ApplyCancellations` (like `RegisterDevnet`, before any network is used, after devnet
+  registration) in the crawler, the DNS publisher and the API. The fork leaves the canonical EL and CL
+  schedule; its would-be time stays a cache and collapse boundary (`ForkEraTokenAt`,
+  `CancelledForkActivatedBetween`); nodes on it keep membership but are never current; and the target
+  has `PhaseCancelled`, where `ReadinessAt` (and its SQL mirror) inverts `ready` to mean unscheduled.
+  The API hot-reloads releases and notices, never cancellations (`ValidateCancellations` rejects a
+  reload that would fail at startup). Delete an entry only after the grace and once no deployed binary
+  compiles the fork.
 - **Fork upgrades are pre-activation work, but not go-ethereum upgrades.** EL fork ids are
   computed in `netconf/forkid.go` from go-ethereum's `ChainConfig` plus `elScheduleOverrides`, so
   an EL fork that the pinned geth lacks gets an override entry, not a dependency bump;

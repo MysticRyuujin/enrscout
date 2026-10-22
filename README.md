@@ -93,7 +93,7 @@ where that is meaningful.
 | `GET /api/v1/nodes`               | Filter/search/sort/paginate. Text filters use case-insensitive partial matching. Params: `network, client, country, ip, layer(el\|cl), protocol(v4\|v5), ipstack(dual\|ipv6\|ipv4), hosting(yes\|no), dialable(yes\|no), membership(verified\|claimed\|all), fork(current\|stale\|all), identified(recent), sync(synced\|lagging\|unknown), readiness(ready\|pending\|not_ready\|mismatch\|unknown\|stale; requires network; spans all forks unless `fork` is set), client_exact(yes), q, cgc_min, cgc_max, sort(score\|last_seen\|first_seen\|client\|network\|cgc), order(asc\|desc), limit, offset`. Rows carry separate membership, fork, fingerprint, liveness, pin, and geolocation evidence fields. `cgc_min`/`cgc_max` bound the ENR-declared custody group count (`cgc`, consensus nodes; 128 = supernode); rows without a decodable `cgc` never match. `identified=recent` keeps only nodes with a verified client handshake in the last 7 days, the population the client charts count. `sync` filters on `sync_state` (see DEFINITIONS.md "Sync state"); rows also carry `head`, `head_observed_at`, `head_lag`, and the ENR-advertised consensus schedule (`enr_fork_digest`, `enr_next_fork_version`, `enr_next_fork_epoch`). Returns `{total,count,nodes[]}`. JSON serializes unsigned 64-bit `seq` and `fork_next` as strings to preserve exact values in JavaScript. |
 | `GET /api/v1/nodes/{key}`         | One node by ID (or a hexadecimal ID prefix of at least 16 characters), IP, enode, or ENR.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `GET /api/v1/stats`               | Current-fork-only scalars (current fork ID exactly; earlier eras count as stale) including dialability and separate `execution_stale`/`consensus_stale` audit counts, plus `fork_evaluated_at`, network, EL/CL client (identifications fresher than 7 days, with `el/cl_identified_stale` exclusion counts and `by_direction_el/cl` inbound-outbound mixes), country, ASN organization, OS, layer, and optional client-version breakdowns (`client`, optionally narrowed by `layer(el\|cl)`; same population as the client charts).                                                                                                                                                                                                                                            |
-| `GET /api/v1/forks`              | Readiness for the network's next scheduled fork, or the one activated in the last 14 days. Requires `network`. Returns the fork target (`fork.el`: name, time, pre/post fork hash; `fork.cl`: name, epoch, version, pre/post digest), `phase(scheduled\|activated\|none)`, per-layer `counts` of `ready\|pending\|not_ready\|mismatch\|unknown\|stale`, current-fork `sync` counts, per-client and per-version splits over the client-chart population (`unidentified` holds the rest), the `releases` table from the operator's release file, `schedule` (every timestamp-scheduled upgrade after genesis; block-numbered EL forks have no activation time and are left out: `name`, `el`, `cl`, `time`, `cl_epoch`, `activated`, `tracked`; returned also when `phase` is `none`), plus `history`: per-layer readiness counts, and per-client counts over the client-chart population (`el_clients`, `cl_clients`), from the crawler's readiness history: up to 480 of its 15-minute points, plus every per-minute point within 3 hours of activation. See DEFINITIONS.md "Upcoming fork readiness". |
+| `GET /api/v1/forks`              | Readiness for the network's next scheduled fork, or the one activated in the last 14 days. Requires `network`. Returns the fork target (`fork.el`: name, time, pre/post fork hash; `fork.cl`: name, epoch, version, pre/post digest), `phase(scheduled\|activated\|cancelled\|none)` (`fork.cancelled` for a called-off fork, whose `ready` means unscheduled), per-layer `counts` of `ready\|pending\|not_ready\|mismatch\|unknown\|stale`, current-fork `sync` counts, per-client and per-version splits over the client-chart population (`unidentified` holds the rest), the `releases` table from the operator's release file, `schedule` (every timestamp-scheduled upgrade after genesis; block-numbered EL forks have no activation time and are left out: `name`, `el`, `cl`, `time`, `cl_epoch`, `activated`, `tracked`; returned also when `phase` is `none`), `notices` (operator notices for the network: `severity`, `title`, `body`, `links`), plus `history`: per-layer readiness counts, and per-client counts over the client-chart population (`el_clients`, `cl_clients`), from the crawler's readiness history: up to 480 of its 15-minute points, plus every per-minute point within 3 hours of activation. See DEFINITIONS.md "Upcoming fork readiness". |
 | `GET /api/v1/map`                 | GeoJSON FeatureCollection of geolocated nodes. `format=compact` returns Web UI tuples `[id_prefix,lon,lat,client,country,city,layer,hosting,ipv6,verified,accuracy_km,subdivision,cgc]` (`hosting`/`ipv6`/`verified` as `0\|1`) without repeated GeoJSON keys.                                                                                                                                                                                                                                                                                                                                                                     |
 
 `--cors-origin` controls whether browser JavaScript can read cross-origin API responses;
@@ -120,6 +120,35 @@ devnet, `genesis.json` fork keys that go-ethereum has no field for) and `interna
 which the [fork-upgrade runbook](docs/operations.md#fork-upgrade-runbook) already updates before
 every fork.
 
+### Operator fork file
+
+`--fork-file` names one YAML (or JSON) file that the crawler, the DNS publisher and the API read
+(the API also accepts the older `--client-releases-file`). It holds three things:
+
+- `releases`: the client release table below. The API reloads it when the file changes.
+- `notices`: operator notices for the Forks page and a strip on every page, each with a
+  `severity` (`info`, `warning` or `critical`), a `title`, a plain-text `body`, http(s) `links`,
+  and optional `network`, `starts` and `expires`. The API reloads them when the file changes.
+- `cancelled_forks`: forks called off after clients shipped them. Each entry names the network,
+  the upgrade, and the EL (`name`, `time`) and CL (`name`, `epoch`, `version`, and `max_blobs` for a
+  BPO) coordinates of the compiled schedule. They apply at startup, so restart all three services
+  after a change. See the [fork runbook](docs/operations.md#cancelling-a-scheduled-fork).
+
+```yaml
+cancelled_forks:
+  - network: hoodi
+    fork: Glamsterdam
+    el: {name: Amsterdam, time: 1793036568}
+    cl: {name: gloas, epoch: 132352, version: "80000910"}
+notices:
+  - network: hoodi
+    severity: critical
+    title: Hoodi Glamsterdam is cancelled
+    body: A node on a release that still schedules it forks away from Hoodi at that time.
+    links:
+      - {label: "eth-clients/hoodi#33", url: "https://github.com/eth-clients/hoodi/pull/33"}
+```
+
 ### Client release table
 
 The release labels ("✓ 2.0.0", "no release yet") come from a release file that the operator
@@ -140,7 +169,7 @@ until someone checks it again.
 Give the API the file:
 
 ```bash
-api --client-releases-file=/etc/enrscout/client-releases.yaml
+api --fork-file=/etc/enrscout/client-releases.yaml
 ```
 
 ```yaml
@@ -157,6 +186,7 @@ releases:
     url: https://github.com/NethermindEth/nethermind/releases/tag/2.2.0
     latest: 2.2.1 # optional: newest fork-ready release to recommend; must meet min_versions; set it when there are several floors
     latest_url: https://github.com/NethermindEth/nethermind/releases/tag/2.2.1
+    # unscheduled_in: ["2.2.1"]  # for a cancelled fork: the first release that drops it again
 ```
 
 [`deploy/e2e/client-releases.yaml`](deploy/e2e/client-releases.yaml) is a complete example, and a

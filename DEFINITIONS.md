@@ -172,6 +172,24 @@ activates at another time, the entry is `outdated` and its labels are withheld, 
 checked against the old date may not carry the new one. A node can advertise the fork while its
 fingerprint still shows an older version, because the fingerprint can be up to seven days old.
 
+### Cancelled forks
+
+A fork in the operator fork file's `cancelled_forks` is removed from the canonical schedule, but
+the tracker keeps it as `phase: cancelled` until 14 days after the time it would have activated.
+In that phase the states invert, so `ready` always means safe:
+
+| State | Execution row | Consensus row |
+| --- | --- | --- |
+| `ready` (unscheduled) | current, and the fork ID `Next` is not the cancelled time | current, and the ENR does not name the cancelled version and epoch |
+| `not_ready` (still scheduled) | the pre-fork hash with `Next` equal to the cancelled time, or a fork ID only a schedule with the cancelled fork produces | the ENR names the cancelled version and epoch, or a digest only a schedule with the cancelled fork produces |
+| `unknown` | (none) | current, and the ENR digest is missing or differs from `fork_hash` |
+| `stale` | any other row that is not current | same |
+
+`not_ready` does not depend on currency: a node that still schedules the fork but has not
+re-published after the time stays counted. Nodes on the cancelled fork keep the network's
+membership and never read as current. Release labels read `affected` for versions from
+`min_versions` up to `unscheduled_in` on the same release line, and `unaffected` otherwise.
+
 ## Dialability
 
 - **Dialable**: the node advertises an application transport for an address family it
