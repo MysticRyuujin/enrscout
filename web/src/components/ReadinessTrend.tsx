@@ -267,7 +267,7 @@ export default function ReadinessTrend({
               y2={PAD.top + plotH}
             />
             <text
-              className="trend-axis"
+              className={`trend-axis trend-activation-label${cancelled ? " cancelled" : ""}`}
               x={x(activation) - 4}
               textDecoration={cancelled ? "line-through" : undefined}
               y={PAD.top + 10}

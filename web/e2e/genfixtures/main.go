@@ -209,8 +209,13 @@ func withForkReadiness(ctx context.Context, st store.Store, layout snapshot.Layo
 	}
 	h := &snapshot.ReadinessHistory{Version: snapshot.ReadinessHistoryVersion, Network: network, Fork: target.Name}
 	h.ELTime, h.CLEpoch = target.Schedule()
+	// A cancelled fork's history spans days, so the trend reaches its would-be activation line.
+	step := snapshot.ReadinessInterval
+	if target.IsCancelled() {
+		step = 6 * time.Hour
+	}
 	for i := range 24 {
-		at := gen.Add(-time.Duration(23-i) * snapshot.ReadinessInterval)
+		at := gen.Add(-time.Duration(23-i) * step)
 		ready := i / 8
 		if target.IsCancelled() {
 			// Scheduling rose before the cancellation and falls after it.

@@ -1224,6 +1224,15 @@ code.wrap {
   stroke-dasharray: 4 4;
 }
 
+.trend-activation-label {
+  fill: var(--ok);
+  font-weight: 600;
+}
+
+.trend-activation-label.cancelled {
+  fill: #e5484d;
+}
+
 .trend-cross {
   stroke: var(--border-2);
 }
