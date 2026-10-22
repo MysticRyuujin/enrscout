@@ -578,7 +578,7 @@ BPO1 at epoch 4 and BPO2 at epoch 6.
 - **Besu ENR over discv5.** Besu `26.10-develop-90d559a` re-publishes `seq=2` with the new fork id
   (`admin_nodeInfo`), but its discv5 service keeps serving the startup `seq=1` record (`devp2p discv5
   resolve`): `PeerDiscoveryAgentV5.updateNodeRecord` updates `NodeRecordManager` and never the
-  discovery system. bootnodoor therefore relays the stale record. ENRScout let each re-sighting of
+  discovery system (besu-eth/besu#11708). bootnodoor therefore relays the stale record. ENRScout let each re-sighting of
   that unchanged record replace the fresher Status fork id, so the row flapped between current and
   stale. Now only a newer record replaces a Status fork id; Besu held `status` through BPO2.
 
