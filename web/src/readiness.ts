@@ -84,17 +84,23 @@ export function stateHint(state: Readiness, mode: ForkMode): string {
   }
 }
 
-// The fork view a network is in, for pages that show a per-node readiness without the Forks data.
-export function useForkMode(network: string): ForkMode {
+// One layer can be cancelled while the other is still scheduled for the same instant.
+export function layerForkMode(d: ForkReadiness, layer: "el" | "cl"): ForkMode {
+  return forkMode(d.fork[layer]?.phase ?? d.phase);
+}
+
+// The fork view a layer is in, for pages that show a per-node readiness without the Forks data.
+export function useForkMode(network: string, layer: "el" | "cl"): ForkMode {
   const [mode, setMode] = useState<ForkMode>("scheduled");
   useEffect(() => {
     let live = true;
+    setMode("scheduled");
     fetchForks(network)
-      .then((d) => live && setMode(forkMode(d.phase)))
+      .then((d) => live && setMode(layerForkMode(d, layer)))
       .catch(() => {});
     return () => {
       live = false;
     };
-  }, [network]);
+  }, [network, layer]);
   return mode;
 }

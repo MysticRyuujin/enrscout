@@ -3,7 +3,13 @@ import type { ReactNode } from "react";
 import { Link } from "react-router";
 import { fetchForks } from "../api";
 import { useNetwork } from "../network";
-import { forkMode, legendStates, stateHint, stateLabel } from "../readiness";
+import {
+  forkMode,
+  layerForkMode,
+  legendStates,
+  stateHint,
+  stateLabel,
+} from "../readiness";
 import type { ForkMode } from "../readiness";
 import StatTiles from "../components/StatTiles";
 import Notices from "../components/Notices";
@@ -544,12 +550,13 @@ export default function Forks() {
   const passed = cancelled && activation !== undefined && now >= activation;
   const layers = (["el", "cl"] as const).filter((l) => data.layers[l]);
   const tiles = layers.flatMap((l) => {
+    const m = layerForkMode(data, l);
     const c = data.layers[l]!.counts;
     const pool = readyPool(c);
     const share = readyShare(c);
     return [
       {
-        label: `${l.toUpperCase()} ${activated ? "upgraded" : cancelled ? "unscheduled" : "ready"}`,
+        label: `${l.toUpperCase()} ${m === "activated" ? "upgraded" : m === "cancelled" ? "unscheduled" : "ready"}`,
         value: c.ready,
         hint:
           share === null
@@ -566,7 +573,7 @@ export default function Forks() {
           ]
         : []),
       {
-        label: `${l.toUpperCase()} ${activated ? "left behind" : cancelled ? (passed ? "on cancelled fork" : "still scheduled") : "not scheduled"}`,
+        label: `${l.toUpperCase()} ${m === "activated" ? "left behind" : m === "cancelled" ? (passed ? "on cancelled fork" : "still scheduled") : "not scheduled"}`,
         value: c.not_ready,
         hint: pct(c.not_ready, pool),
       },
@@ -846,7 +853,7 @@ export default function Forks() {
           layer={l}
           data={data.layers[l]!}
           releases={releases}
-          mode={forkMode(data.fork[l]?.phase ?? data.phase)}
+          mode={layerForkMode(data, l)}
         />
       ))}
 
@@ -882,37 +889,43 @@ export default function Forks() {
                 </tr>
               </thead>
               <tbody>
-                {releases.map((r) => (
-                  <tr key={r.layer + r.client}>
-                    <td>{r.client}</td>
-                    <td>{layerName(r.layer)}</td>
-                    <td className={hasRelease(r) ? "rd-rel ok" : "rd-rel"}>
-                      <ReleaseLink
-                        text={
-                          cancelled && !r.outdated
-                            ? (r.min_versions?.join(" / ") ??
-                              (r.prerelease
-                                ? `pre-release ${r.prerelease}`
-                                : "-"))
-                            : releaseText(r)
-                        }
-                        url={r.url}
-                      />
-                    </td>
-                    <td>
-                      {cancelled ? (
-                        r.outdated ? (
-                          "-"
+                {releases.map((r) => {
+                  const rowCancelled =
+                    r.layer === "el" || r.layer === "cl"
+                      ? layerForkMode(data, r.layer) === "cancelled"
+                      : cancelled;
+                  return (
+                    <tr key={r.layer + r.client}>
+                      <td>{r.client}</td>
+                      <td>{layerName(r.layer)}</td>
+                      <td className={hasRelease(r) ? "rd-rel ok" : "rd-rel"}>
+                        <ReleaseLink
+                          text={
+                            rowCancelled && !r.outdated
+                              ? (r.min_versions?.join(" / ") ??
+                                (r.prerelease
+                                  ? `pre-release ${r.prerelease}`
+                                  : "-"))
+                              : releaseText(r)
+                          }
+                          url={r.url}
+                        />
+                      </td>
+                      <td>
+                        {rowCancelled ? (
+                          r.outdated ? (
+                            "-"
+                          ) : (
+                            (r.unscheduled_in?.join(" / ") ?? "no fix yet")
+                          )
                         ) : (
-                          (r.unscheduled_in?.join(" / ") ?? "no fix yet")
-                        )
-                      ) : (
-                        <LatestRelease r={r} />
-                      )}
-                    </td>
-                    <td>{r.released ?? "-"}</td>
-                  </tr>
-                ))}
+                          <LatestRelease r={r} />
+                        )}
+                      </td>
+                      <td>{r.released ?? "-"}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

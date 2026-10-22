@@ -115,7 +115,7 @@ function SortableHeader({
 
 export default function NodesPage({ layer }: { layer: "el" | "cl" }) {
   const { network } = useNetwork();
-  const forkModeNow = useForkMode(network);
+  const forkModeNow = useForkMode(network, layer);
   const [sp, setSp] = useSearchParams();
   const param = (k: string) => sp.get(k) ?? "";
   const sortParam = sp.get("sort");

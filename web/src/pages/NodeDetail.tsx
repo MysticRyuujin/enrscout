@@ -57,7 +57,10 @@ export default function NodeDetail() {
   const { key } = useParams();
   const [node, setNode] = useState<Node | null>(null);
   const { network } = useNetwork();
-  const mode = useForkMode(node?.network ?? network);
+  const mode = useForkMode(
+    node?.network ?? network,
+    node?.layer === "cl" ? "cl" : "el",
+  );
   const [state, setState] = useState<"loading" | "ok" | "missing" | "error">(
     "loading",
   );
