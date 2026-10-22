@@ -246,7 +246,25 @@ func readinessConditionAt(network, want string, at time.Time) (string, []any, er
 			add(layer, "NOT "+current+" AND lower(coalesce(fork_hash, '')) <> ?", pre)
 		}
 	}
-	if el := target.EL; el != nil {
+	cancelled := func(layer, affected string, affectedArgs []any, matched string) {
+		switch netconf.Readiness(want) {
+		case netconf.NotReady:
+			parts = append(parts, "(layer = '"+layer+"' AND ("+affected+"))")
+			args = append(args, affectedArgs...)
+		case netconf.Ready:
+			add(layer, current+" AND NOT ("+affected+") AND "+matched, affectedArgs...)
+		case netconf.Unknown:
+			if matched != "TRUE" {
+				add(layer, current+" AND NOT ("+affected+") AND NOT ("+matched+")", affectedArgs...)
+			}
+		case netconf.Stale:
+			add(layer, "NOT "+current+" AND NOT ("+affected+")", affectedArgs...)
+		}
+	}
+	if el := target.EL; el != nil && el.Phase == netconf.PhaseCancelled {
+		cancelled("el", "lower(coalesce(fork_hash, '')) = ? OR (lower(coalesce(fork_hash, '')) = ? AND coalesce(fork_next, 0) = ?)",
+			[]any{el.PostHash, el.PreHash, el.Time}, "TRUE")
+	} else if el != nil {
 		if el.Phase == netconf.PhaseActivated {
 			activated("el", el.PreHash, "TRUE", nil, "coalesce(fork_next, 0) = ?", el.Time)
 		} else {
@@ -262,7 +280,12 @@ func readinessConditionAt(network, want string, at time.Time) (string, []any, er
 			}
 		}
 	}
-	if cl := target.CL; cl != nil {
+	if cl := target.CL; cl != nil && cl.Phase == netconf.PhaseCancelled {
+		cancelled("cl", "lower(coalesce(fork_hash, '')) = ? OR (lower(coalesce(enr_fork_digest, '')) = ? AND "+
+			"coalesce(enr_next_fork_epoch, 0) = ? AND lower(coalesce(enr_next_fork_version, '')) = ?)",
+			[]any{cl.PostDigest, cl.PreDigest, cl.Epoch, cl.Version},
+			"coalesce(enr_fork_digest, '') <> '' AND lower(enr_fork_digest) = lower(fork_hash)")
+	} else if cl != nil {
 		if cl.Phase == netconf.PhaseActivated {
 			activated("cl", cl.PreDigest, "lower(coalesce(enr_fork_digest, '')) = ?", []any{cl.PreDigest},
 				"coalesce(enr_next_fork_epoch, 0) = ? AND lower(coalesce(enr_next_fork_version, '')) = ?", cl.Epoch, cl.Version)

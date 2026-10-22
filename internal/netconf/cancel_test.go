@@ -21,8 +21,7 @@ func freshNetwork(t *testing.T, name string) *Network {
 		t.Fatalf("no network %s", name)
 	}
 	orig := registry[i]
-	fresh := &Network{Name: orig.Name, NetworkID: orig.NetworkID, ChainConfig: orig.ChainConfig, genesisFn: orig.genesisFn,
-		cl: orig.cl.clone(), bootnodes: orig.bootnodes, clBootnodes: orig.clBootnodes, extraELForks: orig.extraELForks}
+	fresh := orig.unloadedCopy()
 	registry[i] = fresh
 	t.Cleanup(func() { registry[i] = orig })
 	return fresh

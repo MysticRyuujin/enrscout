@@ -85,10 +85,19 @@ func TestReadinessMatchesSQLAndGo(t *testing.T) {
 	}
 
 	activation := netconftest.Activation
-	for name, at := range map[string]time.Time{
+	instants := map[string]time.Time{
 		"a day before": activation.Add(-24 * time.Hour), "a second before": activation.Add(-time.Second),
 		"at activation": activation, "late in grace": activation.Add(netconf.ForkTrackingGrace - time.Second),
-	} {
+	}
+	matchSQLAndGo(t, eng, rows, instants)
+	t.Run("cancelled", func(t *testing.T) {
+		netconftest.Cancel(t)
+		matchSQLAndGo(t, eng, rows, instants)
+	})
+}
+
+func matchSQLAndGo(t *testing.T, eng *Engine, rows []readinessRow, instants map[string]time.Time) {
+	for name, at := range instants {
 		t.Run(name, func(t *testing.T) {
 			target, err := netconf.ForkTargetAt(netconftest.Network, at)
 			if err != nil {
@@ -123,6 +132,8 @@ func TestReadinessMatchesSQLAndGo(t *testing.T) {
 			wantCovered := []netconf.Readiness{netconf.Ready, netconf.Pending, netconf.NotReady, netconf.Unknown, netconf.Stale}
 			if target.Phase() == netconf.PhaseScheduled {
 				wantCovered = []netconf.Readiness{netconf.Ready, netconf.NotReady, netconf.Mismatch, netconf.Unknown, netconf.Stale}
+			} else if target.Phase() == netconf.PhaseCancelled {
+				wantCovered = []netconf.Readiness{netconf.Ready, netconf.NotReady, netconf.Unknown, netconf.Stale}
 			}
 			if len(covered) != len(wantCovered) {
 				t.Fatalf("corpus covers %v, want %v", covered, wantCovered)

@@ -292,3 +292,31 @@ func CancelledForkActivatedBetween(network, layer string, from, to time.Time) bo
 	}
 	return false
 }
+
+// WithCancellations applies cancellations to fresh, unloaded copies of the named networks and
+// returns a function that restores the originals. It exists for tests in other packages, which share
+// networks that earlier tests have already loaded.
+func WithCancellations(list []CancelledFork) (restore func(), err error) {
+	saved := slices.Clone(registry)
+	restore = func() { registry = saved }
+	registry = slices.Clone(registry)
+	for i, n := range registry {
+		if slices.ContainsFunc(list, func(c CancelledFork) bool { return c.Network == n.Name }) {
+			registry[i] = n.unloadedCopy()
+		}
+	}
+	if _, err := ApplyCancellations(list); err != nil {
+		restore()
+		return nil, err
+	}
+	return restore, nil
+}
+
+func (n *Network) unloadedCopy() *Network {
+	c := &Network{Name: n.Name, NetworkID: n.NetworkID, ChainConfig: n.ChainConfig, genesisFn: n.genesisFn,
+		bootnodes: n.bootnodes, clBootnodes: n.clBootnodes, extraELForks: n.extraELForks}
+	if n.cl != nil {
+		c.cl = n.cl.clone()
+	}
+	return c
+}
