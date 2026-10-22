@@ -9,7 +9,7 @@ the repository-root AGENTS.md for architecture and cross-cutting constraints.
   as innerHTML; never put peer-controlled strings there without escaping.
 - **The brand mark exists twice.** `BrandMark` in `src/components/Nav.tsx` and
   `public/favicon.svg`. A static favicon cannot import from the bundle, so the geometry
-  is copied; change both. Its dark separators are cut with an SVG mask rather than
+  is copied; change both, and re-render the social card `public/og.png` (1200×630). Its dark separators are cut with an SVG mask rather than
   painted, because the nav bar is translucent over scrolling content.
 - Network accent color follows the selected network in tiles/headers; the map colors
   points **by client** with one stable assignment ranked by within-layer share, and
