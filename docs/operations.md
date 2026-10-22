@@ -106,7 +106,7 @@ from the fork schedule that each node advertises. The client release table only 
 When a fork is scheduled:
 
 1. Add one release file entry per client for that network and fork, with no release yet. The
-   file is the one named by the API's `--client-releases-file` (format in the README, "Client
+   file is the one named by `--fork-file` (format in the README, "Client
    release table"). It needs no ENRScout release.
 2. If the upgrade pairs an EL and a CL fork under a new common name, add the pair to
    `combinedForkNames` in `internal/netconf/readiness.go`.

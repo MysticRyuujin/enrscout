@@ -49,7 +49,6 @@ func run() error {
 		pprofAddr   = flag.String("pprof", "", "serve net/http/pprof on this address (empty = off)")
 		metricsAddr = flag.String("metrics-addr", "127.0.0.1:9101", "serve Prometheus metrics on this private listener (empty = disabled)")
 		forkFileF   = flag.String("fork-file", "", "operator fork file: client release labels, notices and cancelled forks (YAML or JSON); releases and notices reload when it changes, cancellations apply at startup (empty = none)")
-		releasesF   = flag.String("client-releases-file", "", "deprecated alias of --fork-file")
 		storeFlags  = store.BindFlags(flag.CommandLine, "data", "filesystem snapshot dir")
 	)
 	flag.Parse()
@@ -73,12 +72,6 @@ func run() error {
 	}
 	if err := validateCORSOrigin(*corsOrigin); err != nil {
 		return fmt.Errorf("--cors-origin: %w", err)
-	}
-	if *forkFileF != "" && *releasesF != "" && *forkFileF != *releasesF {
-		return errors.New("--fork-file and --client-releases-file name different files")
-	}
-	if *forkFileF == "" {
-		*forkFileF = *releasesF
 	}
 	var forkFile *forkfile.Watcher
 	if *forkFileF != "" {

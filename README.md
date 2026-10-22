@@ -122,8 +122,8 @@ every fork.
 
 ### Operator fork file
 
-`--fork-file` names one YAML (or JSON) file that the crawler, the DNS publisher and the API read
-(the API also accepts the older `--client-releases-file`). It holds three things:
+`--fork-file` names one YAML (or JSON) file that the crawler, the DNS publisher and the API read.
+It holds three things:
 
 - `releases`: the client release table below. The API reloads it when the file changes.
 - `notices`: operator notices for the Forks page and a strip on every page, each with a

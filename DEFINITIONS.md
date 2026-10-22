@@ -156,7 +156,7 @@ verified handshake in the last 7 days; every other row is `unidentified`. The cr
 `enrscout`, which announce every scheduled fork) are excluded from all readiness counts, from the
 readiness history, and from the `readiness` node filter.
 
-The release table is the API's `--client-releases-file`, which the operator maintains. There is no
+The release table is the `releases` section of the `--fork-file` operator file. There is no
 built-in table, so without the file no version is labelled. For each client it lists the first release of
 each release line that ships the schedule (`min_versions`). A reported version is labelled:
 

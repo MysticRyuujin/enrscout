@@ -55,7 +55,7 @@ node web/e2e/browse.mjs    # Playwright browse test (needs: cd web && npm ci && 
   CL reads ENR-only columns (`enr_*`) because Status overwrites `fork_hash` and `ObserveAuthenticatedCL`
   zeroes `fork_next`. `/api/v1/forks` classifies grouped rows in Go; the `readiness=` node filter
   mirrors the rule in SQL (`query.readinessConditionAt`), pinned by `TestReadinessMatchesSQLAndGo`.
-  Release labels, which readiness never depends on, come only from the API's `--client-releases-file`
+  Release labels, which readiness never depends on, come only from the `--fork-file` operator file
   (strict YAML, so it can carry comments; `netconf/releases.go` holds the types and rules, no data):
   one floor per release line (`min_versions`), plus the `fork_time` each entry was verified against, so
   a rescheduled fork withholds its labels. The file is the whole table and reloads on change; an invalid file keeps the last good table (`netconf.SetClientReleases` validates
