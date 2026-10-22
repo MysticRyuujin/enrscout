@@ -5,7 +5,7 @@ This compose file brings up the full ENRScout pipeline on one machine:
 - **minio**: S3-compatible object storage (snapshots). Console: http://localhost:9001 (`minioadmin`/`minioadmin`).
 - **crawler**: crawls mainnet, Hoodi, and Sepolia; writes Parquet snapshots to MinIO.
 - **api**: DuckDB-over-snapshots query API: http://localhost:8080
-- **web**: map explorer UI: http://localhost:8081
+- **web**: map explorer UI: http://localhost:18081
 
 ## Run
 
@@ -13,7 +13,7 @@ This compose file brings up the full ENRScout pipeline on one machine:
 docker compose -f deploy/local/docker-compose.yaml up --build
 ```
 
-Then open http://localhost:8081. The crawler publishes a snapshot every 30s; the
+Then open http://localhost:18081. The crawler publishes a snapshot every 30s; the
 API refreshes on the same cadence, so the map fills in within a minute.
 
 The stack builds MinIO and its client from pinned source revisions.
