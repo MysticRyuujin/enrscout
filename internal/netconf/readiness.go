@@ -14,6 +14,8 @@ const (
 	PhaseNone      = "none"
 	PhaseScheduled = "scheduled"
 	PhaseActivated = "activated"
+	// PhaseCancelled tracks a fork that was called off: ready means a node no longer schedules it.
+	PhaseCancelled = "cancelled"
 )
 
 type Readiness string
@@ -50,12 +52,16 @@ type CLForkTarget struct {
 // ForkTarget is the fork a readiness view tracks on one network. A layer is nil when it has no
 // scheduled or recently activated fork.
 type ForkTarget struct {
-	Name string        `json:"name"`
-	EL   *ELForkTarget `json:"el,omitempty"`
-	CL   *CLForkTarget `json:"cl,omitempty"`
+	Name      string        `json:"name"`
+	Cancelled bool          `json:"cancelled,omitempty"`
+	EL        *ELForkTarget `json:"el,omitempty"`
+	CL        *CLForkTarget `json:"cl,omitempty"`
 }
 
 func (t ForkTarget) Phase() string {
+	if (t.EL != nil && t.EL.Phase == PhaseCancelled) || (t.CL != nil && t.CL.Phase == PhaseCancelled) {
+		return PhaseCancelled
+	}
 	if (t.EL != nil && t.EL.Phase == PhaseScheduled) || (t.CL != nil && t.CL.Phase == PhaseScheduled) {
 		return PhaseScheduled
 	}
@@ -107,7 +113,7 @@ func ForkTargetAt(network string, at time.Time) (ForkTarget, error) {
 	if t.EL != nil && t.CL != nil && t.CL.Time.Unix() != int64(t.EL.Time) {
 		// Layers with different activation instants are different upgrades and must not share one
 		// name. Track the next scheduled one, or else the latest activated one.
-		elScheduled, clScheduled := t.EL.Phase == PhaseScheduled, t.CL.Phase == PhaseScheduled
+		elScheduled, clScheduled := t.EL.Phase != PhaseActivated, t.CL.Phase != PhaseActivated
 		elFirst := int64(t.EL.Time) < t.CL.Time.Unix()
 		switch {
 		case elScheduled && (!clScheduled || elFirst), !elScheduled && !clScheduled && !elFirst:
@@ -124,6 +130,7 @@ func ForkTargetAt(network string, at time.Time) (ForkTarget, error) {
 		cl = t.CL.Name
 	}
 	t.Name = upgradeName(el, cl)
+	t.Cancelled = t.Phase() == PhaseCancelled
 	return t, nil
 }
 
@@ -162,6 +169,8 @@ func LayerForkTargetsAt(network string, at time.Time) (ForkTarget, error) {
 			t.CL = &cl
 		}
 	}
+	n.cancelledTargetsAt(at, &t)
+	t.Cancelled = t.Phase() == PhaseCancelled
 	return t, nil
 }
 
@@ -278,6 +287,10 @@ func ReadinessAt(t ForkTarget, network string, ev ReadinessEvidence, at time.Tim
 	switch {
 	case ev.Layer == "el" && t.EL != nil:
 		el := t.EL
+		if el.Phase == PhaseCancelled {
+			return cancelledReadiness(current, strings.EqualFold(ev.ForkHash, el.PostHash) ||
+				(strings.EqualFold(ev.ForkHash, el.PreHash) && ev.ForkNext == el.Time), true)
+		}
 		if el.Phase == PhaseActivated {
 			return activatedReadiness(current, ev.ForkHash, el.PreHash, true, ev.ForkNext == el.Time)
 		}
@@ -293,6 +306,11 @@ func ReadinessAt(t ForkTarget, network string, ev ReadinessEvidence, at time.Tim
 		}
 	case ev.Layer == "cl" && t.CL != nil:
 		cl := t.CL
+		if cl.Phase == PhaseCancelled {
+			affected := strings.EqualFold(ev.ForkHash, cl.PostDigest) || (strings.EqualFold(ev.ENRForkDigest, cl.PreDigest) &&
+				ev.ENRNextForkEpoch == cl.Epoch && strings.EqualFold(ev.ENRNextForkVersion, cl.Version))
+			return cancelledReadiness(current, affected, ev.ENRForkDigest != "" && strings.EqualFold(ev.ENRForkDigest, ev.ForkHash))
+		}
 		if cl.Phase == PhaseActivated {
 			readable := strings.EqualFold(ev.ENRForkDigest, cl.PreDigest)
 			scheduled := ev.ENRNextForkEpoch == cl.Epoch && strings.EqualFold(ev.ENRNextForkVersion, cl.Version)
@@ -312,6 +330,23 @@ func ReadinessAt(t ForkTarget, network string, ev ReadinessEvidence, at time.Tim
 		}
 	}
 	return ""
+}
+
+// cancelledReadiness inverts the meaning of ready: a node is good when it no longer schedules the
+// cancelled fork. A node that still schedules it, or has already moved onto it, counts as not ready
+// whether or not it is current, so a record left unrefreshed after the would-be activation stays
+// counted as affected instead of falling out as stale.
+func cancelledReadiness(current, affected, readable bool) Readiness {
+	switch {
+	case affected:
+		return NotReady
+	case !current:
+		return Stale
+	case !readable:
+		return Unknown
+	default:
+		return Ready
+	}
 }
 
 func activatedReadiness(current bool, forkHash, pre string, readable, scheduled bool) Readiness {

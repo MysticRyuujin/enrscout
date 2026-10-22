@@ -18,6 +18,10 @@ import (
 // name yet (an override or a devnet genesis key) must still enter the checksum and Next.
 func (n *Network) forkIDAt(at uint64) forkid.ID {
 	n.load()
+	return n.forkIDFrom(n.idTimes, at)
+}
+
+func (n *Network) forkIDFrom(idTimes []uint64, at uint64) forkid.ID {
 	sum := crc32.ChecksumIEEE(n.genesis.Hash().Bytes())
 	for _, fork := range n.idBlocks {
 		if fork > forkHeadBlock {
@@ -25,7 +29,7 @@ func (n *Network) forkIDAt(at uint64) forkid.ID {
 		}
 		sum = crc32.Update(sum, crc32.IEEETable, binary.BigEndian.AppendUint64(nil, fork))
 	}
-	for _, fork := range n.idTimes {
+	for _, fork := range idTimes {
 		if fork > at {
 			return forkid.ID{Hash: checksumBytes(sum), Next: fork}
 		}

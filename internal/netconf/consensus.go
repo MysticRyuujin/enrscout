@@ -33,6 +33,8 @@ type clNetwork struct {
 	forks          []clFork
 	fuluEpoch      uint64
 	blobSchedule   []blobParams
+	// cancelledBPOs keeps a cancelled BPO in the numbering, so later BPOs still pair with geth's BPOn.
+	cancelledBPOs map[uint64]bool
 
 	once    sync.Once
 	digests map[[4]byte]struct{}
@@ -119,6 +121,9 @@ func (c *clNetwork) blobAt(epoch uint64) (blobParams, error) {
 	var active blobParams
 	found := false
 	for _, bp := range c.blobSchedule {
+		if c.cancelledBPOs[bp.epoch] {
+			continue
+		}
 		if bp.epoch > epoch {
 			break
 		}
@@ -149,6 +154,9 @@ func (c *clNetwork) transitions() ([]clFork, error) {
 			return nil, err
 		}
 		n++
+		if c.cancelledBPOs[bp.epoch] {
+			continue
+		}
 		out = append(out, clFork{name: fmt.Sprintf("BPO%d", n), epoch: bp.epoch, version: fork.version})
 	}
 	slices.SortStableFunc(out, func(a, b clFork) int { return cmp.Compare(a.epoch, b.epoch) })
@@ -230,7 +238,7 @@ func (c *clNetwork) computeStateAt(epoch uint64) (CLForkState, error) {
 		break
 	}
 	for _, bp := range c.blobSchedule {
-		if bp.epoch > epoch && bp.epoch < nextEpoch {
+		if bp.epoch > epoch && bp.epoch < nextEpoch && !c.cancelledBPOs[bp.epoch] {
 			nextEpoch = bp.epoch
 			// The Fulu p2p spec counts a BPO in next_fork_epoch but keeps next_fork_version.
 			state.NextForkEpoch = bp.epoch
@@ -259,7 +267,7 @@ func (c *clNetwork) compute() {
 			}
 		}
 		for _, bp := range c.blobSchedule {
-			if bp.epoch < c.fuluEpoch {
+			if bp.epoch < c.fuluEpoch || c.cancelledBPOs[bp.epoch] {
 				continue
 			}
 			digest, _, err := c.digestAt(bp.epoch)
@@ -353,7 +361,7 @@ func ClassifyCL(forkDigest [4]byte) string {
 			continue
 		}
 		n.cl.compute()
-		if _, ok := n.cl.digests[forkDigest]; ok {
+		if _, ok := n.cl.digests[forkDigest]; ok || n.cancelledCLDigest(forkDigest) {
 			return n.Name
 		}
 	}
