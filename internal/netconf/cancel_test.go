@@ -295,6 +295,25 @@ func TestCancelledNamedForkTakesItsBlobChange(t *testing.T) {
 	}
 }
 
+func TestCancellationOrderDoesNotMatter(t *testing.T) {
+	cl := []CLForkConfig{{Epoch: 0, Version: "0x10000038"}, {Epoch: 0, Version: "0x60000038"}, {Epoch: 0, Version: "0x70000038"},
+		{Name: "gloas", Epoch: 100, Version: "0x80000038"}}
+	gloas := CancelledFork{Network: "devnet", Fork: "Glamsterdam",
+		EL: &CancelledELFork{Name: "Amsterdam", Time: uint64(devnetEpochTime(100))},
+		CL: &CancelledCLFork{Name: "gloas", Epoch: 100, Version: "80000038"}}
+	bpo := bpoCancel("BPO1", 200, 30)
+	bpo.CL.Version = "80000038"
+	for name, list := range map[string][]CancelledFork{"named first": {gloas, bpo}, "bpo first": {bpo, gloas}} {
+		t.Run(name, func(t *testing.T) {
+			registerCancelDevnet(t, fmt.Sprintf(`, "amsterdamTime": %d, "bpo1Time": %d`, devnetEpochTime(100), devnetEpochTime(200)), cl,
+				[]BlobParams{{Epoch: 100, MaxBlobs: 21}, {Epoch: 200, MaxBlobs: 30}})
+			if _, err := ApplyCancellations(list); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 func TestCancelledMembershipSurvivesLaterForks(t *testing.T) {
 	n := registerCancelDevnet(t, fmt.Sprintf(`, "bpo1Time": %d, "bpo2Time": %d`, devnetEpochTime(100), devnetEpochTime(200)), nil,
 		[]BlobParams{{Epoch: 100, MaxBlobs: 21}, {Epoch: 200, MaxBlobs: 30}})

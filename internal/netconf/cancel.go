@@ -163,7 +163,7 @@ func (n *Network) cancel(c CancelledFork) (cancellation, []string, error) {
 			return out, nil, fmt.Errorf("cl: %w", err)
 		}
 		out.clName, out.clEpoch, out.clVersion = c.CL.Name, c.CL.Epoch, version
-		canonical, present, err := n.cl.withoutFork(*c.CL, version, &out)
+		canonical, present, err := n.cl.withoutFork(n.originalCL, *c.CL, version, &out)
 		if err != nil {
 			return out, nil, fmt.Errorf("cl: %w", err)
 		}
@@ -193,8 +193,10 @@ func (n *Network) compiledELName(name string) bool {
 // withoutFork returns the canonical schedule without the fork and records in out what it removed. A
 // named fork takes the blob entries at its epoch with it, since they are part of that upgrade. A BPO
 // is matched by epoch, not name, because BPO names are positions that shift when the compiled schedule
-// drops one; it stays in the numbering, so later BPOs keep the names that pair with geth's BPOn.
-func (c *clNetwork) withoutFork(f CancelledCLFork, version [4]byte, out *cancellation) (canonical *clNetwork, present bool, err error) {
+// drops one; it stays in the numbering, so later BPOs keep the names that pair with geth's BPOn. Its
+// version is checked against the compiled schedule, since an earlier cancellation of the named fork
+// it inherits from would change the version it derives, and the file's order must not matter.
+func (c *clNetwork) withoutFork(compiled *clNetwork, f CancelledCLFork, version [4]byte, out *cancellation) (canonical *clNetwork, present bool, err error) {
 	canonical = c.clone()
 	if canonical.cancelledBPOs == nil {
 		canonical.cancelledBPOs = map[uint64]bool{}
@@ -225,15 +227,15 @@ func (c *clNetwork) withoutFork(f CancelledCLFork, version [4]byte, out *cancell
 		}
 		return canonical, false, nil
 	}
-	forks, err := c.transitions()
+	forks, err := compiled.transitions()
 	if err != nil {
 		return nil, false, err
 	}
 	if i := slices.IndexFunc(forks, func(x clFork) bool { return x.epoch == f.Epoch && strings.HasPrefix(x.name, "BPO") }); i >= 0 {
 		x := forks[i]
-		bp := slices.IndexFunc(c.blobSchedule, func(b blobParams) bool { return b.epoch == x.epoch })
-		if x.version != version || c.blobSchedule[bp].maxBlobs != f.MaxBlobs {
-			return nil, false, fmt.Errorf("the BPO at epoch %d has version %x and max blobs %d", x.epoch, x.version, c.blobSchedule[bp].maxBlobs)
+		bp := slices.IndexFunc(compiled.blobSchedule, func(b blobParams) bool { return b.epoch == x.epoch })
+		if x.version != version || compiled.blobSchedule[bp].maxBlobs != f.MaxBlobs {
+			return nil, false, fmt.Errorf("the BPO at epoch %d has version %x and max blobs %d", x.epoch, x.version, compiled.blobSchedule[bp].maxBlobs)
 		}
 		canonical.cancelledBPOs[x.epoch] = true
 		return canonical, true, nil
