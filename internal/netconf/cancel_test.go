@@ -57,7 +57,7 @@ func TestCancelHoodiGlamsterdam(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if target.Name != "Glamsterdam" || !target.Cancelled || target.Phase() != PhaseCancelled ||
+	if target.Name != "Glamsterdam" || !target.IsCancelled() || target.Phase() != PhaseCancelled ||
 		target.EL.PreHash != "23aa1351" || target.EL.PostHash != "3d068b59" ||
 		target.CL.PreDigest != "c6ecb76c" || target.CL.PostDigest != "5ad30129" || target.Activation() != activation.UTC() {
 		t.Fatalf("target = %+v (EL %+v, CL %+v)", target, target.EL, target.CL)
@@ -192,7 +192,7 @@ func TestCancelledBPOKeepsLaterNames(t *testing.T) {
 	}
 	at := time.Unix(int64(epochTime(50)), 0)
 	target, err := ForkTargetAt("devnet", at)
-	if err != nil || target.Name != "BPO1" || !target.Cancelled || target.EL == nil || target.CL == nil {
+	if err != nil || target.Name != "BPO1" || !target.IsCancelled() || target.EL == nil || target.CL == nil {
 		t.Fatalf("target = %+v, %v; want the cancelled BPO1 on both layers", target, err)
 	}
 	if id := n.CurrentForkIDAt(at); id.Next != uint64(epochTime(200)) {
@@ -214,7 +214,7 @@ func TestCancelAbsentForkTracksOnly(t *testing.T) {
 		t.Fatalf("canonical schedule changed: %x/%d", id.Hash, id.Next)
 	}
 	target, err := ForkTargetAt("hoodi", time.Unix(later-60, 0))
-	if err != nil || target.Name != "Bogota-Heze" || !target.Cancelled {
+	if err != nil || target.Name != "Bogota-Heze" || !target.IsCancelled() {
 		t.Fatalf("target = %+v, %v", target, err)
 	}
 }
@@ -254,7 +254,7 @@ func TestUpcomingCancellationBeatsRecentActivation(t *testing.T) {
 		t.Fatal(err)
 	}
 	target, err := ForkTargetAt("devnet", time.Unix(int64(devnetEpochTime(1)+100), 0))
-	if err != nil || target.Name != "BPO2" || !target.Cancelled {
+	if err != nil || target.Name != "BPO2" || !target.IsCancelled() {
 		t.Fatalf("target between BPO1 and the cancelled BPO2 = %+v, %v", target, err)
 	}
 }

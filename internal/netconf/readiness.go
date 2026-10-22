@@ -56,10 +56,9 @@ type CLForkTarget struct {
 // ForkTarget is the fork a readiness view tracks on one network. A layer is nil when it has no
 // scheduled or recently activated fork.
 type ForkTarget struct {
-	Name      string        `json:"name"`
-	Cancelled bool          `json:"cancelled,omitempty"`
-	EL        *ELForkTarget `json:"el,omitempty"`
-	CL        *CLForkTarget `json:"cl,omitempty"`
+	Name string        `json:"name"`
+	EL   *ELForkTarget `json:"el,omitempty"`
+	CL   *CLForkTarget `json:"cl,omitempty"`
 }
 
 func (t ForkTarget) Phase() string {
@@ -134,7 +133,6 @@ func ForkTargetAt(network string, at time.Time) (ForkTarget, error) {
 		cl = t.CL.Name
 	}
 	t.Name = upgradeName(el, cl)
-	t.Cancelled = t.Phase() == PhaseCancelled
 	return t, nil
 }
 
@@ -174,7 +172,6 @@ func LayerForkTargetsAt(network string, at time.Time) (ForkTarget, error) {
 		}
 	}
 	n.cancelledTargetsAt(at, &t)
-	t.Cancelled = t.Phase() == PhaseCancelled
 	return t, nil
 }
 
@@ -371,7 +368,7 @@ func activatedReadiness(current bool, forkHash, pre string, readable, scheduled 
 // HistoryName keys a target's readiness history. A cancelled fork gets its own series, because its
 // ready means unscheduled, the opposite of the scheduled series recorded before the cancellation.
 func (t ForkTarget) HistoryName() string {
-	if t.Cancelled {
+	if t.IsCancelled() {
 		return t.Name + "-cancelled"
 	}
 	return t.Name
@@ -379,4 +376,18 @@ func (t ForkTarget) HistoryName() string {
 
 func containsFold(list []string, s string) bool {
 	return slices.ContainsFunc(list, func(x string) bool { return strings.EqualFold(x, s) })
+}
+
+func (t ForkTarget) IsCancelled() bool { return t.Phase() == PhaseCancelled }
+
+// CancelledAt reports whether the layer tracks a cancelled fork, and when it would have activated.
+// Only that layer's readiness and release labels invert; the other layer's fork may stay scheduled.
+func (t ForkTarget) CancelledAt(layer string) (time.Time, bool) {
+	switch {
+	case layer == "el" && t.EL != nil && t.EL.Phase == PhaseCancelled:
+		return time.Unix(int64(t.EL.Time), 0), true
+	case layer == "cl" && t.CL != nil && t.CL.Phase == PhaseCancelled:
+		return t.CL.Time, true
+	}
+	return time.Time{}, false
 }

@@ -36,11 +36,10 @@ func Target(t testing.TB) netconf.ForkTarget {
 // Cancel cancels Fork on Network for the rest of the test, as an operator fork file would.
 func Cancel(t testing.TB) {
 	t.Helper()
-	restore, err := netconf.WithCancellations([]netconf.CancelledFork{{Network: Network, Fork: Fork,
+	t.Cleanup(netconf.ResetForTest(Network))
+	if _, err := netconf.ApplyCancellations([]netconf.CancelledFork{{Network: Network, Fork: Fork,
 		EL: &netconf.CancelledELFork{Name: "Amsterdam", Time: uint64(Activation.Unix())},
-		CL: &netconf.CancelledCLFork{Name: "gloas", Epoch: 132352, Version: "80000910"}}})
-	if err != nil {
+		CL: &netconf.CancelledCLFork{Name: "gloas", Epoch: 132352, Version: "80000910"}}}); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(restore)
 }

@@ -449,8 +449,8 @@ func TestForkReadinessCancelled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Phase != netconf.PhaseCancelled || !r.Fork.Cancelled || len(r.Notices) != 1 {
-		t.Fatalf("phase %q cancelled %v notices %+v", r.Phase, r.Fork.Cancelled, r.Notices)
+	if r.Phase != netconf.PhaseCancelled || !r.Fork.IsCancelled() || len(r.Notices) != 1 {
+		t.Fatalf("phase %q cancelled %v notices %+v", r.Phase, r.Fork.IsCancelled(), r.Notices)
 	}
 	el := r.Layers["el"]
 	if el == nil || el.Counts[netconf.Ready] != 2 || el.Counts[netconf.NotReady] != 1 {

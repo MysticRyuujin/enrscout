@@ -161,7 +161,7 @@ func TestOpenAppliesCancellationsAndReloadsNotices(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if target, err := netconf.ForkTargetAt(netconftest.Network, netconftest.Before); err != nil || !target.Cancelled {
+	if target, err := netconf.ForkTargetAt(netconftest.Network, netconftest.Before); err != nil || !target.IsCancelled() {
 		t.Fatalf("target = %+v, %v; want the cancelled Glamsterdam", target, err)
 	}
 	notices := netconf.NoticesAt(netconftest.Network, netconftest.Before)
@@ -198,7 +198,7 @@ func TestOpenAppliesCancellationsAndReloadsNotices(t *testing.T) {
 	if err := w.Reload(); err != nil || !w.RestartRequired() {
 		t.Fatalf("cancellation removed: %v, restart required %v; want a restart flagged", err, w.RestartRequired())
 	}
-	if target, _ := netconf.ForkTargetAt(netconftest.Network, netconftest.Before); !target.Cancelled {
+	if target, _ := netconf.ForkTargetAt(netconftest.Network, netconftest.Before); !target.IsCancelled() {
 		t.Fatal("a reload changed the schedule; cancellations apply only at startup")
 	}
 }

@@ -161,7 +161,7 @@ func TestRecordReadinessKeepsCancelledSeriesApart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !h.Cancelled || len(h.Points) != 1 || h.Points[0].EL["ready"] != 1 || h.Points[0].EL["not_ready"] != 1 {
+	if len(h.Points) != 1 || h.Points[0].EL["ready"] != 1 || h.Points[0].EL["not_ready"] != 1 {
 		t.Fatalf("cancelled history = %+v", h)
 	}
 }

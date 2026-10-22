@@ -77,7 +77,7 @@ func (p *publisher) recordReadiness(ctx context.Context, byNet map[string][]node
 			slog.Warn("readiness history key", "network", network, "err", err)
 			continue
 		}
-		history := &snapshot.ReadinessHistory{Version: snapshot.ReadinessHistoryVersion, Network: network, Fork: target.Name, Cancelled: target.Cancelled}
+		history := &snapshot.ReadinessHistory{Version: snapshot.ReadinessHistoryVersion, Network: network, Fork: target.Name}
 		if data, err := p.store.Get(ctx, key); err == nil {
 			stored, err := snapshot.DecodeReadinessHistory(data)
 			if err != nil {
@@ -90,9 +90,9 @@ func (p *publisher) recordReadiness(ctx context.Context, byNet map[string][]node
 			slog.Warn("read readiness history", "key", key, "err", err)
 			continue
 		}
-		if elTime, clEpoch := target.Schedule(); history.ELTime != elTime || history.CLEpoch != clEpoch || history.Cancelled != target.Cancelled {
+		if elTime, clEpoch := target.Schedule(); history.ELTime != elTime || history.CLEpoch != clEpoch {
 			// A rescheduled fork is a different series; mixing them would draw one false curve.
-			history.ELTime, history.CLEpoch, history.Cancelled, history.Points = elTime, clEpoch, target.Cancelled, nil
+			history.ELTime, history.CLEpoch, history.Points = elTime, clEpoch, nil
 		}
 		if !history.Append(readinessPointAt(target, network, byNet[network], now), interval) {
 			last := time.Unix(history.Points[len(history.Points)-1].At, 0)

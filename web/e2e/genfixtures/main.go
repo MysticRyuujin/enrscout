@@ -207,7 +207,7 @@ func withForkReadiness(ctx context.Context, st store.Store, layout snapshot.Layo
 			}
 		}
 	}
-	h := &snapshot.ReadinessHistory{Version: snapshot.ReadinessHistoryVersion, Network: network, Fork: target.Name, Cancelled: target.Cancelled}
+	h := &snapshot.ReadinessHistory{Version: snapshot.ReadinessHistoryVersion, Network: network, Fork: target.Name}
 	h.ELTime, h.CLEpoch = target.Schedule()
 	for i := range 24 {
 		at := gen.Add(-time.Duration(23-i) * snapshot.ReadinessInterval)

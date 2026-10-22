@@ -67,11 +67,8 @@ func ScheduleAt(network string, at time.Time) ([]ScheduledFork, error) {
 		out = append(out, *e)
 	}
 	for _, c := range n.cancellations {
-		e := ScheduledFork{Name: c.fork, EL: c.elName, CL: c.clName, Time: c.at(n), Cancelled: true}
-		if c.hasCL() {
-			e.CLEpoch = c.clEpoch
-		}
-		e.Tracked = target.Cancelled && e.Time == target.Activation().Unix()
+		e := ScheduledFork{Name: c.fork, EL: c.elName, CL: c.clName, Time: c.at(n), CLEpoch: c.clEpoch, Cancelled: true}
+		e.Tracked = target.IsCancelled() && e.Time == target.Activation().Unix()
 		out = append(out, e)
 	}
 	slices.SortFunc(out, func(a, b ScheduledFork) int { return cmp.Compare(a.Time, b.Time) })

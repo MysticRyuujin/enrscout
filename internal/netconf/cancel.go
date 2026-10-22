@@ -52,7 +52,8 @@ type cancellation struct {
 	// be rebuilt once every cancellation is applied.
 	clRemovedFork  *clFork
 	clRemovedBlobs []blobParams
-	clBPOEpoch     uint64
+	elPreHash      string
+	elPostHash     string
 }
 
 func (c cancellation) hasEL() bool { return c.elTime != 0 }
@@ -149,7 +150,6 @@ func (n *Network) cancel(c CancelledFork) (cancellation, []string, error) {
 			}
 			absent = append(absent, fmt.Sprintf("%s el %s", n.Name, c.EL.Name))
 		}
-		n.cancelledEL = append(n.cancelledEL, elForkTime{name: c.EL.Name, time: c.EL.Time})
 	}
 	if c.CL != nil {
 		if n.cl == nil {
@@ -229,7 +229,6 @@ func (c *clNetwork) withoutFork(f CancelledCLFork, version [4]byte, out *cancell
 	if err != nil {
 		return nil, false, err
 	}
-	out.clBPOEpoch = f.Epoch
 	if i := slices.IndexFunc(forks, func(x clFork) bool { return x.epoch == f.Epoch && strings.HasPrefix(x.name, "BPO") }); i >= 0 {
 		x := forks[i]
 		bp := slices.IndexFunc(c.blobSchedule, func(b blobParams) bool { return b.epoch == x.epoch })
@@ -263,9 +262,8 @@ func (n *Network) cancelledDigests() error {
 			shadow.forks = append(shadow.forks, *c.clRemovedFork)
 			slices.SortStableFunc(shadow.forks, func(a, b clFork) int { return cmp.Compare(a.epoch, b.epoch) })
 		}
-		if c.clBPOEpoch != 0 && shadow.cancelledBPOs[c.clBPOEpoch] {
-			shadow.cancelledBPOs = maps.Clone(shadow.cancelledBPOs)
-			delete(shadow.cancelledBPOs, c.clBPOEpoch)
+		if c.clRemovedFork == nil {
+			delete(shadow.cancelledBPOs, c.clEpoch)
 		}
 		if len(c.clRemovedBlobs) > 0 {
 			shadow.blobSchedule = append(shadow.blobSchedule, c.clRemovedBlobs...)
@@ -274,6 +272,10 @@ func (n *Network) cancelledDigests() error {
 		if c.clPostDigest, _, err = shadow.digestAt(c.clEpoch); err != nil {
 			return err
 		}
+	}
+	n.cancelledCLHex = nil
+	for _, d := range n.cancelledCLDigests() {
+		n.cancelledCLHex = append(n.cancelledCLHex, hex.EncodeToString(d[:]))
 	}
 	return nil
 }
@@ -289,13 +291,7 @@ func (c *clNetwork) clone() *clNetwork {
 // forkIDWithCancelledAt is the fork id a node still running the cancelled EL fork advertises at at.
 func (n *Network) forkIDWithCancelledAt(cancelled, at uint64) forkid.ID {
 	n.load()
-	times := slices.Clone(n.idTimes)
-	if cancelled > n.genesis.Time() {
-		times = append(times, cancelled)
-		slices.Sort(times)
-		times = slices.Compact(times)
-	}
-	return n.forkIDFrom(times, at)
+	return n.forkIDFrom(n.withCancelledTime(cancelled), at)
 }
 
 // cancelledTargetsAt replaces a layer's target with a cancelled fork, chosen per layer like a real
@@ -317,50 +313,52 @@ func (n *Network) cancelledTargetsAt(at time.Time, t *ForkTarget) {
 		}
 		return chosen
 	}
+	n.load()
 	if c := pick(cancellation.hasEL); c != nil && (t.EL == nil || t.EL.Phase != PhaseScheduled || t.EL.Time > c.elTime) {
-		pre := n.forkIDAt(c.elTime - 1).Hash
-		post := n.forkIDWithCancelledAt(c.elTime, c.elTime).Hash
 		t.EL = &ELForkTarget{Name: c.elName, Time: c.elTime, Phase: PhaseCancelled,
-			PreHash: hex.EncodeToString(pre[:]), PostHash: hex.EncodeToString(post[:])}
-		for _, h := range n.cancelledELHashes(0, math.MaxInt64) {
-			t.EL.OnCancelled = append(t.EL.OnCancelled, hex.EncodeToString(h[:]))
-		}
+			PreHash: c.elPreHash, PostHash: c.elPostHash, OnCancelled: n.cancelledELHex}
 	}
 	if c := pick(cancellation.hasCL); c != nil && (t.CL == nil || t.CL.Phase != PhaseScheduled || t.CL.Epoch > c.clEpoch) {
 		t.CL = &CLForkTarget{Name: c.clName, Epoch: c.clEpoch, Version: hex.EncodeToString(c.clVersion[:]),
 			Phase: PhaseCancelled, Time: n.cl.timeAtEpoch(c.clEpoch).UTC(),
-			PreDigest: hex.EncodeToString(c.clPreDigest[:]), PostDigest: hex.EncodeToString(c.clPostDigest[:])}
-		for _, d := range n.cancelledCLDigests() {
-			t.CL.OnCancelled = append(t.CL.OnCancelled, hex.EncodeToString(d[:]))
-		}
+			PreDigest: hex.EncodeToString(c.clPreDigest[:]), PostDigest: hex.EncodeToString(c.clPostDigest[:]),
+			OnCancelled: n.cancelledCLHex}
 	}
 }
 
-// cancelledELHashes are the fork ids only a schedule that kept a cancelled EL fork produces, at
-// activations within [start, end]: the cancelled fork alone, and the original compiled schedule for
-// a node that ran several. They keep the network's membership, so such nodes stay visible as stale
-// instead of disappearing as unclassified, and readiness counts them as still on the cancelled fork.
-func (n *Network) cancelledELHashes(start, end int64) [][4]byte {
+type timedHash struct {
+	time uint64
+	hash [4]byte
+}
+
+// indexCancellations runs inside load, so it uses forkIDFrom directly: forkIDAt would re-enter the
+// sync.Once. It caches what every target and classification of a cancelled fork reads, since the
+// schedule is fixed after startup.
+func (n *Network) indexCancellations() {
 	first := uint64(math.MaxUint64)
-	for _, c := range n.cancellations {
-		if c.hasEL() {
-			first = min(first, c.elTime)
+	for i := range n.cancellations {
+		c := &n.cancellations[i]
+		if !c.hasEL() {
+			continue
 		}
+		first = min(first, c.elTime)
+		pre := n.forkIDFrom(n.idTimes, c.elTime-1).Hash
+		post := n.forkIDFrom(n.withCancelledTime(c.elTime), c.elTime).Hash
+		c.elPreHash, c.elPostHash = hex.EncodeToString(pre[:]), hex.EncodeToString(post[:])
 	}
 	if first == math.MaxUint64 {
-		return nil
+		return
 	}
-	var out [][4]byte
 	add := func(id forkid.ID, at uint64) {
-		if id.Hash != n.forkIDAt(at).Hash && !slices.Contains(out, id.Hash) {
-			out = append(out, id.Hash)
+		if id.Hash != n.forkIDFrom(n.idTimes, at).Hash && !slices.ContainsFunc(n.cancelledHashes, func(h timedHash) bool { return h.hash == id.Hash }) {
+			n.cancelledHashes = append(n.cancelledHashes, timedHash{at, id.Hash})
+			n.cancelledELHex = append(n.cancelledELHex, hex.EncodeToString(id.Hash[:]))
 		}
 	}
-	inWindow := func(t uint64) bool { return int64(t) >= start && int64(t) <= end }
 	original := n.compiledELForks()
 	times := idForkTimes(original, n.genesis.Time())
 	for _, f := range original {
-		if f.time >= first && inWindow(f.time) {
+		if f.time >= first {
 			add(n.forkIDFrom(times, f.time), f.time)
 		}
 	}
@@ -368,13 +366,36 @@ func (n *Network) cancelledELHashes(start, end int64) [][4]byte {
 		if !c.hasEL() {
 			continue
 		}
-		if inWindow(c.elTime) {
-			add(n.forkIDWithCancelledAt(c.elTime, c.elTime), c.elTime)
-		}
+		withCancelled := n.withCancelledTime(c.elTime)
+		add(n.forkIDFrom(withCancelled, c.elTime), c.elTime)
 		for _, f := range n.elForks {
-			if f.time > c.elTime && inWindow(f.time) {
-				add(n.forkIDWithCancelledAt(c.elTime, f.time), f.time)
+			if f.time > c.elTime {
+				add(n.forkIDFrom(withCancelled, f.time), f.time)
 			}
+		}
+	}
+}
+
+func (n *Network) withCancelledTime(cancelled uint64) []uint64 {
+	times := slices.Clone(n.idTimes)
+	if cancelled > n.genesis.Time() {
+		times = append(times, cancelled)
+		slices.Sort(times)
+		times = slices.Compact(times)
+	}
+	return times
+}
+
+// cancelledELHashes are the fork ids only a schedule that kept a cancelled EL fork produces, at
+// activations within [start, end]: the cancelled fork alone, and the original compiled schedule for
+// a node that ran several. They keep the network's membership, so such nodes stay visible as stale
+// instead of disappearing as unclassified, and readiness counts them as still on the cancelled fork.
+func (n *Network) cancelledELHashes(start, end int64) [][4]byte {
+	n.load()
+	var out [][4]byte
+	for _, h := range n.cancelledHashes {
+		if int64(h.time) >= start && int64(h.time) <= end {
+			out = append(out, h.hash)
 		}
 	}
 	return out
@@ -429,7 +450,8 @@ func (n *Network) cancelledEraAt(at time.Time) (passed string, next time.Time) {
 }
 
 // CancelledForkActivatedBetween reports whether a cancelled fork's would-be activation falls in
-// (from, to]. Nodes that still schedule it stop being current then, which collapse guards must allow.
+// (from, to] on the layer ("el", "cl", or anything else for both). Nodes that still schedule it stop
+// being current then, which collapse guards must allow.
 func CancelledForkActivatedBetween(network, layer string, from, to time.Time) bool {
 	n, err := Get(network)
 	if err != nil {
@@ -459,20 +481,6 @@ func ResetForTest(names ...string) (restore func()) {
 		}
 	}
 	return func() { registry = saved }
-}
-
-// WithCancellations is ResetForTest followed by ApplyCancellations.
-func WithCancellations(list []CancelledFork) (restore func(), err error) {
-	var names []string
-	for _, c := range list {
-		names = append(names, c.Network)
-	}
-	restore = ResetForTest(names...)
-	if _, err := ApplyCancellations(list); err != nil {
-		restore()
-		return nil, err
-	}
-	return restore, nil
 }
 
 func (n *Network) unloadedCopy() *Network {

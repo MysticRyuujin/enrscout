@@ -555,11 +555,8 @@ func buildNetworkTrees(rows []nodeset.Row, network string, generatedAt, evaluate
 		opt := cfg.sel
 		opt.capability = capability
 		seq := treeSequence(generatedAt, max(previousSeq, issued[domain]))
-		full, err := buildTree(cands, opt, seq, domain, network, cfg.key)
-		if err != nil {
-			return nil, skipDecision{}, err
-		}
-		out, outExempt := full, exempt
+		var out builtTree
+		outExempt := exempt
 		// Records that do not schedule the fork are rejected by post-fork clients, and a tree
 		// built now is served across activation, so near it a ready-only tree is preferred
 		// whenever the guards accept it. Near a cancelled fork, ready means the record no longer
@@ -570,10 +567,19 @@ func buildNetworkTrees(rows []nodeset.Row, network string, generatedAt, evaluate
 			if err != nil {
 				return nil, skipDecision{}, err
 			}
-			readyExempt := exempt || (cancelNear && gateTree(full, capability, domain, previousNodes, exempt, cfg).reason == "")
+			readyExempt := exempt
+			if cancelNear {
+				full := builtTree{output: output{Nodes: len(pick(cands, opt))}}
+				readyExempt = exempt || gateTree(full, capability, domain, previousNodes, exempt, cfg).reason == ""
+			}
 			if gateTree(readyTree, capability, domain, previousNodes, readyExempt, cfg).reason == "" {
 				out, outExempt = readyTree, readyExempt
 				out.readyOnly = true
+			}
+		}
+		if !out.readyOnly {
+			if out, err = buildTree(cands, opt, seq, domain, network, cfg.key); err != nil {
+				return nil, skipDecision{}, err
 			}
 		}
 		out.retain = retain
@@ -645,8 +651,7 @@ func forkActivatedBetween(network, layer string, from, to time.Time) bool {
 	if !to.After(from) {
 		return false
 	}
-	if (layer != "cl" && netconf.CancelledForkActivatedBetween(network, "el", from, to)) ||
-		(layer != "el" && netconf.CancelledForkActivatedBetween(network, "cl", from, to)) {
+	if netconf.CancelledForkActivatedBetween(network, layer, from, to) {
 		return true
 	}
 	n, err := netconf.Get(network)

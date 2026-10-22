@@ -167,7 +167,7 @@ func (e *Engine) ForkReadinessAt(ctx context.Context, network string, at time.Ti
 		v.Counts[readiness] += count
 		if rel := releases[ck]; rel != nil && !rel.Outdated && len(rel.MinVersions) > 0 {
 			status := netconf.ReleaseStatus(rel.MinVersions, rawVersion)
-			if layerCancelled(target, ev.Layer) {
+			if _, ok := target.CancelledAt(ev.Layer); ok {
 				status = netconf.CancelledReleaseStatus(rel.MinVersions, rel.UnscheduledIn, rawVersion)
 			}
 			if v.Release == "" {
@@ -343,7 +343,7 @@ func (e *Engine) ReadinessHistoryFor(ctx context.Context, network string, target
 	if err != nil {
 		return nil, err
 	}
-	if elTime, clEpoch := target.Schedule(); h.ELTime != elTime || h.CLEpoch != clEpoch || h.Cancelled != target.Cancelled {
+	if elTime, clEpoch := target.Schedule(); h.ELTime != elTime || h.CLEpoch != clEpoch {
 		return nil, nil
 	}
 	h.Points = thinHistory(h.Points, target.Activation())
@@ -391,16 +391,4 @@ func inList(col string, values []string) (string, []any) {
 		args[i] = strings.ToLower(v)
 	}
 	return col + " IN (" + strings.TrimSuffix(strings.Repeat("?, ", len(values)), ", ") + ")", args
-}
-
-// layerCancelled is per layer: one layer's fork can be cancelled while the other's stays scheduled,
-// and only the cancelled layer's release labels invert.
-func layerCancelled(t netconf.ForkTarget, layer string) bool {
-	switch layer {
-	case "el":
-		return t.EL != nil && t.EL.Phase == netconf.PhaseCancelled
-	case "cl":
-		return t.CL != nil && t.CL.Phase == netconf.PhaseCancelled
-	}
-	return false
 }

@@ -83,9 +83,12 @@ type Network struct {
 	// extraELForks are devnet genesis forks that the pinned go-ethereum has no field for.
 	extraELForks []elForkTime
 	// Set only by ApplyCancellations at startup.
-	cancelledEL   []elForkTime
 	cancellations []cancellation
 	originalCL    *clNetwork
+	// Derived from cancellations: EL ones in load, CL ones once every cancellation is applied.
+	cancelledHashes []timedHash
+	cancelledELHex  []string
+	cancelledCLHex  []string
 
 	once     sync.Once
 	genesis  *types.Block
@@ -107,9 +110,12 @@ type forkMemo struct {
 func (n *Network) load() {
 	n.once.Do(func() {
 		n.genesis = n.genesisFn().ToBlock()
-		n.elForks = slices.DeleteFunc(n.compiledELForks(), func(f elForkTime) bool { return slices.Contains(n.cancelledEL, f) })
+		n.elForks = slices.DeleteFunc(n.compiledELForks(), func(f elForkTime) bool {
+			return slices.ContainsFunc(n.cancellations, func(c cancellation) bool { return c.elName == f.name && c.elTime == f.time })
+		})
 		n.idBlocks = forkBlocks(n.ChainConfig)
 		n.idTimes = idForkTimes(n.elForks, n.genesis.Time())
+		n.indexCancellations()
 	})
 }
 
