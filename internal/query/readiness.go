@@ -62,6 +62,7 @@ type ForkReadiness struct {
 	Layers              map[string]*LayerReadiness `json:"layers"`
 	History             *snapshot.ReadinessHistory `json:"history,omitempty"`
 	Schedule            []netconf.ScheduledFork    `json:"schedule"`
+	Notices             []netconf.Notice           `json:"notices"`
 }
 
 const readinessVersionRows = 15
@@ -89,6 +90,7 @@ func (e *Engine) ForkReadinessAt(ctx context.Context, network string, at time.Ti
 		return out, err
 	}
 	out.Fork, out.Phase = target, target.Phase()
+	out.Notices = netconf.NoticesAt(network, at)
 	if out.Schedule, err = netconf.ScheduleAt(network, at); err != nil {
 		return out, err
 	}
@@ -165,6 +167,9 @@ func (e *Engine) ForkReadinessAt(ctx context.Context, network string, at time.Ti
 		v.Counts[readiness] += count
 		if rel := releases[ck]; rel != nil && !rel.Outdated && len(rel.MinVersions) > 0 {
 			status := netconf.ReleaseStatus(rel.MinVersions, rawVersion)
+			if target.Cancelled {
+				status = netconf.CancelledReleaseStatus(rel.MinVersions, rel.UnscheduledIn, rawVersion)
+			}
 			if v.Release == "" {
 				v.Release = status
 			} else if v.Release != status {
@@ -321,7 +326,7 @@ const maxHistoryPoints = 480
 // is one recorded against another schedule: after a reschedule it holds measurements of the old
 // date until an updated crawler starts a new series.
 func (e *Engine) ReadinessHistoryFor(ctx context.Context, network string, target netconf.ForkTarget) (*snapshot.ReadinessHistory, error) {
-	key, err := e.layout.ReadinessHistoryKey(network, target.Name)
+	key, err := e.layout.ReadinessHistoryKey(network, target.HistoryName())
 	if err != nil {
 		return nil, err
 	}
@@ -336,7 +341,7 @@ func (e *Engine) ReadinessHistoryFor(ctx context.Context, network string, target
 	if err != nil {
 		return nil, err
 	}
-	if elTime, clEpoch := target.Schedule(); h.ELTime != elTime || h.CLEpoch != clEpoch {
+	if elTime, clEpoch := target.Schedule(); h.ELTime != elTime || h.CLEpoch != clEpoch || h.Cancelled != target.Cancelled {
 		return nil, nil
 	}
 	h.Points = thinHistory(h.Points, target.Activation())

@@ -123,3 +123,45 @@ func TestRecordReadinessIsDenseAroundActivation(t *testing.T) {
 		t.Fatalf("points = %d, want one before the window and one per minute inside it", len(h.Points))
 	}
 }
+
+func TestRecordReadinessKeepsCancelledSeriesApart(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.NewFS(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	layout := snapshot.Layout{}
+	scheduledKey, err := layout.ReadinessHistoryKey(netconftest.Network, netconftest.Fork)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scheduled := []byte(`{"version":1,"network":"hoodi","fork":"Glamsterdam","el_time":1793036568,"cl_epoch":132352,"points":[{"at":1}]}`)
+	if err := st.Put(ctx, scheduledKey, scheduled, "application/json"); err != nil {
+		t.Fatal(err)
+	}
+	netconftest.Cancel(t)
+	rows := map[string][]nodeset.Row{netconftest.Network: {
+		{ID: "a", Layer: "el", ForkHash: "23aa1351", ForkNext: forkTime},
+		{ID: "b", Layer: "el", ForkHash: "23aa1351"},
+	}}
+	pub := &publisher{store: st, layout: layout, networks: []string{netconftest.Network}}
+	pub.recordReadiness(ctx, rows, netconftest.Before)
+	if data, _ := st.Get(ctx, scheduledKey); string(data) != string(scheduled) {
+		t.Fatalf("the scheduled series was rewritten: %s", data)
+	}
+	key, err := layout.ReadinessHistoryKey(netconftest.Network, netconftest.Fork+"-cancelled")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := st.Get(ctx, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := snapshot.DecodeReadinessHistory(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !h.Cancelled || len(h.Points) != 1 || h.Points[0].EL["ready"] != 1 || h.Points[0].EL["not_ready"] != 1 {
+		t.Fatalf("cancelled history = %+v", h)
+	}
+}
