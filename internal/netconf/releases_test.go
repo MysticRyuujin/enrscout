@@ -113,3 +113,27 @@ func mustTarget(t *testing.T, network string, at time.Time) ForkTarget {
 	}
 	return target
 }
+
+func TestCancelledReleaseStatus(t *testing.T) {
+	scheduled, unscheduled := []string{"1.17.9"}, []string{"1.17.10"}
+	for _, tc := range []struct {
+		version string
+		fixed   []string
+		want    string
+	}{
+		{"v1.17.8", unscheduled, ReleaseUnaffected},
+		{"v1.17.9", unscheduled, ReleaseAffected},
+		{"v1.17.10", unscheduled, ReleaseUnaffected},
+		{"v1.18.0", nil, ReleaseAffected},
+		{"v1.17.9-unstable-0b714d62", unscheduled, ReleaseDevBuild},
+		{"cashcow", unscheduled, ReleaseUnparsable},
+	} {
+		if got := CancelledReleaseStatus(scheduled, tc.fixed, tc.version); got != tc.want {
+			t.Errorf("%s (fixed in %v) = %q, want %q", tc.version, tc.fixed, got, tc.want)
+		}
+	}
+	bad := ClientRelease{Fork: "Glamsterdam", Network: "hoodi", Layer: "el", Client: "Geth", ForkTime: 1, UnscheduledIn: []string{"1.17.10"}}
+	if err := (ClientReleaseTable{Releases: []ClientRelease{bad}}).Validate(); err == nil {
+		t.Error("unscheduled_in without min_versions accepted")
+	}
+}

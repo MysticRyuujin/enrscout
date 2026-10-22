@@ -27,12 +27,15 @@ type ClientRelease struct {
 	// MinVersions holds the first fork-ready release of each release line, so a backport such as
 	// 1.39.4 alongside 2.0.0 is not read as older than the fork-ready line.
 	MinVersions []string `json:"min_versions,omitempty" yaml:"min_versions,omitempty"`
-	Prerelease  string   `json:"prerelease,omitempty" yaml:"prerelease,omitempty"`
-	Released    string   `json:"released,omitempty" yaml:"released,omitempty"`
-	URL         string   `json:"url,omitempty" yaml:"url,omitempty"`
-	Latest      string   `json:"latest,omitempty" yaml:"latest,omitempty"`
-	LatestURL   string   `json:"latest_url,omitempty" yaml:"latest_url,omitempty"`
-	Outdated    bool     `json:"outdated,omitempty" yaml:"-"`
+	// UnscheduledIn holds, per release line, the first release that drops a cancelled fork again, so
+	// versions from MinVersions up to it are the ones that still schedule it.
+	UnscheduledIn []string `json:"unscheduled_in,omitempty" yaml:"unscheduled_in,omitempty"`
+	Prerelease    string   `json:"prerelease,omitempty" yaml:"prerelease,omitempty"`
+	Released      string   `json:"released,omitempty" yaml:"released,omitempty"`
+	URL           string   `json:"url,omitempty" yaml:"url,omitempty"`
+	Latest        string   `json:"latest,omitempty" yaml:"latest,omitempty"`
+	LatestURL     string   `json:"latest_url,omitempty" yaml:"latest_url,omitempty"`
+	Outdated      bool     `json:"outdated,omitempty" yaml:"-"`
 }
 
 type ClientReleaseTable struct {
@@ -43,9 +46,11 @@ type ClientReleaseTable struct {
 var (
 	releasesMu        sync.RWMutex
 	clientReleases    ClientReleaseTable
+	notices           []Notice
 	clientReleasesGen uint64
 )
 
+// ClientReleasesGeneration changes whenever the release table or the notices change.
 func ClientReleasesGeneration() uint64 {
 	releasesMu.RLock()
 	defer releasesMu.RUnlock()
@@ -61,6 +66,18 @@ func SetClientReleases(t ClientReleaseTable) error {
 	releasesMu.Lock()
 	defer releasesMu.Unlock()
 	clientReleases = t
+	clientReleasesGen++
+	return nil
+}
+
+// SetForkFileData replaces the release table and the notices together, after validating both.
+func SetForkFileData(t ClientReleaseTable, n []Notice) error {
+	if err := errors.Join(t.Validate(), ValidateNotices(n)); err != nil {
+		return err
+	}
+	releasesMu.Lock()
+	defer releasesMu.Unlock()
+	clientReleases, notices = t, n
 	clientReleasesGen++
 	return nil
 }
@@ -104,6 +121,14 @@ func (t ClientReleaseTable) Validate() error {
 			if _, ok := semverCore(v); !ok || devBuildToken.MatchString(versionSuffix(v)) {
 				errs = append(errs, fmt.Errorf("%s: min version %q is not a release version", key, v))
 			}
+		}
+		for _, v := range r.UnscheduledIn {
+			if _, ok := semverCore(v); !ok || devBuildToken.MatchString(versionSuffix(v)) {
+				errs = append(errs, fmt.Errorf("%s: unscheduled_in version %q is not a release version", key, v))
+			}
+		}
+		if len(r.UnscheduledIn) > 0 && len(r.MinVersions) == 0 {
+			errs = append(errs, fmt.Errorf("%s: unscheduled_in needs the min_versions that scheduled the fork", key))
 		}
 	}
 	return errors.Join(errs...)
@@ -154,6 +179,9 @@ const (
 	ReleaseBelow      = "below"
 	ReleaseDevBuild   = "dev_build"
 	ReleaseUnparsable = "unparsable"
+	// For a cancelled fork: a version that still schedules it, or one that does not.
+	ReleaseAffected   = "affected"
+	ReleaseUnaffected = "unaffected"
 )
 
 var (
@@ -229,4 +257,20 @@ func semverCore(v string) ([3]int, bool) {
 		out[i] = n
 	}
 	return out, true
+}
+
+// CancelledReleaseStatus labels a version against a cancelled fork. Versions from the floors that
+// shipped the schedule up to the floors that drop it again are affected; older ones never had it.
+func CancelledReleaseStatus(scheduled, unscheduled []string, version string) string {
+	switch s := ReleaseStatus(scheduled, version); s {
+	case ReleaseMeets:
+		if len(unscheduled) > 0 && ReleaseStatus(unscheduled, version) == ReleaseMeets {
+			return ReleaseUnaffected
+		}
+		return ReleaseAffected
+	case ReleaseBelow:
+		return ReleaseUnaffected
+	default:
+		return s
+	}
 }

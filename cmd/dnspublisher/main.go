@@ -19,6 +19,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/MysticRyuujin/enrscout/internal/buildinfo"
+	"github.com/MysticRyuujin/enrscout/internal/forkfile"
 	"github.com/MysticRyuujin/enrscout/internal/metricsrv"
 	"github.com/MysticRyuujin/enrscout/internal/netconf"
 	"github.com/MysticRyuujin/enrscout/internal/nodeset"
@@ -124,11 +125,17 @@ func run() error {
 		gitDir       = flag.String("git-dir", "", "writable directory holding the git checkout")
 		gitName      = flag.String("git-committer-name", "enrscout-dnspublisher", "git commit author name")
 		gitEmail     = flag.String("git-committer-email", "enrscout@localhost", "git commit author email")
+		forkFile     = flag.String("fork-file", "", "operator fork file; its cancelled forks are removed from the schedule at startup (empty = none)")
 	)
 	flag.Parse()
 
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	mDNSBuildInfo.WithLabelValues(buildinfo.Revision, buildinfo.SourceURL).Set(1)
+	if *forkFile != "" {
+		if err := forkfile.ApplyCancellations(*forkFile); err != nil {
+			return fmt.Errorf("--fork-file: %w", err)
+		}
+	}
 
 	sel := selectOpts{
 		minScore: *minScore, maxAge: *maxAge, protocol: *protocol,

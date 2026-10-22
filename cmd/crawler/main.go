@@ -32,6 +32,7 @@ import (
 	"github.com/MysticRyuujin/enrscout/internal/discovery"
 	"github.com/MysticRyuujin/enrscout/internal/distinct"
 	"github.com/MysticRyuujin/enrscout/internal/enrich"
+	"github.com/MysticRyuujin/enrscout/internal/forkfile"
 	"github.com/MysticRyuujin/enrscout/internal/metricsrv"
 	"github.com/MysticRyuujin/enrscout/internal/netconf"
 	"github.com/MysticRyuujin/enrscout/internal/nodeset"
@@ -222,6 +223,11 @@ func run() error {
 			return err
 		}
 		slog.Info("registered devnet", "bootnodes", len(dcfg.BootnodeRecords), "cl-forks", len(dcfg.CLForks))
+	}
+	if conf.forkFile != "" {
+		if err := forkfile.ApplyCancellations(conf.forkFile); err != nil {
+			return fmt.Errorf("--fork-file: %w", err)
+		}
 	}
 	nodeset.AllowPrivateIPs = conf.allowPrivate || conf.devnetOnly
 

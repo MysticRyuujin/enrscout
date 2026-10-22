@@ -293,18 +293,27 @@ func CancelledForkActivatedBetween(network, layer string, from, to time.Time) bo
 	return false
 }
 
-// WithCancellations applies cancellations to fresh, unloaded copies of the named networks and
-// returns a function that restores the originals. It exists for tests in other packages, which share
-// networks that earlier tests have already loaded.
-func WithCancellations(list []CancelledFork) (restore func(), err error) {
+// ResetForTest swaps the named networks for fresh, unloaded copies and returns a function that
+// restores the originals. Tests in other packages share networks that earlier tests have already
+// loaded, and cancellations apply only to unloaded networks.
+func ResetForTest(names ...string) (restore func()) {
 	saved := slices.Clone(registry)
-	restore = func() { registry = saved }
 	registry = slices.Clone(registry)
 	for i, n := range registry {
-		if slices.ContainsFunc(list, func(c CancelledFork) bool { return c.Network == n.Name }) {
+		if slices.Contains(names, n.Name) {
 			registry[i] = n.unloadedCopy()
 		}
 	}
+	return func() { registry = saved }
+}
+
+// WithCancellations is ResetForTest followed by ApplyCancellations.
+func WithCancellations(list []CancelledFork) (restore func(), err error) {
+	var names []string
+	for _, c := range list {
+		names = append(names, c.Network)
+	}
+	restore = ResetForTest(names...)
 	if _, err := ApplyCancellations(list); err != nil {
 		restore()
 		return nil, err

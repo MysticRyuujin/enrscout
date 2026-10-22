@@ -41,6 +41,10 @@ var (
 		Name: "enrscout_api_last_refresh_timestamp_seconds",
 		Help: "Time of the last successful snapshot refresh.",
 	})
+	apiForkFileRestartRequired = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "enrscout_fork_file_restart_required",
+		Help: "1 when the fork file's cancelled forks differ from those applied at startup; restart crawler, dnspublisher and api.",
+	})
 )
 
 type statusRecorder struct {
@@ -75,4 +79,11 @@ func recordRefresh(eng *query.Engine, err error) {
 	if g := state.GeneratedAt; !g.IsZero() {
 		apiSnapshotGenerated.Set(float64(g.Unix()))
 	}
+}
+
+func boolGauge(b bool) float64 {
+	if b {
+		return 1
+	}
+	return 0
 }
