@@ -3,6 +3,7 @@ package netconf
 import (
 	"encoding/hex"
 	"math"
+	"slices"
 	"strings"
 	"time"
 )
@@ -37,16 +38,19 @@ type ELForkTarget struct {
 	Phase    string `json:"phase"`
 	PreHash  string `json:"pre_hash"`
 	PostHash string `json:"post_hash"`
+	// OnCancelled lists every fork id a node still running a cancelled fork can advertise.
+	OnCancelled []string `json:"-"`
 }
 
 type CLForkTarget struct {
-	Name       string    `json:"name"`
-	Epoch      uint64    `json:"epoch"`
-	Version    string    `json:"version"`
-	Phase      string    `json:"phase"`
-	Time       time.Time `json:"time"`
-	PreDigest  string    `json:"pre_digest"`
-	PostDigest string    `json:"post_digest"`
+	Name        string    `json:"name"`
+	Epoch       uint64    `json:"epoch"`
+	Version     string    `json:"version"`
+	Phase       string    `json:"phase"`
+	Time        time.Time `json:"time"`
+	PreDigest   string    `json:"pre_digest"`
+	PostDigest  string    `json:"post_digest"`
+	OnCancelled []string  `json:"-"`
 }
 
 // ForkTarget is the fork a readiness view tracks on one network. A layer is nil when it has no
@@ -288,7 +292,7 @@ func ReadinessAt(t ForkTarget, network string, ev ReadinessEvidence, at time.Tim
 	case ev.Layer == "el" && t.EL != nil:
 		el := t.EL
 		if el.Phase == PhaseCancelled {
-			return cancelledReadiness(current, strings.EqualFold(ev.ForkHash, el.PostHash) ||
+			return cancelledReadiness(current, containsFold(el.OnCancelled, ev.ForkHash) ||
 				(strings.EqualFold(ev.ForkHash, el.PreHash) && ev.ForkNext == el.Time), true)
 		}
 		if el.Phase == PhaseActivated {
@@ -307,7 +311,7 @@ func ReadinessAt(t ForkTarget, network string, ev ReadinessEvidence, at time.Tim
 	case ev.Layer == "cl" && t.CL != nil:
 		cl := t.CL
 		if cl.Phase == PhaseCancelled {
-			affected := strings.EqualFold(ev.ForkHash, cl.PostDigest) || (strings.EqualFold(ev.ENRForkDigest, cl.PreDigest) &&
+			affected := containsFold(cl.OnCancelled, ev.ForkHash) || (strings.EqualFold(ev.ENRForkDigest, cl.PreDigest) &&
 				ev.ENRNextForkEpoch == cl.Epoch && strings.EqualFold(ev.ENRNextForkVersion, cl.Version))
 			return cancelledReadiness(current, affected, ev.ENRForkDigest != "" && strings.EqualFold(ev.ENRForkDigest, ev.ForkHash))
 		}
@@ -371,4 +375,8 @@ func (t ForkTarget) HistoryName() string {
 		return t.Name + "-cancelled"
 	}
 	return t.Name
+}
+
+func containsFold(list []string, s string) bool {
+	return slices.ContainsFunc(list, func(x string) bool { return strings.EqualFold(x, s) })
 }

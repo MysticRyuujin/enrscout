@@ -149,7 +149,9 @@ func (n *Network) gatherHashes(at time.Time) map[[4]byte]struct{} {
 			set[n.forkIDAt(f.time).Hash] = struct{}{}
 		}
 	}
-	n.cancelledELHashes(set)
+	for _, h := range n.cancelledELHashes(start, now+ahead) {
+		set[h] = struct{}{}
+	}
 	return set
 }
 

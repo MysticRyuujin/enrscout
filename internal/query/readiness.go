@@ -167,7 +167,7 @@ func (e *Engine) ForkReadinessAt(ctx context.Context, network string, at time.Ti
 		v.Counts[readiness] += count
 		if rel := releases[ck]; rel != nil && !rel.Outdated && len(rel.MinVersions) > 0 {
 			status := netconf.ReleaseStatus(rel.MinVersions, rawVersion)
-			if target.Cancelled {
+			if layerCancelled(target, ev.Layer) {
 				status = netconf.CancelledReleaseStatus(rel.MinVersions, rel.UnscheduledIn, rawVersion)
 			}
 			if v.Release == "" {
@@ -267,8 +267,9 @@ func readinessConditionAt(network, want string, at time.Time) (string, []any, er
 		}
 	}
 	if el := target.EL; el != nil && el.Phase == netconf.PhaseCancelled {
-		cancelled("el", "lower(coalesce(fork_hash, '')) = ? OR (lower(coalesce(fork_hash, '')) = ? AND coalesce(fork_next, 0) = ?)",
-			[]any{el.PostHash, el.PreHash, el.Time}, "TRUE")
+		onCancelled, onArgs := inList("lower(coalesce(fork_hash, ''))", el.OnCancelled)
+		cancelled("el", onCancelled+" OR (lower(coalesce(fork_hash, '')) = ? AND coalesce(fork_next, 0) = ?)",
+			append(onArgs, el.PreHash, el.Time), "TRUE")
 	} else if el != nil {
 		if el.Phase == netconf.PhaseActivated {
 			activated("el", el.PreHash, "TRUE", nil, "coalesce(fork_next, 0) = ?", el.Time)
@@ -286,9 +287,10 @@ func readinessConditionAt(network, want string, at time.Time) (string, []any, er
 		}
 	}
 	if cl := target.CL; cl != nil && cl.Phase == netconf.PhaseCancelled {
-		cancelled("cl", "lower(coalesce(fork_hash, '')) = ? OR (lower(coalesce(enr_fork_digest, '')) = ? AND "+
+		onCancelled, onArgs := inList("lower(coalesce(fork_hash, ''))", cl.OnCancelled)
+		cancelled("cl", onCancelled+" OR (lower(coalesce(enr_fork_digest, '')) = ? AND "+
 			"coalesce(enr_next_fork_epoch, 0) = ? AND lower(coalesce(enr_next_fork_version, '')) = ?)",
-			[]any{cl.PostDigest, cl.PreDigest, cl.Epoch, cl.Version},
+			append(onArgs, cl.PreDigest, cl.Epoch, cl.Version),
 			"coalesce(enr_fork_digest, '') <> '' AND lower(enr_fork_digest) = lower(fork_hash)")
 	} else if cl != nil {
 		if cl.Phase == netconf.PhaseActivated {
@@ -377,4 +379,28 @@ func thinHistory(points []snapshot.ReadinessPoint, activation time.Time) []snaps
 		seen++
 	}
 	return kept
+}
+
+// inList renders col IN (...) over lower-cased values; an empty list matches nothing.
+func inList(col string, values []string) (string, []any) {
+	if len(values) == 0 {
+		return "FALSE", nil
+	}
+	args := make([]any, len(values))
+	for i, v := range values {
+		args[i] = strings.ToLower(v)
+	}
+	return col + " IN (" + strings.TrimSuffix(strings.Repeat("?, ", len(values)), ", ") + ")", args
+}
+
+// layerCancelled is per layer: one layer's fork can be cancelled while the other's stays scheduled,
+// and only the cancelled layer's release labels invert.
+func layerCancelled(t netconf.ForkTarget, layer string) bool {
+	switch layer {
+	case "el":
+		return t.EL != nil && t.EL.Phase == netconf.PhaseCancelled
+	case "cl":
+		return t.CL != nil && t.CL.Phase == netconf.PhaseCancelled
+	}
+	return false
 }

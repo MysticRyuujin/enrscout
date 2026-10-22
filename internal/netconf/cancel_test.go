@@ -370,3 +370,38 @@ func TestValidateCancellationsDoesNotApply(t *testing.T) {
 		t.Fatal("validation changed the registered network")
 	}
 }
+
+func TestNodeOnSeveralCancelledForksReadsAffected(t *testing.T) {
+	cl := []CLForkConfig{{Epoch: 0, Version: "0x10000038"}, {Epoch: 0, Version: "0x60000038"}, {Epoch: 0, Version: "0x70000038"},
+		{Name: "gloas", Epoch: 100, Version: "0x80000038"}, {Name: "heze", Epoch: 200, Version: "0x90000038"}}
+	n := registerCancelDevnet(t, "", cl, []BlobParams{{Epoch: 100, MaxBlobs: 21}})
+	original := n.cl.clone()
+	if _, err := ApplyCancellations([]CancelledFork{
+		{Network: "devnet", Fork: "Heze", CL: &CancelledCLFork{Name: "heze", Epoch: 200, Version: "90000038"}},
+		{Network: "devnet", Fork: "Gloas", CL: &CancelledCLFork{Name: "gloas", Epoch: 100, Version: "80000038"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	both, _, _ := original.digestAt(250)
+	at := n.cl.timeAtEpoch(100).Add(ForkTrackingGrace + time.Hour)
+	target, err := ForkTargetAt("devnet", at)
+	if err != nil || target.CL == nil || target.CL.Name != "heze" {
+		t.Fatalf("target = %+v, %v; want the cancelled heze", target, err)
+	}
+	ev := ReadinessEvidence{Layer: "cl", ForkHash: hex.EncodeToString(both[:])}
+	if got := ReadinessAt(target, "devnet", ev, at); got != NotReady {
+		t.Fatalf("a node that ran both cancelled forks = %q, want not_ready", got)
+	}
+}
+
+func TestCancelledHashesStayInTheMembershipWindow(t *testing.T) {
+	n := freshNetwork(t, "mainnet")
+	if _, err := ApplyCancellations([]CancelledFork{{Network: "mainnet", Fork: "Future",
+		CL: &CancelledCLFork{Name: "gloas", Epoch: 500000, Version: "07000000"}}}); err != nil {
+		t.Fatal(err)
+	}
+	n.load()
+	if got := n.cancelledELHashes(0, math.MaxInt64); len(got) != 0 {
+		t.Fatalf("a CL-only cancellation added EL hashes: %x", got)
+	}
+}

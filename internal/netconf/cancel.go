@@ -1,6 +1,7 @@
 package netconf
 
 import (
+	"bytes"
 	"cmp"
 	"encoding/hex"
 	"errors"
@@ -321,35 +322,83 @@ func (n *Network) cancelledTargetsAt(at time.Time, t *ForkTarget) {
 		post := n.forkIDWithCancelledAt(c.elTime, c.elTime).Hash
 		t.EL = &ELForkTarget{Name: c.elName, Time: c.elTime, Phase: PhaseCancelled,
 			PreHash: hex.EncodeToString(pre[:]), PostHash: hex.EncodeToString(post[:])}
+		for _, h := range n.cancelledELHashes(0, math.MaxInt64) {
+			t.EL.OnCancelled = append(t.EL.OnCancelled, hex.EncodeToString(h[:]))
+		}
 	}
 	if c := pick(cancellation.hasCL); c != nil && (t.CL == nil || t.CL.Phase != PhaseScheduled || t.CL.Epoch > c.clEpoch) {
 		t.CL = &CLForkTarget{Name: c.clName, Epoch: c.clEpoch, Version: hex.EncodeToString(c.clVersion[:]),
 			Phase: PhaseCancelled, Time: n.cl.timeAtEpoch(c.clEpoch).UTC(),
 			PreDigest: hex.EncodeToString(c.clPreDigest[:]), PostDigest: hex.EncodeToString(c.clPostDigest[:])}
+		for _, d := range n.cancelledCLDigests() {
+			t.CL.OnCancelled = append(t.CL.OnCancelled, hex.EncodeToString(d[:]))
+		}
 	}
 }
 
-// cancelledELHashes are the fork ids of nodes that went onto a cancelled fork. They keep the network's
-// membership, so such nodes stay visible as stale instead of disappearing as unclassified.
-func (n *Network) cancelledELHashes(set map[[4]byte]struct{}) {
-	if len(n.cancellations) > 0 {
-		original := n.compiledELForks()
-		times := idForkTimes(original, n.genesis.Time())
-		for _, f := range original {
-			set[n.forkIDFrom(times, f.time).Hash] = struct{}{}
+// cancelledELHashes are the fork ids only a schedule that kept a cancelled EL fork produces, at
+// activations within [start, end]: the cancelled fork alone, and the original compiled schedule for
+// a node that ran several. They keep the network's membership, so such nodes stay visible as stale
+// instead of disappearing as unclassified, and readiness counts them as still on the cancelled fork.
+func (n *Network) cancelledELHashes(start, end int64) [][4]byte {
+	first := uint64(math.MaxUint64)
+	for _, c := range n.cancellations {
+		if c.hasEL() {
+			first = min(first, c.elTime)
+		}
+	}
+	if first == math.MaxUint64 {
+		return nil
+	}
+	var out [][4]byte
+	add := func(id forkid.ID) {
+		if !slices.Contains(out, id.Hash) {
+			out = append(out, id.Hash)
+		}
+	}
+	inWindow := func(t uint64) bool { return int64(t) >= start && int64(t) <= end }
+	original := n.compiledELForks()
+	times := idForkTimes(original, n.genesis.Time())
+	for _, f := range original {
+		if f.time >= first && inWindow(f.time) {
+			add(n.forkIDFrom(times, f.time))
 		}
 	}
 	for _, c := range n.cancellations {
 		if !c.hasEL() {
 			continue
 		}
-		set[n.forkIDWithCancelledAt(c.elTime, c.elTime).Hash] = struct{}{}
+		if inWindow(c.elTime) {
+			add(n.forkIDWithCancelledAt(c.elTime, c.elTime))
+		}
 		for _, f := range n.elForks {
-			if f.time > c.elTime {
-				set[n.forkIDWithCancelledAt(c.elTime, f.time).Hash] = struct{}{}
+			if f.time > c.elTime && inWindow(f.time) {
+				add(n.forkIDWithCancelledAt(c.elTime, f.time))
 			}
 		}
 	}
+	return out
+}
+
+// cancelledCLDigests are the digests only a schedule that kept a cancelled CL fork produces.
+func (n *Network) cancelledCLDigests() [][4]byte {
+	var out [][4]byte
+	n.cl.compute()
+	for _, c := range n.cancellations {
+		if c.hasCL() && !slices.Contains(out, c.clPostDigest) {
+			out = append(out, c.clPostDigest)
+		}
+	}
+	if n.originalCL != nil {
+		n.originalCL.compute()
+		for d := range n.originalCL.digests {
+			if _, canonical := n.cl.digests[d]; !canonical && !slices.Contains(out, d) {
+				out = append(out, d)
+			}
+		}
+	}
+	slices.SortFunc(out, func(a, b [4]byte) int { return bytes.Compare(a[:], b[:]) })
+	return out
 }
 
 // cancelledCLDigest also accepts every digest of the original compiled schedule, which a node that ran
