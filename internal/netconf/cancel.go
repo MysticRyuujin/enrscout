@@ -47,6 +47,11 @@ type cancellation struct {
 	clVersion    [4]byte
 	clPreDigest  [4]byte
 	clPostDigest [4]byte
+	// What the canonical CL schedule lost, so the schedule nodes still running the fork follow can
+	// be rebuilt once every cancellation is applied.
+	clRemovedFork  *clFork
+	clRemovedBlobs []blobParams
+	clBPOEpoch     uint64
 }
 
 func (c cancellation) hasEL() bool { return c.elTime != 0 }
@@ -77,6 +82,11 @@ func ApplyCancellations(list []CancelledFork) (absent []string, err error) {
 		absent = append(absent, missing...)
 		n.cancellations = append(n.cancellations, got)
 		slices.SortFunc(n.cancellations, func(a, b cancellation) int { return cmp.Compare(a.at(n), b.at(n)) })
+	}
+	for _, n := range registry {
+		if err := n.cancelledDigests(); err != nil {
+			return nil, fmt.Errorf("cancelled forks on %s: %w", n.Name, err)
+		}
 	}
 	return absent, nil
 }
@@ -121,19 +131,13 @@ func (n *Network) cancel(c CancelledFork) (cancellation, []string, error) {
 		if err != nil {
 			return out, nil, fmt.Errorf("cl: %w", err)
 		}
-		canonical, shadow, present, err := n.cl.withoutFork(*c.CL, version)
+		out.clName, out.clEpoch, out.clVersion = c.CL.Name, c.CL.Epoch, version
+		canonical, present, err := n.cl.withoutFork(*c.CL, version, &out)
 		if err != nil {
 			return out, nil, fmt.Errorf("cl: %w", err)
 		}
 		if !present {
 			absent = append(absent, fmt.Sprintf("%s cl %s", n.Name, c.CL.Name))
-		}
-		out.clName, out.clEpoch, out.clVersion = c.CL.Name, c.CL.Epoch, version
-		if out.clPreDigest, _, err = canonical.digestAt(c.CL.Epoch - 1); err != nil {
-			return out, nil, fmt.Errorf("cl: %w", err)
-		}
-		if out.clPostDigest, _, err = shadow.digestAt(c.CL.Epoch); err != nil {
-			return out, nil, fmt.Errorf("cl: %w", err)
 		}
 		n.cl = canonical
 	}
@@ -155,54 +159,92 @@ func (n *Network) compiledELName(name string) bool {
 	return slices.ContainsFunc(n.compiledELForks(), func(f elForkTime) bool { return f.name == name })
 }
 
-// withoutFork returns the canonical schedule without the fork and a shadow schedule that keeps it,
-// which gives the digest nodes still running the fork move to. A fork already missing from the
-// compiled schedule is added to the shadow from the entry's own coordinates.
-func (c *clNetwork) withoutFork(f CancelledCLFork, version [4]byte) (canonical, shadow *clNetwork, present bool, err error) {
-	canonical, shadow = c.clone(), c.clone()
+// withoutFork returns the canonical schedule without the fork and records in out what it removed. A
+// named fork takes the blob entries at its epoch with it, since they are part of that upgrade. A BPO
+// is matched by epoch, not name, because BPO names are positions that shift when the compiled schedule
+// drops one; it stays in the numbering, so later BPOs keep the names that pair with geth's BPOn.
+func (c *clNetwork) withoutFork(f CancelledCLFork, version [4]byte, out *cancellation) (canonical *clNetwork, present bool, err error) {
+	canonical = c.clone()
 	if canonical.cancelledBPOs == nil {
 		canonical.cancelledBPOs = map[uint64]bool{}
 	}
-	if i := slices.IndexFunc(c.forks, func(x clFork) bool { return strings.EqualFold(x.name, f.Name) }); i >= 0 {
-		x := c.forks[i]
-		if x.epoch != f.Epoch || x.version != version {
-			return nil, nil, false, fmt.Errorf("%s is scheduled at epoch %d with version %x", x.name, x.epoch, x.version)
+	isBPO := strings.HasPrefix(strings.ToUpper(f.Name), "BPO")
+	if !isBPO {
+		if strings.EqualFold(f.Name, "electra") || strings.EqualFold(f.Name, "fulu") {
+			return nil, false, fmt.Errorf("cancelling %s is not supported", f.Name)
 		}
-		canonical.forks = slices.Delete(canonical.forks, i, i+1)
-		return canonical, shadow, true, nil
-	}
-	if strings.HasPrefix(strings.ToUpper(f.Name), "BPO") {
-		forks, err := c.transitions()
-		if err != nil {
-			return nil, nil, false, err
-		}
-		if i := slices.IndexFunc(forks, func(x clFork) bool { return strings.EqualFold(x.name, f.Name) }); i >= 0 {
-			x := forks[i]
-			bp := slices.IndexFunc(c.blobSchedule, func(b blobParams) bool { return b.epoch == x.epoch && !c.cancelledBPOs[b.epoch] })
-			if x.epoch != f.Epoch || x.version != version || bp < 0 || c.blobSchedule[bp].maxBlobs != f.MaxBlobs {
-				return nil, nil, false, fmt.Errorf("%s is scheduled at epoch %d with version %x and max blobs %d",
-					x.name, x.epoch, x.version, maxBlobsAt(c.blobSchedule, bp))
+		if i := slices.IndexFunc(c.forks, func(x clFork) bool { return strings.EqualFold(x.name, f.Name) }); i >= 0 {
+			x := c.forks[i]
+			if x.epoch != f.Epoch || x.version != version {
+				return nil, false, fmt.Errorf("%s is scheduled at epoch %d with version %x", x.name, x.epoch, x.version)
 			}
-			canonical.cancelledBPOs[x.epoch] = true
-			return canonical, shadow, true, nil
+			canonical.forks = slices.Delete(canonical.forks, i, i+1)
+			out.clRemovedFork = &x
+			for _, b := range c.blobSchedule {
+				if b.epoch == x.epoch {
+					out.clRemovedBlobs = append(out.clRemovedBlobs, b)
+				}
+			}
+			canonical.blobSchedule = slices.DeleteFunc(canonical.blobSchedule, func(b blobParams) bool { return b.epoch == x.epoch })
+			return canonical, true, nil
 		}
-		if f.MaxBlobs == 0 {
-			return nil, nil, false, errors.New("a blob-parameter-only fork needs max_blobs")
+		out.clRemovedFork = &clFork{name: strings.ToLower(f.Name), epoch: f.Epoch, version: version}
+		if f.MaxBlobs > 0 {
+			out.clRemovedBlobs = []blobParams{{epoch: f.Epoch, maxBlobs: f.MaxBlobs}}
 		}
-		shadow.blobSchedule = append(shadow.blobSchedule, blobParams{epoch: f.Epoch, maxBlobs: f.MaxBlobs})
-		slices.SortStableFunc(shadow.blobSchedule, func(a, b blobParams) int { return cmp.Compare(a.epoch, b.epoch) })
-		return canonical, shadow, false, nil
+		return canonical, false, nil
 	}
-	shadow.forks = append(shadow.forks, clFork{name: strings.ToLower(f.Name), epoch: f.Epoch, version: version})
-	slices.SortStableFunc(shadow.forks, func(a, b clFork) int { return cmp.Compare(a.epoch, b.epoch) })
-	return canonical, shadow, false, nil
+	forks, err := c.transitions()
+	if err != nil {
+		return nil, false, err
+	}
+	out.clBPOEpoch = f.Epoch
+	if i := slices.IndexFunc(forks, func(x clFork) bool { return x.epoch == f.Epoch && strings.HasPrefix(x.name, "BPO") }); i >= 0 {
+		x := forks[i]
+		bp := slices.IndexFunc(c.blobSchedule, func(b blobParams) bool { return b.epoch == x.epoch })
+		if x.version != version || c.blobSchedule[bp].maxBlobs != f.MaxBlobs {
+			return nil, false, fmt.Errorf("the BPO at epoch %d has version %x and max blobs %d", x.epoch, x.version, c.blobSchedule[bp].maxBlobs)
+		}
+		canonical.cancelledBPOs[x.epoch] = true
+		return canonical, true, nil
+	}
+	if f.MaxBlobs == 0 {
+		return nil, false, errors.New("a blob-parameter-only fork needs max_blobs")
+	}
+	out.clRemovedBlobs = []blobParams{{epoch: f.Epoch, maxBlobs: f.MaxBlobs}}
+	return canonical, false, nil
 }
 
-func maxBlobsAt(s []blobParams, i int) uint64 {
-	if i < 0 {
-		return 0
+// cancelledDigests runs after every cancellation is applied, so each pre-fork digest reflects the
+// final canonical schedule and each post-fork digest adds back only that one fork.
+func (n *Network) cancelledDigests() error {
+	for i := range n.cancellations {
+		c := &n.cancellations[i]
+		if !c.hasCL() {
+			continue
+		}
+		var err error
+		if c.clPreDigest, _, err = n.cl.digestAt(c.clEpoch - 1); err != nil {
+			return err
+		}
+		shadow := n.cl.clone()
+		if c.clRemovedFork != nil {
+			shadow.forks = append(shadow.forks, *c.clRemovedFork)
+			slices.SortStableFunc(shadow.forks, func(a, b clFork) int { return cmp.Compare(a.epoch, b.epoch) })
+		}
+		if c.clBPOEpoch != 0 && shadow.cancelledBPOs[c.clBPOEpoch] {
+			shadow.cancelledBPOs = maps.Clone(shadow.cancelledBPOs)
+			delete(shadow.cancelledBPOs, c.clBPOEpoch)
+		}
+		if len(c.clRemovedBlobs) > 0 {
+			shadow.blobSchedule = append(shadow.blobSchedule, c.clRemovedBlobs...)
+			slices.SortStableFunc(shadow.blobSchedule, func(a, b blobParams) int { return cmp.Compare(a.epoch, b.epoch) })
+		}
+		if c.clPostDigest, _, err = shadow.digestAt(c.clEpoch); err != nil {
+			return err
+		}
 	}
-	return s[i].maxBlobs
+	return nil
 }
 
 func (c *clNetwork) clone() *clNetwork {
@@ -225,23 +267,35 @@ func (n *Network) forkIDWithCancelledAt(cancelled, at uint64) forkid.ID {
 	return n.forkIDFrom(times, at)
 }
 
+// cancelledTargetsAt replaces a layer's target with a cancelled fork, chosen per layer like a real
+// one: the next upcoming cancellation, or else the latest one within grace. It yields only to a real
+// fork scheduled before it, since a node that still schedules the cancelled fork is what matters.
 func (n *Network) cancelledTargetsAt(at time.Time, t *ForkTarget) {
-	for _, c := range n.cancellations {
-		if at.Sub(time.Unix(c.at(n), 0)) >= ForkTrackingGrace {
-			continue
+	pick := func(has func(cancellation) bool) *cancellation {
+		var chosen *cancellation
+		for i := range n.cancellations {
+			c := &n.cancellations[i]
+			when := time.Unix(c.at(n), 0)
+			switch {
+			case !has(*c) || at.Sub(when) >= ForkTrackingGrace:
+			case when.After(at):
+				return c
+			default:
+				chosen = c
+			}
 		}
-		if c.hasEL() && (t.EL == nil || t.EL.Time > c.elTime) {
-			pre := n.forkIDAt(c.elTime - 1).Hash
-			post := n.forkIDWithCancelledAt(c.elTime, c.elTime).Hash
-			t.EL = &ELForkTarget{Name: c.elName, Time: c.elTime, Phase: PhaseCancelled,
-				PreHash: hex.EncodeToString(pre[:]), PostHash: hex.EncodeToString(post[:])}
-		}
-		if c.hasCL() && (t.CL == nil || t.CL.Epoch > c.clEpoch) {
-			t.CL = &CLForkTarget{Name: c.clName, Epoch: c.clEpoch, Version: hex.EncodeToString(c.clVersion[:]),
-				Phase: PhaseCancelled, Time: n.cl.timeAtEpoch(c.clEpoch).UTC(),
-				PreDigest: hex.EncodeToString(c.clPreDigest[:]), PostDigest: hex.EncodeToString(c.clPostDigest[:])}
-		}
-		return
+		return chosen
+	}
+	if c := pick(cancellation.hasEL); c != nil && (t.EL == nil || t.EL.Phase != PhaseScheduled || t.EL.Time > c.elTime) {
+		pre := n.forkIDAt(c.elTime - 1).Hash
+		post := n.forkIDWithCancelledAt(c.elTime, c.elTime).Hash
+		t.EL = &ELForkTarget{Name: c.elName, Time: c.elTime, Phase: PhaseCancelled,
+			PreHash: hex.EncodeToString(pre[:]), PostHash: hex.EncodeToString(post[:])}
+	}
+	if c := pick(cancellation.hasCL); c != nil && (t.CL == nil || t.CL.Phase != PhaseScheduled || t.CL.Epoch > c.clEpoch) {
+		t.CL = &CLForkTarget{Name: c.clName, Epoch: c.clEpoch, Version: hex.EncodeToString(c.clVersion[:]),
+			Phase: PhaseCancelled, Time: n.cl.timeAtEpoch(c.clEpoch).UTC(),
+			PreDigest: hex.EncodeToString(c.clPreDigest[:]), PostDigest: hex.EncodeToString(c.clPostDigest[:])}
 	}
 }
 
@@ -249,8 +303,14 @@ func (n *Network) cancelledTargetsAt(at time.Time, t *ForkTarget) {
 // membership, so such nodes stay visible as stale instead of disappearing as unclassified.
 func (n *Network) cancelledELHashes(set map[[4]byte]struct{}) {
 	for _, c := range n.cancellations {
-		if c.hasEL() {
-			set[n.forkIDWithCancelledAt(c.elTime, c.elTime).Hash] = struct{}{}
+		if !c.hasEL() {
+			continue
+		}
+		set[n.forkIDWithCancelledAt(c.elTime, c.elTime).Hash] = struct{}{}
+		for _, f := range n.elForks {
+			if f.time > c.elTime {
+				set[n.forkIDWithCancelledAt(c.elTime, f.time).Hash] = struct{}{}
+			}
 		}
 	}
 }

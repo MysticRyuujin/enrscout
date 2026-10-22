@@ -218,3 +218,114 @@ func TestCancelAbsentForkTracksOnly(t *testing.T) {
 		t.Fatalf("target = %+v, %v", target, err)
 	}
 }
+
+const devnetGenesis = 1700000000
+
+func devnetEpochTime(e int) int { return devnetGenesis + e*384 }
+
+func registerCancelDevnet(t *testing.T, elKeys string, cl []CLForkConfig, blobs []BlobParams) *Network {
+	t.Helper()
+	cfg := devnetConfig()
+	cfg.ELGenesisJSON = []byte(strings.Replace(devnetGenesisJSON, `"osakaTime": 0`, `"osakaTime": 0`+elKeys, 1))
+	if cl != nil {
+		cfg.CLForks = cl
+	}
+	cfg.BlobSchedule = append(cfg.BlobSchedule, blobs...)
+	t.Cleanup(func() {
+		registry = slices.DeleteFunc(registry, func(n *Network) bool { return n.Name == "devnet" })
+	})
+	if err := RegisterDevnet(cfg); err != nil {
+		t.Fatal(err)
+	}
+	n, _ := Get("devnet")
+	return n
+}
+
+func bpoCancel(name string, epoch int, maxBlobs uint64) CancelledFork {
+	return CancelledFork{Network: "devnet", Fork: name,
+		EL: &CancelledELFork{Name: name, Time: uint64(devnetEpochTime(epoch))},
+		CL: &CancelledCLFork{Name: name, Epoch: uint64(epoch), Version: "70000038", MaxBlobs: maxBlobs}}
+}
+
+func TestUpcomingCancellationBeatsRecentActivation(t *testing.T) {
+	registerCancelDevnet(t, fmt.Sprintf(`, "bpo1Time": %d, "bpo2Time": %d`, devnetEpochTime(1), devnetEpochTime(2)), nil,
+		[]BlobParams{{Epoch: 1, MaxBlobs: 21}, {Epoch: 2, MaxBlobs: 30}})
+	if _, err := ApplyCancellations([]CancelledFork{bpoCancel("BPO2", 2, 30)}); err != nil {
+		t.Fatal(err)
+	}
+	target, err := ForkTargetAt("devnet", time.Unix(int64(devnetEpochTime(1)+100), 0))
+	if err != nil || target.Name != "BPO2" || !target.Cancelled {
+		t.Fatalf("target between BPO1 and the cancelled BPO2 = %+v, %v", target, err)
+	}
+}
+
+func TestCancellationOrderDoesNotChangeDigests(t *testing.T) {
+	n := registerCancelDevnet(t, fmt.Sprintf(`, "bpo1Time": %d, "bpo2Time": %d`, devnetEpochTime(100), devnetEpochTime(200)), nil,
+		[]BlobParams{{Epoch: 100, MaxBlobs: 21}, {Epoch: 200, MaxBlobs: 30}})
+	if _, err := ApplyCancellations([]CancelledFork{bpoCancel("BPO2", 200, 30), bpoCancel("BPO1", 100, 21)}); err != nil {
+		t.Fatal(err)
+	}
+	genesisDigest, _, _ := n.cl.digestAt(99)
+	for _, c := range n.cancellations {
+		if c.clPreDigest != genesisDigest {
+			t.Errorf("%s pre digest %x, want the final canonical %x", c.clName, c.clPreDigest, genesisDigest)
+		}
+	}
+	if n.cancellations[0].clPostDigest == n.cancellations[1].clPostDigest {
+		t.Error("both cancelled BPOs share a post digest")
+	}
+}
+
+func TestCancelledNamedForkTakesItsBlobChange(t *testing.T) {
+	cl := []CLForkConfig{{Epoch: 0, Version: "0x10000038"}, {Epoch: 0, Version: "0x60000038"}, {Epoch: 0, Version: "0x70000038"},
+		{Name: "gloas", Epoch: 100, Version: "0x80000038"}}
+	n := registerCancelDevnet(t, fmt.Sprintf(`, "amsterdamTime": %d`, devnetEpochTime(100)), cl, []BlobParams{{Epoch: 100, MaxBlobs: 21}})
+	if _, err := ApplyCancellations([]CancelledFork{{Network: "devnet", Fork: "Glamsterdam",
+		EL: &CancelledELFork{Name: "Amsterdam", Time: uint64(devnetEpochTime(100))},
+		CL: &CancelledCLFork{Name: "gloas", Epoch: 100, Version: "80000038"}}}); err != nil {
+		t.Fatal(err)
+	}
+	before, _, _ := n.cl.digestAt(99)
+	after, _, _ := n.cl.digestAt(150)
+	if before != after {
+		t.Fatal("the cancelled fork's blob change still changes the canonical digest")
+	}
+	if forks, _ := n.cl.transitions(); slices.ContainsFunc(forks, func(f clFork) bool { return f.epoch == 100 }) {
+		t.Fatalf("transitions = %+v, want nothing left at the cancelled epoch", forks)
+	}
+}
+
+func TestCancelledMembershipSurvivesLaterForks(t *testing.T) {
+	n := registerCancelDevnet(t, fmt.Sprintf(`, "bpo1Time": %d, "bpo2Time": %d`, devnetEpochTime(100), devnetEpochTime(200)), nil,
+		[]BlobParams{{Epoch: 100, MaxBlobs: 21}, {Epoch: 200, MaxBlobs: 30}})
+	if _, err := ApplyCancellations([]CancelledFork{bpoCancel("BPO1", 100, 21)}); err != nil {
+		t.Fatal(err)
+	}
+	unchanged := n.forkIDWithCancelledAt(uint64(devnetEpochTime(100)), uint64(devnetEpochTime(200)))
+	if _, ok := n.gatherHashes(time.Unix(int64(devnetEpochTime(200)), 0))[unchanged.Hash]; !ok {
+		t.Error("a node that ran the cancelled BPO1 and then BPO2 no longer classifies")
+	}
+}
+
+func TestEachLayerKeepsItsOwnCancellation(t *testing.T) {
+	registerCancelDevnet(t, fmt.Sprintf(`, "bpo1Time": %d`, devnetEpochTime(100)), nil, []BlobParams{{Epoch: 200, MaxBlobs: 30}})
+	if _, err := ApplyCancellations([]CancelledFork{
+		{Network: "devnet", Fork: "BPO1", EL: &CancelledELFork{Name: "BPO1", Time: uint64(devnetEpochTime(100))}},
+		{Network: "devnet", Fork: "BPO1-CL", CL: &CancelledCLFork{Name: "BPO1", Epoch: 200, Version: "70000038", MaxBlobs: 30}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	layers, err := LayerForkTargetsAt("devnet", time.Unix(int64(devnetEpochTime(50)), 0))
+	if err != nil || layers.EL == nil || layers.CL == nil || layers.EL.Phase != PhaseCancelled || layers.CL.Phase != PhaseCancelled {
+		t.Fatalf("layer targets = EL %+v, CL %+v, %v; want both cancellations tracked", layers.EL, layers.CL, err)
+	}
+}
+
+func TestRetainedBPOCancellationAfterTheCodeDropsIt(t *testing.T) {
+	registerCancelDevnet(t, fmt.Sprintf(`, "bpo1Time": %d`, devnetEpochTime(200)), nil, []BlobParams{{Epoch: 200, MaxBlobs: 30}})
+	absent, err := ApplyCancellations([]CancelledFork{{Network: "devnet", Fork: "BPO1",
+		CL: &CancelledCLFork{Name: "BPO1", Epoch: 100, Version: "70000038", MaxBlobs: 21}}})
+	if err != nil || len(absent) != 1 {
+		t.Fatalf("ApplyCancellations = %v, %v; want the BPO at epoch 100 tracked as absent", absent, err)
+	}
+}
