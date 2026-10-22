@@ -247,11 +247,10 @@ export interface ForkReadiness {
   phase: "scheduled" | "activated" | "cancelled" | "none";
   fork: {
     name: string;
-    cancelled?: boolean;
     el?: {
       name: string;
       time: number;
-      phase: string;
+      phase: ForkReadiness["phase"];
       pre_hash: string;
       post_hash: string;
     };
@@ -259,7 +258,7 @@ export interface ForkReadiness {
       name: string;
       epoch: number;
       version: string;
-      phase: string;
+      phase: ForkReadiness["phase"];
       time: string;
       pre_digest: string;
       post_digest: string;

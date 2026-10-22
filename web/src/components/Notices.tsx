@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router";
 import { fetchForks } from "../api";
 import { useNetwork } from "../network";
-import { whileVisible } from "../theme";
+import { sessionFlag, setSessionFlag, whileVisible } from "../theme";
 import type { Notice } from "../types";
 
 // Operator text is rendered as text and links only: the file is trusted, but it is edited by hand
@@ -14,7 +14,7 @@ function paragraphs(body?: string): string[] {
     .filter(Boolean);
 }
 
-export function NoticeCard({ notice }: { notice: Notice }) {
+function NoticeCard({ notice }: { notice: Notice }) {
   return (
     <section
       className={`notice notice-${notice.severity}`}
@@ -54,14 +54,6 @@ function dismissedKey(network: string, n: Notice): string {
   return `notice:${network}:${n.title}`;
 }
 
-function readDismissed(key: string): boolean {
-  try {
-    return sessionStorage.getItem(key) === "1";
-  } catch {
-    return false;
-  }
-}
-
 export function NoticeStrip() {
   const { network } = useNetwork();
   const { pathname } = useLocation();
@@ -85,13 +77,9 @@ export function NoticeStrip() {
 
   if (!notice || pathname.startsWith("/forks")) return null;
   const key = dismissedKey(network, notice);
-  if (dismissed === key || readDismissed(key)) return null;
+  if (dismissed === key || sessionFlag(key)) return null;
   const dismiss = () => {
-    try {
-      sessionStorage.setItem(key, "1");
-    } catch {
-      // Without storage the strip still hides for this page view.
-    }
+    setSessionFlag(key);
     setDismissed(key);
   };
   return (

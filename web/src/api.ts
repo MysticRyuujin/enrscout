@@ -46,10 +46,23 @@ export function fetchMap(network: string): Promise<CompactMap> {
   return get<CompactMap>(`/api/v1/map?${p}`);
 }
 
+// The notice strip, the activation banner and the open page all poll the same body.
+const forksCache = new Map<
+  string,
+  { at: number; body: Promise<ForkReadiness> }
+>();
+
 export function fetchForks(network: string): Promise<ForkReadiness> {
-  return get<ForkReadiness>(
+  const hit = forksCache.get(network);
+  if (hit && Date.now() - hit.at < 30_000) return hit.body;
+  const body = get<ForkReadiness>(
     `/api/v1/forks?${new URLSearchParams({ network })}`,
   );
+  forksCache.set(network, { at: Date.now(), body });
+  body.catch(() => {
+    if (forksCache.get(network)?.body === body) forksCache.delete(network);
+  });
+  return body;
 }
 
 export function fetchMeta(): Promise<Meta> {

@@ -34,6 +34,23 @@ export function whileVisible(load: () => unknown): () => void {
   };
 }
 
+// Storage can throw (private windows, blocked site data); a dismissal then lasts only the page view.
+export function sessionFlag(key: string): boolean {
+  try {
+    return sessionStorage.getItem(key) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function setSessionFlag(key: string): void {
+  try {
+    sessionStorage.setItem(key, "1");
+  } catch {
+    return;
+  }
+}
+
 // A supernode custodies every PeerDAS custody group.
 export const SUPERNODE_CGC = 128;
 

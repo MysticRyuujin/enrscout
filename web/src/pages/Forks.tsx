@@ -114,24 +114,25 @@ const STATE_COLOR: Record<Readiness, string> = {
   stale: "#2a3547",
 };
 
-function countdown(target: number, now: number): string {
-  const s = target - now;
-  if (s <= 0) return `activated ${durationAgo(-s)}`;
+function remaining(s: number): string {
   const d = Math.floor(s / 86400);
   const h = Math.floor((s % 86400) / 3600);
   const m = Math.floor((s % 3600) / 60);
-  return d > 0 ? `activates in ${d}d ${h}h` : `activates in ${h}h ${m}m`;
+  return d > 0 ? `${d}d ${h}h` : `${h}h ${m}m`;
 }
 
-function cancelledCountdown(
-  target: number,
-  now: number,
-  prefix = "cancelled · ",
-): string {
+function countdown(target: number, now: number): string {
   const s = target - now;
   return s > 0
-    ? `${prefix}would have activated in ${countdown(target, now).replace("activates in ", "")}`
-    : `${prefix}would have activated ${durationAgo(-s)}`;
+    ? `activates in ${remaining(s)}`
+    : `activated ${durationAgo(-s)}`;
+}
+
+function cancelledCountdown(target: number, now: number): string {
+  const s = target - now;
+  return s > 0
+    ? `would have activated in ${remaining(s)}`
+    : `would have activated ${durationAgo(-s)}`;
 }
 
 function utc(unix: number): string {
@@ -302,7 +303,7 @@ function ForkSchedule({
                 <td>{utc(f.time)}</td>
                 <td>
                   {f.cancelled
-                    ? cancelledCountdown(f.time, now)
+                    ? `cancelled · ${cancelledCountdown(f.time, now)}`
                     : countdown(f.time, now)}
                   {f.tracked && " · tracked"}
                 </td>
@@ -660,24 +661,14 @@ export default function Forks() {
         <h1>
           <span className="net-dot" style={{ background: color }} />{" "}
           {data.fork.name} on {network}
-          <span
-            className={
-              activated
-                ? "phase-badge activated"
-                : cancelled
-                  ? "phase-badge cancelled"
-                  : "phase-badge"
-            }
-          >
-            {data.phase}
-          </span>
+          <span className={`phase-badge ${mode}`}>{data.phase}</span>
         </h1>
         <p className="sub">
           {activation && (
             <>
               <strong>
                 {cancelled
-                  ? cancelledCountdown(activation, now, "")
+                  ? cancelledCountdown(activation, now)
                   : countdown(activation, now)}
               </strong>{" "}
               · {utc(activation)}
@@ -855,7 +846,7 @@ export default function Forks() {
           layer={l}
           data={data.layers[l]!}
           releases={releases}
-          mode={mode}
+          mode={forkMode(data.fork[l]?.phase ?? data.phase)}
         />
       ))}
 

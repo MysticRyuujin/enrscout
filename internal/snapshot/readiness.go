@@ -38,13 +38,12 @@ type ReadinessPoint struct {
 // crawler only after a manifest commit, so it inherits the one-writer-per-prefix rule, and it is
 // deliberately outside the manifest, whose strict decoding would reject a new field.
 type ReadinessHistory struct {
-	Version   int              `json:"version"`
-	Network   string           `json:"network"`
-	Fork      string           `json:"fork"`
-	ELTime    uint64           `json:"el_time,omitempty"`
-	CLEpoch   uint64           `json:"cl_epoch,omitempty"`
-	Cancelled bool             `json:"cancelled,omitempty"`
-	Points    []ReadinessPoint `json:"points"`
+	Version int              `json:"version"`
+	Network string           `json:"network"`
+	Fork    string           `json:"fork"`
+	ELTime  uint64           `json:"el_time,omitempty"`
+	CLEpoch uint64           `json:"cl_epoch,omitempty"`
+	Points  []ReadinessPoint `json:"points"`
 }
 
 var keySegment = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
