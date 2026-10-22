@@ -106,7 +106,7 @@ from the fork schedule that each node advertises. The client release table only 
 When a fork is scheduled:
 
 1. Add one release file entry per client for that network and fork, with no release yet. The
-   file is the one named by the API's `--client-releases-file` (format in the README, "Client
+   file is the one named by `--fork-file` (format in the README, "Client
    release table"). It needs no ENRScout release.
 2. If the upgrade pairs an EL and a CL fork under a new common name, add the pair to
    `combinedForkNames` in `internal/netconf/readiness.go`.
@@ -124,6 +124,39 @@ As each client ships a release that carries the schedule:
    tracked fork. The API refuses to start when the flag names a missing or invalid file. A file
    removed or broken while the API runs is only logged; the table already loaded stays in use.
 4. After a fork leaves the tracker, its entries no longer show. Delete them when convenient.
+
+### Cancelling a scheduled fork
+
+A fork can be called off after clients have shipped releases that schedule it, as Hoodi
+Glamsterdam was on 2026-10-22 (eth-clients/hoodi#33, AllCoreDevs Execution #248). A node on such a
+release forks away from the network at the time the fork would have activated. Cancel it in the
+operator fork file, the file named by `--fork-file` on the crawler, the DNS publisher and the API.
+It needs no ENRScout release.
+
+1. Add a `cancelled_forks` entry with the coordinates of the compiled schedule: the EL fork name
+   and time, and the CL fork name, epoch and version. A blob-parameter-only fork also needs its
+   `max_blobs`. A typo stops startup, because each coordinate must match the compiled schedule.
+2. Add a `notices` entry: the severity, a title, a plain-text body, and links to the config change
+   and the call that decided it. It shows on the Forks page and as a strip on every page.
+3. Restart the crawler, the DNS publisher and the API. Cancellations apply only at startup; notice
+   and release edits hot-reload in the API. If a reload finds changed cancellations, the API keeps
+   the startup set, logs `cancelled forks changed`, and sets `enrscout_fork_file_restart_required`.
+   It rejects a change that would fail at startup.
+
+After the restart:
+
+- The schedule drops the fork, and our advertisers stop announcing it.
+- The Forks page tracks the fork as cancelled until 14 days after its time. There, ready means
+  unscheduled.
+- Within two publish intervals of the time, the DNS publisher publishes only nodes that no longer
+  schedule it. After the time, it excludes them.
+
+As clients ship releases without the schedule, add their first version to `unscheduled_in` on the
+existing release entry. Versions from `min_versions` up to that floor read as affected.
+
+Delete the cancellation only when both hold: the time plus 14 days has passed, and no deployed
+binary still compiles the fork (go-ethereum and `internal/netconf/consensus.go` both dropped it).
+Otherwise a restart brings the cancelled fork back as canonical.
 
 If a fork is rescheduled, update the fork schedule first. Entries verified against the old time then
 show as outdated, and their labels stay hidden until each one is checked again and its `fork_time`

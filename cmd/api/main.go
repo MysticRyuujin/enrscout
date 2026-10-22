@@ -21,6 +21,7 @@ import (
 
 	"github.com/MysticRyuujin/enrscout/internal/buildinfo"
 	"github.com/MysticRyuujin/enrscout/internal/devnetconfig"
+	"github.com/MysticRyuujin/enrscout/internal/forkfile"
 	"github.com/MysticRyuujin/enrscout/internal/metricsrv"
 	"github.com/MysticRyuujin/enrscout/internal/netconf"
 	"github.com/MysticRyuujin/enrscout/internal/query"
@@ -47,7 +48,7 @@ func run() error {
 		corsOrigin  = flag.String("cors-origin", "", "Access-Control-Allow-Origin response value (empty disables cross-origin response sharing; not an authorization control)")
 		pprofAddr   = flag.String("pprof", "", "serve net/http/pprof on this address (empty = off)")
 		metricsAddr = flag.String("metrics-addr", "127.0.0.1:9101", "serve Prometheus metrics on this private listener (empty = disabled)")
-		releasesF   = flag.String("client-releases-file", "", "YAML (or JSON) client release table for /api/v1/forks labels; reloaded when it changes (empty = no labels)")
+		forkFileF   = flag.String("fork-file", "", "operator fork file: client release labels, notices and cancelled forks (YAML or JSON); releases and notices reload when it changes, cancellations apply at startup (empty = none)")
 		storeFlags  = store.BindFlags(flag.CommandLine, "data", "filesystem snapshot dir")
 	)
 	flag.Parse()
@@ -72,11 +73,10 @@ func run() error {
 	if err := validateCORSOrigin(*corsOrigin); err != nil {
 		return fmt.Errorf("--cors-origin: %w", err)
 	}
-	var releases *releasesFile
-	if *releasesF != "" {
-		releases = &releasesFile{path: *releasesF}
-		if err := releases.load(); err != nil {
-			return fmt.Errorf("--client-releases-file: %w", err)
+	var forkFile *forkfile.Watcher
+	if *forkFileF != "" {
+		if forkFile, err = forkfile.Open(*forkFileF); err != nil {
+			return fmt.Errorf("--fork-file: %w", err)
 		}
 	}
 	if err := metricsrv.StartPprof(*pprofAddr); err != nil {
@@ -109,7 +109,7 @@ func run() error {
 	refreshDone := make(chan struct{})
 	go func() {
 		defer close(refreshDone)
-		refreshLoop(ctx, eng, releases, *refresh)
+		refreshLoop(ctx, eng, forkFile, *refresh)
 	}()
 
 	srv := &http.Server{
@@ -142,7 +142,7 @@ func run() error {
 	return serveErr
 }
 
-func refreshLoop(ctx context.Context, eng *query.Engine, releases *releasesFile, every time.Duration) {
+func refreshLoop(ctx context.Context, eng *query.Engine, forkFile *forkfile.Watcher, every time.Duration) {
 	t := time.NewTicker(every)
 	defer t.Stop()
 	for {
@@ -150,10 +150,11 @@ func refreshLoop(ctx context.Context, eng *query.Engine, releases *releasesFile,
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			if releases != nil {
-				if err := releases.load(); err != nil {
-					slog.Warn("client release table not reloaded; keeping the current one", "err", err)
+			if forkFile != nil {
+				if err := forkFile.Reload(); err != nil {
+					slog.Warn("fork file not reloaded; keeping the current releases and notices", "err", err)
 				}
+				apiForkFileRestartRequired.Set(boolGauge(forkFile.RestartRequired()))
 			}
 			err := eng.Refresh(ctx)
 			recordRefresh(eng, err)

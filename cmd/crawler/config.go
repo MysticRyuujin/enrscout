@@ -16,6 +16,7 @@ import (
 // somewhere else entirely.
 type config struct {
 	devnetDir           string
+	forkFile            string
 	devnetOnly          bool
 	devnetForce         bool
 	allowPrivate        bool
@@ -65,6 +66,7 @@ func parseFlags() (*config, error) {
 	var logLevel, probeToken string
 
 	flag.StringVar(&c.devnetDir, "devnet-dir", "", "load a Kurtosis devnet definition from this dir (genesis.json, config.yaml, genesis_validators_root.txt, bootnodes.txt) and register it as network \"devnet\"")
+	flag.StringVar(&c.forkFile, "fork-file", "", "operator fork file; its cancelled forks are removed from the schedule at startup (empty = none)")
 	flag.BoolVar(&c.devnetOnly, "devnet-only", false, "seed discovery only from the devnet bootnodes (confines the crawl to the isolated devnet instead of the global DHT)")
 	flag.BoolVar(&c.devnetForce, "devnet-force-unclassified", false, "in --devnet-only mode, classify in-range TCP records without fork metadata as devnet EL (isolated interoperability tests only)")
 	flag.BoolVar(&c.allowPrivate, "allow-private-ips", false, "keep nodes with private IPs (needed to crawl an isolated devnet)")

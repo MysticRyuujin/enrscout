@@ -55,7 +55,7 @@ node web/e2e/browse.mjs    # Playwright browse test (needs: cd web && npm ci && 
   CL reads ENR-only columns (`enr_*`) because Status overwrites `fork_hash` and `ObserveAuthenticatedCL`
   zeroes `fork_next`. `/api/v1/forks` classifies grouped rows in Go; the `readiness=` node filter
   mirrors the rule in SQL (`query.readinessConditionAt`), pinned by `TestReadinessMatchesSQLAndGo`.
-  Release labels, which readiness never depends on, come only from the API's `--client-releases-file`
+  Release labels, which readiness never depends on, come only from the `--fork-file` operator file
   (strict YAML, so it can carry comments; `netconf/releases.go` holds the types and rules, no data):
   one floor per release line (`min_versions`), plus the `fork_time` each entry was verified against, so
   a rescheduled fork withholds its labels. The file is the whole table and reloads on change; an invalid file keeps the last good table (`netconf.SetClientReleases` validates
@@ -63,7 +63,9 @@ node web/e2e/browse.mjs    # Playwright browse test (needs: cd web && npm ci && 
   Readiness history (`<prefix>/state/readiness/<network>/<fork>.json`, `snapshot.ReadinessHistory`) is
   written by the crawler after each manifest commit, one point per 15 minutes (per publish within 3 h of activation) for 30 days, by
   read-modify-write so restarts keep earlier points. It is not part of a generation or the manifest,
-  it is never overwritten when unreadable, and the API reads it best-effort. It cannot be backfilled:
+  it is never overwritten when unreadable, and the API reads it best-effort. A point always counts the
+  rows that schedule the fork as ready: under a cancelled target the crawler swaps ready and not_ready
+  before it writes, so the series continues across the cancellation and its line rises, then falls. It cannot be backfilled:
   ship the writer before a fork is scheduled, or the trend starts late.
 - **Advertiser ports are deterministic.** Starting at `--advertiser-port-base`, each
   network consumes three ports: EL discovery UDP/RLPx TCP, CL discovery UDP, and CL
@@ -140,6 +142,15 @@ Reviewed and deliberately not fixed; re-litigate only with new information.
   (`netconf.gatherHashes`). Genesis-sharing forks (PulseChain) reuse mainnet's ancient
   Frontier hash `fc64ec04`; an all-history sweep misclassifies them as mainnet.
   Guarded by `TestAncientForkDoesNotClassify`; don't widen the window back to genesis.
+- **A cancelled fork is runtime data, applied at startup.** `--fork-file` `cancelled_forks` go through
+  `netconf.ApplyCancellations` (like `RegisterDevnet`, before any network is used, after devnet
+  registration) in the crawler, the DNS publisher and the API. The fork leaves the canonical EL and CL
+  schedule; its would-be time stays a cache and collapse boundary (`ForkEraTokenAt`,
+  `CancelledForkActivatedBetween`); nodes on it keep membership but are never current; and the target
+  has `PhaseCancelled`, where `ReadinessAt` (and its SQL mirror) inverts `ready` to mean unscheduled.
+  The API hot-reloads releases and notices, never cancellations (`ValidateCancellations` rejects a
+  reload that would fail at startup). Delete an entry only after the grace and once no deployed binary
+  compiles the fork.
 - **Fork upgrades are pre-activation work, but not go-ethereum upgrades.** EL fork ids are
   computed in `netconf/forkid.go` from go-ethereum's `ChainConfig` plus `elScheduleOverrides`, so
   an EL fork that the pinned geth lacks gets an override entry, not a dependency bump;

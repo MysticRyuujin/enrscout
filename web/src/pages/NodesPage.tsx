@@ -2,8 +2,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { fetchNodes } from "../api";
 import { useNetwork } from "../network";
+import { stateLabel, useForkMode } from "../readiness";
+import type { ForkMode } from "../readiness";
 import { layerName, num, relTime, shortId, SUPERNODE_CGC } from "../theme";
-import type { NodeQuery, NodesResult } from "../types";
+import type { NodeQuery, NodesResult, Readiness } from "../types";
 
 const PAGE = 50;
 const FILTER_DEBOUNCE_MS = 250;
@@ -113,6 +115,7 @@ function SortableHeader({
 
 export default function NodesPage({ layer }: { layer: "el" | "cl" }) {
   const { network } = useNetwork();
+  const forkModeNow = useForkMode(network, layer);
   const [sp, setSp] = useSearchParams();
   const param = (k: string) => sp.get(k) ?? "";
   const sortParam = sp.get("sort");
@@ -378,12 +381,11 @@ export default function NodesPage({ layer }: { layer: "el" | "cl" }) {
           title="Readiness for the next scheduled fork, from the fork schedule the node itself advertises. See the Forks page."
         >
           <option value="">any fork readiness</option>
-          <option value="ready">fork scheduled / upgraded</option>
-          <option value="pending">scheduled, not seen on the fork yet</option>
-          <option value="not_ready">not scheduled / left behind</option>
-          <option value="mismatch">other schedule</option>
-          <option value="unknown">schedule unknown</option>
-          <option value="stale">older fork</option>
+          {readinessOptions(forkModeNow).map((s) => (
+            <option key={s} value={s}>
+              {stateLabel(s, forkModeNow)}
+            </option>
+          ))}
         </select>
         {layer === "cl" && (
           <input
@@ -525,4 +527,10 @@ export default function NodesPage({ layer }: { layer: "el" | "cl" }) {
       )}
     </div>
   );
+}
+
+function readinessOptions(mode: ForkMode): Readiness[] {
+  return mode === "cancelled"
+    ? ["ready", "not_ready", "unknown", "stale"]
+    : ["ready", "pending", "not_ready", "mismatch", "unknown", "stale"];
 }

@@ -62,6 +62,7 @@ type ForkReadiness struct {
 	Layers              map[string]*LayerReadiness `json:"layers"`
 	History             *snapshot.ReadinessHistory `json:"history,omitempty"`
 	Schedule            []netconf.ScheduledFork    `json:"schedule"`
+	Notices             []netconf.Notice           `json:"notices"`
 }
 
 const readinessVersionRows = 15
@@ -89,6 +90,7 @@ func (e *Engine) ForkReadinessAt(ctx context.Context, network string, at time.Ti
 		return out, err
 	}
 	out.Fork, out.Phase = target, target.Phase()
+	out.Notices = netconf.NoticesAt(network, at)
 	if out.Schedule, err = netconf.ScheduleAt(network, at); err != nil {
 		return out, err
 	}
@@ -165,6 +167,9 @@ func (e *Engine) ForkReadinessAt(ctx context.Context, network string, at time.Ti
 		v.Counts[readiness] += count
 		if rel := releases[ck]; rel != nil && !rel.Outdated && len(rel.MinVersions) > 0 {
 			status := netconf.ReleaseStatus(rel.MinVersions, rawVersion)
+			if _, ok := target.CancelledAt(ev.Layer); ok {
+				status = netconf.CancelledReleaseStatus(rel.MinVersions, rel.UnscheduledIn, rawVersion)
+			}
 			if v.Release == "" {
 				v.Release = status
 			} else if v.Release != status {
@@ -246,7 +251,26 @@ func readinessConditionAt(network, want string, at time.Time) (string, []any, er
 			add(layer, "NOT "+current+" AND lower(coalesce(fork_hash, '')) <> ?", pre)
 		}
 	}
-	if el := target.EL; el != nil {
+	cancelled := func(layer, affected string, affectedArgs []any, matched string) {
+		switch netconf.Readiness(want) {
+		case netconf.NotReady:
+			parts = append(parts, "(layer = '"+layer+"' AND ("+affected+"))")
+			args = append(args, affectedArgs...)
+		case netconf.Ready:
+			add(layer, current+" AND NOT ("+affected+") AND "+matched, affectedArgs...)
+		case netconf.Unknown:
+			if matched != "TRUE" {
+				add(layer, current+" AND NOT ("+affected+") AND NOT ("+matched+")", affectedArgs...)
+			}
+		case netconf.Stale:
+			add(layer, "NOT "+current+" AND NOT ("+affected+")", affectedArgs...)
+		}
+	}
+	if el := target.EL; el != nil && el.Phase == netconf.PhaseCancelled {
+		onCancelled, onArgs := inList("lower(coalesce(fork_hash, ''))", el.OnCancelled)
+		cancelled("el", onCancelled+" OR (lower(coalesce(fork_hash, '')) = ? AND coalesce(fork_next, 0) = ?)",
+			append(onArgs, el.PreHash, el.Time), "TRUE")
+	} else if el != nil {
 		if el.Phase == netconf.PhaseActivated {
 			activated("el", el.PreHash, "TRUE", nil, "coalesce(fork_next, 0) = ?", el.Time)
 		} else {
@@ -262,7 +286,13 @@ func readinessConditionAt(network, want string, at time.Time) (string, []any, er
 			}
 		}
 	}
-	if cl := target.CL; cl != nil {
+	if cl := target.CL; cl != nil && cl.Phase == netconf.PhaseCancelled {
+		onCancelled, onArgs := inList("lower(coalesce(fork_hash, ''))", cl.OnCancelled)
+		cancelled("cl", onCancelled+" OR (lower(coalesce(enr_fork_digest, '')) = ? AND "+
+			"coalesce(enr_next_fork_epoch, 0) = ? AND lower(coalesce(enr_next_fork_version, '')) = ?)",
+			append(onArgs, cl.PreDigest, cl.Epoch, cl.Version),
+			"coalesce(enr_fork_digest, '') <> '' AND lower(enr_fork_digest) = lower(fork_hash)")
+	} else if cl != nil {
 		if cl.Phase == netconf.PhaseActivated {
 			activated("cl", cl.PreDigest, "lower(coalesce(enr_fork_digest, '')) = ?", []any{cl.PreDigest},
 				"coalesce(enr_next_fork_epoch, 0) = ? AND lower(coalesce(enr_next_fork_version, '')) = ?", cl.Epoch, cl.Version)
@@ -349,4 +379,16 @@ func thinHistory(points []snapshot.ReadinessPoint, activation time.Time) []snaps
 		seen++
 	}
 	return kept
+}
+
+// inList renders col IN (...) over lower-cased values; an empty list matches nothing.
+func inList(col string, values []string) (string, []any) {
+	if len(values) == 0 {
+		return "FALSE", nil
+	}
+	args := make([]any, len(values))
+	for i, v := range values {
+		args[i] = strings.ToLower(v)
+	}
+	return col + " IN (" + strings.TrimSuffix(strings.Repeat("?, ", len(values)), ", ") + ")", args
 }

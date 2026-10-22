@@ -8,6 +8,7 @@ import (
 	"math"
 	"math/big"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -81,6 +82,13 @@ type Network struct {
 
 	// extraELForks are devnet genesis forks that the pinned go-ethereum has no field for.
 	extraELForks []elForkTime
+	// Set only by ApplyCancellations at startup.
+	cancellations []cancellation
+	originalCL    *clNetwork
+	// Derived from cancellations: EL ones in load, CL ones once every cancellation is applied.
+	cancelledHashes []timedHash
+	cancelledELHex  []string
+	cancelledCLHex  []string
 
 	once     sync.Once
 	genesis  *types.Block
@@ -102,9 +110,12 @@ type forkMemo struct {
 func (n *Network) load() {
 	n.once.Do(func() {
 		n.genesis = n.genesisFn().ToBlock()
-		n.elForks = mergeELForks(forkTimes(n.ChainConfig), elScheduleOverrides[n.Name], n.extraELForks)
+		n.elForks = slices.DeleteFunc(n.compiledELForks(), func(f elForkTime) bool {
+			return slices.ContainsFunc(n.cancellations, func(c cancellation) bool { return c.elName == f.name && c.elTime == f.time })
+		})
 		n.idBlocks = forkBlocks(n.ChainConfig)
 		n.idTimes = idForkTimes(n.elForks, n.genesis.Time())
+		n.indexCancellations()
 	})
 }
 
@@ -143,6 +154,9 @@ func (n *Network) gatherHashes(at time.Time) map[[4]byte]struct{} {
 		if t := int64(f.time); t >= start && t <= now+ahead {
 			set[n.forkIDAt(f.time).Hash] = struct{}{}
 		}
+	}
+	for _, h := range n.cancelledELHashes(start, now+ahead) {
+		set[h] = struct{}{}
 	}
 	return set
 }
@@ -250,9 +264,12 @@ func ForkEraTokenAt(at time.Time, requested ...string) (string, time.Time, error
 		if err != nil {
 			return "", time.Time{}, err
 		}
-		parts = append(parts, name+":"+hex.EncodeToString(el[:])+":"+hex.EncodeToString(state.Digest[:]))
-		if !state.NextTransition.IsZero() && (next.IsZero() || state.NextTransition.Before(next)) {
-			next = state.NextTransition
+		passed, cancelledNext := n.cancelledEraAt(at)
+		parts = append(parts, name+":"+hex.EncodeToString(el[:])+":"+hex.EncodeToString(state.Digest[:])+passed)
+		for _, t := range []time.Time{state.NextTransition, cancelledNext} {
+			if !t.IsZero() && (next.IsZero() || t.Before(next)) {
+				next = t
+			}
 		}
 		for _, f := range n.elForks {
 			transition := time.Unix(int64(f.time), 0).UTC()

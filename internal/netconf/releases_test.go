@@ -113,3 +113,41 @@ func mustTarget(t *testing.T, network string, at time.Time) ForkTarget {
 	}
 	return target
 }
+
+func TestCancelledReleaseStatus(t *testing.T) {
+	scheduled, unscheduled := []string{"1.17.9"}, []string{"1.17.10"}
+	for _, tc := range []struct {
+		version string
+		fixed   []string
+		want    string
+	}{
+		{"v1.17.8", unscheduled, ReleaseUnaffected},
+		{"v1.17.9", unscheduled, ReleaseAffected},
+		{"v1.17.10", unscheduled, ReleaseUnaffected},
+		{"v1.18.0", nil, ReleaseAffected},
+		{"v1.17.9-unstable-0b714d62", unscheduled, ReleaseDevBuild},
+		{"cashcow", unscheduled, ReleaseUnparsable},
+	} {
+		if got := CancelledReleaseStatus(scheduled, tc.fixed, tc.version); got != tc.want {
+			t.Errorf("%s (fixed in %v) = %q, want %q", tc.version, tc.fixed, got, tc.want)
+		}
+	}
+	bad := ClientRelease{Fork: "Glamsterdam", Network: "hoodi", Layer: "el", Client: "Geth", ForkTime: 1, UnscheduledIn: []string{"1.17.10"}}
+	if err := (ClientReleaseTable{Releases: []ClientRelease{bad}}).Validate(); err == nil {
+		t.Error("unscheduled_in without min_versions accepted")
+	}
+}
+
+func TestCancelledReleaseStatusBackport(t *testing.T) {
+	scheduled, fixed := []string{"1.39.4", "2.0.0"}, []string{"1.39.5"}
+	for version, want := range map[string]string{
+		"v1.39.4": ReleaseAffected, "v1.39.5": ReleaseUnaffected, "v2.0.0": ReleaseAffected, "v2.0.1": ReleaseAffected, "v1.39.3": ReleaseUnaffected,
+	} {
+		if got := CancelledReleaseStatus(scheduled, fixed, version); got != want {
+			t.Errorf("%s = %q, want %q", version, got, want)
+		}
+	}
+	if got := CancelledReleaseStatus([]string{"2.0.0"}, []string{"2.1.0"}, "v2.2.0"); got != ReleaseUnaffected {
+		t.Errorf("a later line after the fix line = %q, want unaffected", got)
+	}
+}

@@ -85,10 +85,19 @@ func TestReadinessMatchesSQLAndGo(t *testing.T) {
 	}
 
 	activation := netconftest.Activation
-	for name, at := range map[string]time.Time{
+	instants := map[string]time.Time{
 		"a day before": activation.Add(-24 * time.Hour), "a second before": activation.Add(-time.Second),
 		"at activation": activation, "late in grace": activation.Add(netconf.ForkTrackingGrace - time.Second),
-	} {
+	}
+	matchSQLAndGo(t, eng, rows, instants)
+	t.Run("cancelled", func(t *testing.T) {
+		netconftest.Cancel(t)
+		matchSQLAndGo(t, eng, rows, instants)
+	})
+}
+
+func matchSQLAndGo(t *testing.T, eng *Engine, rows []readinessRow, instants map[string]time.Time) {
+	for name, at := range instants {
 		t.Run(name, func(t *testing.T) {
 			target, err := netconf.ForkTargetAt(netconftest.Network, at)
 			if err != nil {
@@ -123,6 +132,8 @@ func TestReadinessMatchesSQLAndGo(t *testing.T) {
 			wantCovered := []netconf.Readiness{netconf.Ready, netconf.Pending, netconf.NotReady, netconf.Unknown, netconf.Stale}
 			if target.Phase() == netconf.PhaseScheduled {
 				wantCovered = []netconf.Readiness{netconf.Ready, netconf.NotReady, netconf.Mismatch, netconf.Unknown, netconf.Stale}
+			} else if target.Phase() == netconf.PhaseCancelled {
+				wantCovered = []netconf.Readiness{netconf.Ready, netconf.NotReady, netconf.Unknown, netconf.Stale}
 			}
 			if len(covered) != len(wantCovered) {
 				t.Fatalf("corpus covers %v, want %v", covered, wantCovered)
@@ -399,5 +410,79 @@ func TestChartFingerprintMatchesSQLAndGo(t *testing.T) {
 	}
 	if seen != len(want) {
 		t.Fatalf("read %d rows, want %d", seen, len(want))
+	}
+}
+
+func TestForkReadinessCancelled(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.NewFS(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	eng, err := New(st, []string{netconftest.Network}, t.TempDir(), "snapshots")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Close()
+	netconftest.Cancel(t)
+	t.Cleanup(func() {
+		if err := netconf.SetForkFileData(netconf.ClientReleaseTable{}, nil); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if err := netconf.SetForkFileData(netconf.ClientReleaseTable{Releases: []netconf.ClientRelease{
+		{Fork: netconftest.Fork, Network: netconftest.Network, Layer: "el", Client: "Geth", ForkTime: forkTime,
+			MinVersions: []string{"1.17.9"}, UnscheduledIn: []string{"1.17.10"}},
+	}}, []netconf.Notice{{Network: netconftest.Network, Severity: netconf.NoticeCritical, Title: "cancelled"}}); err != nil {
+		t.Fatal(err)
+	}
+	at := netconftest.Before
+	fresh := at.Unix()
+	if _, err := eng.db.Exec(`INSERT INTO nodes (id, network, layer, fork_hash, fork_next, client, client_version, fp_status, fp_at) VALUES
+		('still', 'hoodi', 'el', '23aa1351', ?, 'Geth', 'v1.17.9-stable-aaaaaaaa', 'ok', ?),
+		('downgraded', 'hoodi', 'el', '23aa1351', 0, 'Geth', 'v1.17.8-stable-bbbbbbbb', 'ok', ?),
+		('fixed', 'hoodi', 'el', '23aa1351', 0, 'Geth', 'v1.17.10-stable-cccccccc', 'ok', ?)`,
+		forkTime, fresh, fresh, fresh); err != nil {
+		t.Fatal(err)
+	}
+	r, err := eng.ForkReadinessAt(ctx, netconftest.Network, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Phase != netconf.PhaseCancelled || !r.Fork.IsCancelled() || len(r.Notices) != 1 {
+		t.Fatalf("phase %q cancelled %v notices %+v", r.Phase, r.Fork.IsCancelled(), r.Notices)
+	}
+	el := r.Layers["el"]
+	if el == nil || el.Counts[netconf.Ready] != 2 || el.Counts[netconf.NotReady] != 1 {
+		t.Fatalf("el layer = %+v, want 2 unscheduled and 1 still scheduled", el)
+	}
+	labels := map[string]string{}
+	for _, c := range el.Clients {
+		for _, v := range c.Versions {
+			labels[v.Version] = v.Release
+		}
+	}
+	if labels["1.17.9"] != netconf.ReleaseAffected || labels["1.17.8"] != netconf.ReleaseUnaffected || labels["1.17.10"] != netconf.ReleaseUnaffected {
+		t.Fatalf("version labels = %v", labels)
+	}
+	if len(r.Schedule) == 0 || !r.Schedule[len(r.Schedule)-1].Cancelled {
+		t.Fatalf("schedule = %+v, want the cancelled upgrade last", r.Schedule)
+	}
+
+	stored := &snapshot.ReadinessHistory{Version: snapshot.ReadinessHistoryVersion, Network: netconftest.Network, Fork: netconftest.Fork,
+		ELTime: forkTime, CLEpoch: 132352, Points: []snapshot.ReadinessPoint{{At: at.Unix(), EL: map[string]int{"ready": 1}}}}
+	data, err := stored.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := snapshot.Layout{Prefix: "snapshots"}.ReadinessHistoryKey(netconftest.Network, netconftest.Fork)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Put(ctx, key, data, "application/json"); err != nil {
+		t.Fatal(err)
+	}
+	if h, err := eng.ReadinessHistoryFor(ctx, netconftest.Network, r.Fork); err != nil || h == nil || len(h.Points) != 1 {
+		t.Fatalf("the series recorded while the fork was scheduled must continue in the cancelled view: %+v, %v", h, err)
 	}
 }

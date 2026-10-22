@@ -1191,3 +1191,20 @@ func TestAdoptedCommitConsumesForceOverride(t *testing.T) {
 		t.Fatal("force override was reusable after an adopted commit")
 	}
 }
+
+func TestCancelledForkTimeExemptsCollapseAndSpeedsPublishing(t *testing.T) {
+	netconftest.Cancel(t)
+	activation := netconftest.Activation
+	manifestAt := func(at time.Time, total, current int) *snapshot.Manifest {
+		return &snapshot.Manifest{GeneratedAt: at, Networks: map[string]snapshot.NetworkSnapshot{
+			netconftest.Network: {NodeCount: total, CurrentNodeCount: current},
+		}}
+	}
+	prev := manifestAt(activation.Add(-2*time.Minute), 3000, 2700)
+	if got := shrankTooMuch(prev, manifestAt(activation.Add(3*time.Minute), 3000, 40), 50); got != "" {
+		t.Fatalf("collapse across the cancelled time = %q, want no reason", got)
+	}
+	if got := nextPublishDelay(activation.Add(-time.Minute), 5*time.Minute, []string{netconftest.Network}); got != forkPublishInterval {
+		t.Fatalf("publish delay near the cancelled time = %s, want %s", got, forkPublishInterval)
+	}
+}

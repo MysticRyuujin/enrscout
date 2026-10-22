@@ -17,6 +17,7 @@ type ScheduledFork struct {
 	CLEpoch   uint64 `json:"cl_epoch,omitempty"`
 	Activated bool   `json:"activated"`
 	Tracked   bool   `json:"tracked"`
+	Cancelled bool   `json:"cancelled,omitempty"`
 }
 
 // ScheduleAt lists every timestamp-scheduled upgrade after genesis in activation order; block-numbered
@@ -64,6 +65,11 @@ func ScheduleAt(network string, at time.Time) ([]ScheduledFork, error) {
 		e.Activated = e.Time <= at.Unix()
 		e.Tracked = target.Name != "" && e.Name == target.Name && e.Time == target.Activation().Unix()
 		out = append(out, *e)
+	}
+	for _, c := range n.cancellations {
+		e := ScheduledFork{Name: c.fork, EL: c.elName, CL: c.clName, Time: c.at(n), CLEpoch: c.clEpoch, Cancelled: true}
+		e.Tracked = target.IsCancelled() && e.Time == target.Activation().Unix()
+		out = append(out, e)
 	}
 	slices.SortFunc(out, func(a, b ScheduledFork) int { return cmp.Compare(a.Time, b.Time) })
 	return out, nil

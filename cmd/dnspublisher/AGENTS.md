@@ -25,6 +25,11 @@ Guidance for coding agents working in `cmd/dnspublisher`. Repo-wide rules are in
   stale one; consumers pre-qualify peers from the record alone, and discv4-crawl's `devp2p nodeset
   filter -eth-network` applied the same bar: every record in the EF production trees carries a
   parseable `eth` entry.
+  **A cancelled fork is the one exception to ranking only.** In its phase `ready` means the record no
+  longer schedules it: such records rank first, the two publish intervals before its time publish only
+  them (past the collapse guard only when the full tree passes it, so an outage still holds), and from
+  that time records that still schedule it are excluded, because CL currency checks the digest alone.
+  The metric labels keep their names.
   **Fork readiness ranks, it never filters by itself.** `rankCandidates` ranks each record by
   `netconf.ReadinessAt` on the record's own schedule (ready, neutral, mismatch), against
   `netconf.LayerForkTargetsAt`, which keeps both layers even when their forks activate at different

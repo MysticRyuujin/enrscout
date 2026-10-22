@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import { fetchForks } from "../api";
 import { useNetwork } from "../network";
-import { whileVisible } from "../theme";
+import { sessionFlag, setSessionFlag, whileVisible } from "../theme";
 
 const WINDOW_S = 600;
 const NEAR_S = WINDOW_S + 120;
@@ -19,14 +19,6 @@ function clock(s: number): string {
 
 function dismissedKey(network: string, a: Activation): string {
   return `under-construction:${network}:${a.at}`;
-}
-
-function readDismissed(key: string): boolean {
-  try {
-    return sessionStorage.getItem(key) === "1";
-  } catch {
-    return false;
-  }
 }
 
 export default function UnderConstruction() {
@@ -46,7 +38,7 @@ export default function UnderConstruction() {
             d.fork.el?.time ??
             (d.fork.cl ? Date.parse(d.fork.cl.time) / 1000 : undefined);
           setActivation(
-            d.phase === "none" || at === undefined
+            d.phase === "none" || d.phase === "cancelled" || at === undefined
               ? null
               : { name: d.fork.name, at },
           );
@@ -71,16 +63,12 @@ export default function UnderConstruction() {
 
   if (!activation || Math.abs(now - activation.at) > WINDOW_S) return null;
   const key = dismissedKey(network, activation);
-  if (dismissed === key || readDismissed(key)) return null;
+  if (dismissed === key || sessionFlag(key)) return null;
 
   const before = now < activation.at;
   const close = () => {
     setDismissed(key);
-    try {
-      sessionStorage.setItem(key, "1");
-    } catch {
-      return;
-    }
+    setSessionFlag(key);
   };
 
   return (

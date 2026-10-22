@@ -1,11 +1,32 @@
-# ENRScout client release table for the API (--client-releases-file).
-# This file is the whole table: an entry not listed here has no release label.
-# One entry per network, fork, layer, and client. fork_time is the activation the
-# entry was verified against; a rescheduled fork withholds the entry's labels.
-# The API reloads the file when its content changes and keeps the last good table
-# when an edit fails validation.
+# ENRScout operator fork file (--fork-file on the crawler, dnspublisher and api).
+# cancelled_forks remove a called-off fork from the schedule; they apply at startup,
+# so restart all three services after changing them. notices and releases reload in
+# the api when the file changes, and an invalid edit keeps the last good version.
+# releases is the whole client release table: a client without an entry has no label.
+# fork_time is the activation an entry was verified against.
 ---
-updated: 2026-10-21
+updated: 2026-10-22
+cancelled_forks:
+  # eth-clients/hoodi#33 unscheduled Hoodi Glamsterdam; decided on AllCoreDevs Execution #248.
+  - network: hoodi
+    fork: Glamsterdam
+    el: {name: Amsterdam, time: 1793036568}
+    cl: {name: gloas, epoch: 132352, version: "80000910"}
+notices:
+  - network: hoodi
+    fork: Glamsterdam
+    severity: critical
+    title: Hoodi Glamsterdam is cancelled
+    body: |
+      The Glamsterdam upgrade planned for Hoodi on 26 October 2026 at 17:42:48 UTC (epoch 132352) is
+      cancelled for now. A node on a client release that still schedules it will fork away from Hoodi
+      at that time.
+
+      Before then, downgrade to a release without the Hoodi Glamsterdam schedule, or upgrade to a
+      release that removes it. This page counts the nodes that still schedule the fork.
+    links:
+      - {label: "eth-clients/hoodi#33: unschedule Hoodi Glamsterdam", url: "https://github.com/eth-clients/hoodi/pull/33"}
+      - {label: "AllCoreDevs Execution #248", url: "https://forkcast.org/calls/acde/248/"}
 releases:
   # v30.0.0 schedules Amsterdam on Hoodi at amsterdamTime 1793036568 (PR #7391).
   - fork: Glamsterdam
@@ -32,8 +53,12 @@ releases:
     client: Besu
     fork_time: 1793036568
     min_versions: ["26.10.0"]
+    # 26.10.1 drops amsterdamTime from hoodi.json again (besu-eth/besu#11709).
+    unscheduled_in: ["26.10.1"]
     released: 2026-10-16
     url: https://github.com/besu-eth/besu/releases/tag/26.10.0
+    latest: 26.10.1
+    latest_url: https://github.com/besu-eth/besu/releases/tag/26.10.1
   # v0.4.3 execution_chain/common/chain_config.nim: amsterdamTime 1793036568.
   - fork: Glamsterdam
     network: hoodi
@@ -113,8 +138,12 @@ releases:
     client: Lodestar
     fork_time: 1793036568
     min_versions: ["1.50.0"]
+    # v1.50.1 sets the Hoodi GLOAS_FORK_EPOCH to Infinity again (#10461).
+    unscheduled_in: ["1.50.1"]
     released: 2026-10-12
     url: https://github.com/ChainSafe/lodestar/releases/tag/v1.50.0
+    latest: 1.50.1
+    latest_url: https://github.com/ChainSafe/lodestar/releases/tag/v1.50.1
   # Caplin ships in Erigon v3.8.0, which schedules Gloas on Hoodi at epoch 132352.
   - fork: Glamsterdam
     network: hoodi

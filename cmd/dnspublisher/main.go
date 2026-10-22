@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/MysticRyuujin/enrscout/internal/buildinfo"
+	"github.com/MysticRyuujin/enrscout/internal/forkfile"
 	"github.com/MysticRyuujin/enrscout/internal/metricsrv"
 	"github.com/MysticRyuujin/enrscout/internal/netconf"
 	"github.com/MysticRyuujin/enrscout/internal/nodeset"
@@ -124,11 +126,17 @@ func run() error {
 		gitDir       = flag.String("git-dir", "", "writable directory holding the git checkout")
 		gitName      = flag.String("git-committer-name", "enrscout-dnspublisher", "git commit author name")
 		gitEmail     = flag.String("git-committer-email", "enrscout@localhost", "git commit author email")
+		forkFile     = flag.String("fork-file", "", "operator fork file; its cancelled forks are removed from the schedule at startup (empty = none)")
 	)
 	flag.Parse()
 
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	mDNSBuildInfo.WithLabelValues(buildinfo.Revision, buildinfo.SourceURL).Set(1)
+	if *forkFile != "" {
+		if err := forkfile.ApplyCancellations(*forkFile); err != nil {
+			return fmt.Errorf("--fork-file: %w", err)
+		}
+	}
 
 	sel := selectOpts{
 		minScore: *minScore, maxAge: *maxAge, protocol: *protocol,
@@ -518,6 +526,7 @@ func buildNetworkTrees(rows []nodeset.Row, network string, generatedAt, evaluate
 		"el": cfg.sel.layer != "cl" && activationNear(network, "el", evaluatedAt, 2*cycle),
 		"cl": cfg.sel.layer != "el" && activationNear(network, "cl", evaluatedAt, 2*cycle),
 	}
+	cancelNear := cancellationNear(network, cfg.sel.layer, evaluatedAt, 2*cycle)
 	if near["el"] || near["cl"] {
 		// A layer with no fork near keeps all its records: that fork cannot stale them. Without a
 		// ready record of a near layer, the other layer alone would pass the guards as "ready-only".
@@ -547,16 +556,25 @@ func buildNetworkTrees(rows []nodeset.Row, network string, generatedAt, evaluate
 		opt.capability = capability
 		seq := treeSequence(generatedAt, max(previousSeq, issued[domain]))
 		var out builtTree
+		outExempt := exempt
 		// Records that do not schedule the fork are rejected by post-fork clients, and a tree
 		// built now is served across activation, so near it a ready-only tree is preferred
-		// whenever the guards accept it.
+		// whenever the guards accept it. Near a cancelled fork, ready means the record no longer
+		// schedules it, and the safe-only tree may shrink past the collapse guard, but only when the
+		// full tree passes that guard: then the drop comes from the cancellation, not an outage.
 		if len(ready) > 0 {
 			readyTree, err := buildTree(ready, opt, seq, domain, network, cfg.key)
 			if err != nil {
 				return nil, skipDecision{}, err
 			}
-			if gateTree(readyTree, capability, domain, previousNodes, exempt, cfg).reason == "" {
-				out, out.readyOnly = readyTree, true
+			readyExempt := exempt
+			if cancelNear {
+				full := builtTree{output: output{Nodes: len(pick(cands, opt))}}
+				readyExempt = exempt || gateTree(full, capability, domain, previousNodes, exempt, cfg).reason == ""
+			}
+			if gateTree(readyTree, capability, domain, previousNodes, readyExempt, cfg).reason == "" {
+				out, outExempt = readyTree, readyExempt
+				out.readyOnly = true
 			}
 		}
 		if !out.readyOnly {
@@ -565,10 +583,10 @@ func buildNetworkTrees(rows []nodeset.Row, network string, generatedAt, evaluate
 			}
 		}
 		out.retain = retain
-		if skip := gateTree(out, capability, domain, previousNodes, exempt, cfg); skip.reason != "" {
+		if skip := gateTree(out, capability, domain, previousNodes, outExempt, cfg); skip.reason != "" {
 			return nil, skip, nil
 		}
-		if exempt && collapsed(out.Nodes, previousNodes, cfg.maxDropPct) {
+		if outExempt && collapsed(out.Nodes, previousNodes, cfg.maxDropPct) {
 			slog.Warn("accepting a tree collapse across a fork activation", "domain", domain,
 				"nodes", out.Nodes, "previous", previousNodes, "max_drop_pct", cfg.maxDropPct)
 		}
@@ -606,15 +624,25 @@ func publishCycle(publishEvery time.Duration) time.Duration {
 
 // activationNear reports a scheduled fork of the tree's layer within window of at.
 func activationNear(network, layer string, at time.Time, window time.Duration) bool {
+	return forkNear(network, layer, at, window, netconf.PhaseScheduled, netconf.PhaseCancelled)
+}
+
+// cancellationNear is true before a cancelled fork's would-be activation, when the DNS tree should
+// carry only records that no longer schedule it.
+func cancellationNear(network, layer string, at time.Time, window time.Duration) bool {
+	return forkNear(network, layer, at, window, netconf.PhaseCancelled)
+}
+
+func forkNear(network, layer string, at time.Time, window time.Duration, phases ...string) bool {
 	target, err := netconf.LayerForkTargetsAt(network, at)
 	if err != nil {
 		return false
 	}
 	near := func(activation time.Time) bool { return activation.After(at) && activation.Sub(at) <= window }
-	if layer != "cl" && target.EL != nil && target.EL.Phase == netconf.PhaseScheduled && near(time.Unix(int64(target.EL.Time), 0)) {
+	if layer != "cl" && target.EL != nil && slices.Contains(phases, target.EL.Phase) && near(time.Unix(int64(target.EL.Time), 0)) {
 		return true
 	}
-	return layer != "el" && target.CL != nil && target.CL.Phase == netconf.PhaseScheduled && near(target.CL.Time)
+	return layer != "el" && target.CL != nil && slices.Contains(phases, target.CL.Phase) && near(target.CL.Time)
 }
 
 // forkActivatedBetween reports a fork of the tree's layer in the network's own schedule activating in
@@ -622,6 +650,9 @@ func activationNear(network, layer string, at time.Time, window time.Duration) b
 func forkActivatedBetween(network, layer string, from, to time.Time) bool {
 	if !to.After(from) {
 		return false
+	}
+	if netconf.CancelledForkActivatedBetween(network, layer, from, to) {
+		return true
 	}
 	n, err := netconf.Get(network)
 	if err != nil {

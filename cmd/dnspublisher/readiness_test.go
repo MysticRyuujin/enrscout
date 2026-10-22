@@ -158,13 +158,22 @@ func clRecordRow(t *testing.T, network string, i int, epoch uint64, at time.Time
 	if err != nil {
 		t.Fatal(err)
 	}
+	return clScheduleRow(t, network, i, state.NextForkVersion, epoch, at)
+}
+
+func clScheduleRow(t *testing.T, network string, i int, version [4]byte, epoch uint64, at time.Time) nodeset.Row {
+	t.Helper()
+	state, err := netconf.CLForkStateAt(network, at)
+	if err != nil {
+		t.Fatal(err)
+	}
 	key, err := crypto.GenerateKey()
 	if err != nil {
 		t.Fatal(err)
 	}
 	entry := make(netconf.Eth2Entry, 16)
 	copy(entry[:4], state.Digest[:])
-	copy(entry[4:8], state.NextForkVersion[:])
+	copy(entry[4:8], version[:])
 	binary.LittleEndian.PutUint64(entry[8:], epoch)
 	var r enr.Record
 	r.Set(enr.IPv4{1, 2, 3, byte(i)})
@@ -423,5 +432,69 @@ func registerLayerSplitDevnet(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Under a cancellation readinessRows' "ready" rows (Next = T) still schedule the fork and its
+// "not ready" rows (Next = 0) are the safe ones.
+func TestCancelledForkTrees(t *testing.T) {
+	netconftest.Cancel(t)
+	cases := []struct {
+		name          string
+		at            time.Time
+		previous      int
+		wantSkip      string
+		wantNodes     int
+		wantReadyOnly bool
+	}{
+		{"outside the window ranks only", netconftest.Activation.Add(-24 * time.Hour), 0, "", 10, false},
+		{"inside the window publishes the safe records", beforeAmsterdam, 0, "", 3, true},
+		{"the intended shrink passes the collapse guard", beforeAmsterdam, 10, "", 3, true},
+		{"an unrelated collapse still holds", beforeAmsterdam, 30, "collapse", 0, false},
+		{"after the time the affected records are gone", netconftest.Activation.Add(time.Hour), 0, "", 3, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			outDir := t.TempDir()
+			cfg := readinessTreeConfig(t, outDir, nil)
+			if tc.previous > 0 {
+				seedBaseline(t, outDir, "", tc.previous, uint64(tc.at.Add(-time.Hour).Unix()))
+			}
+			trees, skip, err := buildNetworkTrees(readinessRows(t, 7, 3, tc.at), netconftest.Network, tc.at, tc.at, cfg, map[string]uint64{})
+			if err != nil || skip.reason != tc.wantSkip {
+				t.Fatalf("skip %q (%v), want %q", skip.reason, err, tc.wantSkip)
+			}
+			if tc.wantSkip != "" {
+				return
+			}
+			got := allTree(t, trees)
+			if got.Nodes != tc.wantNodes || got.readyOnly != tc.wantReadyOnly {
+				t.Fatalf("all tree = %d nodes, ready-only %v; want %d, %v", got.Nodes, got.readyOnly, tc.wantNodes, tc.wantReadyOnly)
+			}
+		})
+	}
+	ranked := rankCandidates(readinessRows(t, 7, 3, netconftest.Before), readinessTreeConfig(t, t.TempDir(), nil).sel, netconftest.Before)
+	for i, c := range ranked {
+		if want := i >= 3; (c.row.ForkNext == forkTime) != want {
+			t.Fatalf("candidate %d has Next %d; the 3 safe records must rank first", i, c.row.ForkNext)
+		}
+	}
+}
+
+func TestCancelledForkDropsCachedCLRecordsAfterTheTime(t *testing.T) {
+	netconftest.Cancel(t)
+	before := netconftest.Before
+	gloas := [4]byte{0x80, 0x00, 0x09, 0x10}
+	rows := []nodeset.Row{
+		clScheduleRow(t, netconftest.Network, 1, gloas, 132352, before),
+		clRecordRow(t, netconftest.Network, 2, math.MaxUint64, before),
+	}
+	sel := selectOpts{minScore: 1, protocol: "any", layer: "cl", balance: balanceProportional}
+	if got := rankCandidates(rows, sel, before); len(got) != 2 || got[0].row.IP != "1.2.3.2" {
+		t.Fatalf("before the time: %d candidates, want both with the unscheduled record first", len(got))
+	}
+	after := netconftest.Activation.Add(time.Hour)
+	if got := rankCandidates(rows, sel, after); len(got) != 1 || got[0].row.IP != "1.2.3.2" {
+		t.Fatalf("after the time: %d candidates, want only the unscheduled record", len(got))
 	}
 }

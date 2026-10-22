@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MysticRyuujin/enrscout/internal/forkfile"
 	"github.com/MysticRyuujin/enrscout/internal/netconf"
 	"github.com/MysticRyuujin/enrscout/internal/nodeset"
 	"github.com/MysticRyuujin/enrscout/internal/snapshot"
@@ -22,7 +23,14 @@ import (
 
 func main() {
 	out := flag.String("out", "deploy/e2e/fixtures", "filesystem store directory to write into")
+	forkFile := flag.String("fork-file", "deploy/e2e/client-releases.yaml", "operator fork file whose cancelled forks the fixtures follow, as the e2e api does")
 	flag.Parse()
+
+	if *forkFile != "" {
+		if err := forkfile.ApplyCancellations(*forkFile); err != nil {
+			log.Fatal(err)
+		}
+	}
 
 	if err := run(*out); err != nil {
 		log.Fatal(err)
@@ -164,11 +172,17 @@ func withForkReadiness(ctx context.Context, st store.Store, layout snapshot.Layo
 	if err != nil || target.Name == "" {
 		return err
 	}
+	state, err := netconf.CLForkStateAt(network, gen)
+	if err != nil {
+		return err
+	}
 	ts := gen.Unix()
 	for i := range rows {
 		r := &rows[i]
 		r.Head, r.HeadObservedAt = uint64(24_000_000+i), ts
 		switch {
+		case r.Layer == "el" && target.EL != nil && target.EL.Phase == netconf.PhaseCancelled && (r.Client == "Geth" || r.Client == "Besu"):
+			r.ForkNext = target.EL.Time
 		case r.Layer == "el" && target.EL != nil && target.EL.Phase == netconf.PhaseScheduled && (r.Client == "Geth" || r.Client == "Nethermind"):
 			r.ForkNext = target.EL.Time
 		case r.Layer == "el" && target.EL != nil && target.EL.Phase == netconf.PhaseActivated && (r.Client == "Geth" || r.Client == "Besu"):
@@ -179,6 +193,12 @@ func withForkReadiness(ctx context.Context, st store.Store, layout snapshot.Layo
 		case r.Layer == "cl" && target.CL != nil && target.CL.Phase == netconf.PhaseActivated && r.Client == "Teku":
 			r.ForkHash, r.ENRForkDigest = target.CL.PreDigest, target.CL.PreDigest
 			r.ENRNextForkVersion, r.ENRNextForkEpoch = target.CL.Version, target.CL.Epoch
+		case r.Layer == "cl" && target.CL != nil && target.CL.Phase == netconf.PhaseCancelled && r.Client == "Lighthouse":
+			r.ENRForkDigest = r.ForkHash
+			r.ENRNextForkVersion, r.ENRNextForkEpoch = target.CL.Version, target.CL.Epoch
+		case r.Layer == "cl" && target.CL != nil && target.CL.Phase == netconf.PhaseCancelled:
+			r.ENRForkDigest = r.ForkHash
+			r.ENRNextForkVersion, r.ENRNextForkEpoch = hex.EncodeToString(state.NextForkVersion[:]), state.NextForkEpoch
 		case r.Layer == "cl" && target.CL != nil && r.Client != "Teku":
 			r.ENRForkDigest = r.ForkHash
 			r.ENRNextForkVersion, r.ENRNextForkEpoch = target.CL.Version, target.CL.Epoch
@@ -189,9 +209,18 @@ func withForkReadiness(ctx context.Context, st store.Store, layout snapshot.Layo
 	}
 	h := &snapshot.ReadinessHistory{Version: snapshot.ReadinessHistoryVersion, Network: network, Fork: target.Name}
 	h.ELTime, h.CLEpoch = target.Schedule()
+	// A cancelled fork's history spans days, so the trend reaches its would-be activation line.
+	step := snapshot.ReadinessInterval
+	if target.IsCancelled() {
+		step = 6 * time.Hour
+	}
 	for i := range 24 {
-		at := gen.Add(-time.Duration(23-i) * snapshot.ReadinessInterval)
+		at := gen.Add(-time.Duration(23-i) * step)
 		ready := i / 8
+		if target.IsCancelled() {
+			// Scheduling rose before the cancellation and falls after it.
+			ready = min(i, 23-i) / 4
+		}
 		point := snapshot.ReadinessPoint{
 			At: at.Unix(),
 			EL: map[string]int{"ready": ready, "not_ready": 4 - ready},
