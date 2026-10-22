@@ -207,10 +207,21 @@ func rankCandidates(rows []nodeset.Row, opt selectOpts, now time.Time) []candida
 			}
 			targets[r.Network] = target
 		}
+		readiness := netconf.ReadinessAt(target, r.Network, ev, now)
+		rank := readinessRank(readiness)
+		if at, cancelled := cancelledLayer(target, r.Layer); cancelled && readiness == netconf.NotReady {
+			// Readiness only ranks, except here: CL currency checks the digest alone, so after the
+			// would-be activation a cached record that still schedules the cancelled fork would stay
+			// eligible while its node has forked away.
+			if !now.Before(at) {
+				continue
+			}
+			rank = rankMismatch
+		}
 		out = append(out, candidate{
 			row: r, node: n, client: clientBucket(*r),
 			v6:   ipv6Slot{dialable: r.DialableV6(), ownPort: r.TCP6 != 0 || r.QUIC6 != 0},
-			rank: readinessRank(netconf.ReadinessAt(target, r.Network, ev, now)),
+			rank: rank,
 		})
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].rank < out[j].rank })
@@ -436,4 +447,16 @@ func allFull(slots map[string]int, pool map[string][]int, order []string) bool {
 		}
 	}
 	return true
+}
+
+// cancelledLayer reports whether the layer tracks a cancelled fork, and when it would have activated.
+// There ready means the record no longer schedules it and not ready means it still does.
+func cancelledLayer(t netconf.ForkTarget, layer string) (time.Time, bool) {
+	switch {
+	case layer == "el" && t.EL != nil && t.EL.Phase == netconf.PhaseCancelled:
+		return time.Unix(int64(t.EL.Time), 0), true
+	case layer == "cl" && t.CL != nil && t.CL.Phase == netconf.PhaseCancelled:
+		return t.CL.Time, true
+	}
+	return time.Time{}, false
 }
