@@ -76,8 +76,12 @@ procedures are defined in [measurement-operations.md](measurement-operations.md)
 
 ## Fork-upgrade runbook
 
-Before every scheduled execution fork, upgrade go-ethereum so its chain configuration
-contains the activation. Before every consensus fork or blob-parameter-only transition,
+Before every scheduled execution fork, make the activation part of the network's EL schedule.
+If the pinned go-ethereum already carries it, nothing is needed. Otherwise add an entry to
+`elScheduleOverrides` in `internal/netconf/netconf.go` (fork name without "Time", such as
+`Amsterdam`, and the activation timestamp). A go-ethereum upgrade is not required. When a later
+go-ethereum upgrade carries the fork, `TestELScheduleOverridesAreStillNeeded` fails; delete the
+entry in that upgrade. Before every consensus fork or blob-parameter-only transition,
 update and verify `internal/netconf/consensus.go`. Deploy before activation and confirm
 the advertiser `eth`/`eth2`/`nfd` values and API `fork_evaluated_at` boundary tests.
 If these tables lag, current classification collapses toward lagging peers and the
@@ -89,7 +93,7 @@ their synced head, so all of them read stale until they re-publish past the boun
 more publishes may quarantine with `collapse_current` and then recover on their own;
 `--force-publish` forces a single cycle through if a stale snapshot is worse than the dip.
 `TestForkHeadBlockCoversConfiguredBlockForks` deliberately fails when a geth upgrade
-adds a configured block-numbered fork beyond `netconf.ForkHeadBlock`; it does not track
+adds a configured block-numbered fork beyond `forkHeadBlock` (`internal/netconf/netconf.go`); it does not track
 the live chain head. Advance that constant with the dependency upgrade. Timestamp
 forks use the request evaluation time and need no head guess.
 
@@ -101,8 +105,9 @@ from the fork schedule that each node advertises. The client release table only 
 
 When a fork is scheduled:
 
-1. Add one `internal/netconf/releases.go` entry per client for that network and fork, with no
-   release yet. Ship it with the fork schedule update.
+1. Add one release file entry per client for that network and fork, with no release yet. The
+   file is the one named by the API's `--client-releases-file` (format in the README, "Client
+   release table"). It needs no ENRScout release.
 2. If the upgrade pairs an EL and a CL fork under a new common name, add the pair to
    `combinedForkNames` in `internal/netconf/readiness.go`.
 
@@ -114,15 +119,11 @@ As each client ships a release that carries the schedule:
    A release candidate goes in `prerelease` instead. A backport to an older release line gets its
    own floor in `min_versions`. A later release on a line already listed does not change the
    floor. Set it as `latest` and `latest_url`, so the page recommends it for its fixes.
-3. For a fast fix, edit the YAML file named by `--client-releases-file` (format in the README,
-   "Client release table"). Comment each entry with where you verified the schedule. The API reloads it on its next snapshot refresh. List only the
-   entries that change: each one replaces the built-in entry with the same network, fork, layer,
-   and client, or adds a new one.
-4. Fold the change into `releases.go` at the next ENRScout release. The API then logs a warning
-   for each file entry that matches the built-in entry; delete those entries. Once the file has
-   no entries left, remove `--client-releases-file` from the API's configuration and restart it,
-   then delete the file. The API refuses to start when the flag names a missing or invalid file.
-   A file removed while the API runs is only logged; the table already loaded stays in use.
+3. Edit the release file. Comment each entry with where you verified the schedule. The API reloads
+   it on its next snapshot refresh. The file is the whole table, so keep every entry for every
+   tracked fork. The API refuses to start when the flag names a missing or invalid file. A file
+   removed or broken while the API runs is only logged; the table already loaded stays in use.
+4. After a fork leaves the tracker, its entries no longer show. Delete them when convenient.
 
 If a fork is rescheduled, update the fork schedule first. Entries verified against the old time then
 show as outdated, and their labels stay hidden until each one is checked again and its `fork_time`

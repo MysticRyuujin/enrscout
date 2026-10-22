@@ -308,7 +308,7 @@ func (s *Set) ObserveAuthenticatedEL(n *enode.Node, via, network, forkHash strin
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if cur := s.m[n.ID()]; cur != nil {
+	if cur := s.m[n.ID()]; cur != nil && cur.Layer == "el" && cur.Network == network && !cur.ForkObservedAt.After(now) {
 		cur.MembershipSource = "status"
 		cur.MembershipVerifiedAt = now
 		cur.LastResolved = now
@@ -337,7 +337,7 @@ func (s *Set) ObserveAuthenticatedCL(n *enode.Node, network, forkHash string, no
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if cur := s.m[n.ID()]; cur != nil {
+	if cur := s.m[n.ID()]; cur != nil && cur.Layer == "cl" && cur.Network == network && !cur.ForkObservedAt.After(now) {
 		cur.MembershipSource = "status"
 		cur.MembershipVerifiedAt = now
 		cur.LastResolved = now
@@ -517,13 +517,17 @@ func (s *Set) observe(n *enode.Node, via string, now time.Time, forceNetwork, fo
 			}
 		}
 	}
+	// Re-seeing the record already held tells nothing new, so it must not undo a later Status fork:
+	// a client that never re-publishes its ENR at a fork would otherwise flap between current and stale.
+	sameRecordAsStatus := ok && cur.ForkSource == "status" && e.seq == cur.Seq && e.enr == cur.ENR &&
+		e.network == cur.Network && e.layer == cur.Layer
 	cur.Enode, cur.ENR, cur.Seq = e.enode, e.enr, e.seq
 	cur.IP, cur.IP6, cur.TCP, cur.UDP = e.ip, e.ip6, e.tcp, e.udp
 	cur.TCP6, cur.UDP6, cur.QUIC, cur.QUIC6 = e.tcp6, e.udp6, e.quic, e.quic6
 	cur.CGC, cur.CGCKnown = e.cgc, e.cgcKnown
 	cur.ENRSchedule = e.schedule
 	// A later, less-informative observation must not downgrade an established classification.
-	if e.forkHash != "" && (cur.ForkHash != e.forkHash || cur.ForkNext != e.forkNext || cur.ForkSource == "") {
+	if e.forkHash != "" && !sameRecordAsStatus && (cur.ForkHash != e.forkHash || cur.ForkNext != e.forkNext || cur.ForkSource == "") {
 		cur.ForkHash, cur.ForkNext = e.forkHash, e.forkNext
 		cur.ForkSource = "enr"
 		cur.ForkObservedAt = now

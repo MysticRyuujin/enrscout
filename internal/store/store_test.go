@@ -159,7 +159,7 @@ func TestFSListWalksOnlyThePrefixSubtree(t *testing.T) {
 	if err != nil || len(partial) != 1 || partial[0] != "snapshots/mainnet/a.parquet" {
 		t.Fatalf("partial prefix List = %v, %v", partial, err)
 	}
-	missing, err := st.List(ctx, "snapshots/sepolia/")
+	missing, err := st.List(ctx, "snapshots/devnet/")
 	if err != nil || len(missing) != 0 {
 		t.Fatalf("missing subtree List = %v, %v", missing, err)
 	}

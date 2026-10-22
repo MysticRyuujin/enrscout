@@ -27,7 +27,7 @@ func TestReadinessHistoryAppendSpacesAndPrunes(t *testing.T) {
 }
 
 func TestReadinessHistoryDecodeRejectsUnknownVersionAndFields(t *testing.T) {
-	h := &ReadinessHistory{Version: ReadinessHistoryVersion, Network: "sepolia", Fork: "Glamsterdam", Points: []ReadinessPoint{{At: 1}}}
+	h := &ReadinessHistory{Version: ReadinessHistoryVersion, Network: "hoodi", Fork: "Glamsterdam", Points: []ReadinessPoint{{At: 1}}}
 	data, err := h.Encode()
 	if err != nil {
 		t.Fatal(err)
@@ -41,7 +41,7 @@ func TestReadinessHistoryDecodeRejectsUnknownVersionAndFields(t *testing.T) {
 	if _, err := DecodeReadinessHistory([]byte(`{"version":1,"points":[],"extra":1}`)); err == nil {
 		t.Fatal("unknown field accepted")
 	}
-	legacy := []byte(`{"version":1,"network":"sepolia","fork":"Glamsterdam","points":[{"at":1,"el":{"ready":1},"clients_el":{"Geth":[1,1]}}]}`)
+	legacy := []byte(`{"version":1,"network":"hoodi","fork":"Glamsterdam","points":[{"at":1,"el":{"ready":1},"clients_el":{"Geth":[1,1]}}]}`)
 	got, err := DecodeReadinessHistory(legacy)
 	if err != nil {
 		t.Fatalf("pre-release per-client fields rejected: %v", err)
@@ -53,14 +53,14 @@ func TestReadinessHistoryDecodeRejectsUnknownVersionAndFields(t *testing.T) {
 
 func TestReadinessHistoryKeyStaysOutOfGenerationPrefix(t *testing.T) {
 	l := Layout{}
-	key, err := l.ReadinessHistoryKey("sepolia", "Glamsterdam")
-	if err != nil || strings.HasPrefix(key, l.NetworkPrefix("sepolia")) || key != "snapshots/state/readiness/sepolia/glamsterdam.json" {
+	key, err := l.ReadinessHistoryKey("hoodi", "Glamsterdam")
+	if err != nil || strings.HasPrefix(key, l.NetworkPrefix("hoodi")) || key != "snapshots/state/readiness/hoodi/glamsterdam.json" {
 		t.Fatalf("key = %q, %v", key, err)
 	}
-	if slashed, err := (Layout{Prefix: "snapshots/"}).ReadinessHistoryKey("sepolia", "Glamsterdam"); err != nil || slashed != key {
+	if slashed, err := (Layout{Prefix: "snapshots/"}).ReadinessHistoryKey("hoodi", "Glamsterdam"); err != nil || slashed != key {
 		t.Fatalf("trailing-slash prefix key = %q, %v, want %q", slashed, err, key)
 	}
-	if _, err := l.ReadinessHistoryKey("sepolia", "../manifest"); err == nil {
+	if _, err := l.ReadinessHistoryKey("hoodi", "../manifest"); err == nil {
 		t.Fatal("path segment accepted")
 	}
 }

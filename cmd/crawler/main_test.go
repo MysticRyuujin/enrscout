@@ -23,6 +23,7 @@ import (
 
 	"github.com/MysticRyuujin/enrscout/internal/distinct"
 	"github.com/MysticRyuujin/enrscout/internal/netconf"
+	"github.com/MysticRyuujin/enrscout/internal/netconf/netconftest"
 	"github.com/MysticRyuujin/enrscout/internal/nodeset"
 	"github.com/MysticRyuujin/enrscout/internal/snapshot"
 	"github.com/MysticRyuujin/enrscout/internal/store"
@@ -467,15 +468,15 @@ func TestRestoreSkipsUnconfiguredNetworks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rows[0].Network = "sepolia"
+	rows[0].Network = "hoodi"
 	rows[0].ID = rows[0].ID[:len(rows[0].ID)-1] + "f"
-	sepoliaData, err := nodeset.ParquetFromRows(rows)
+	hoodiData, err := nodeset.ParquetFromRows(rows)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	networks := map[string]snapshot.NetworkSnapshot{}
-	for network, data := range map[string][]byte{"mainnet": mainnetData, "sepolia": sepoliaData} {
+	for network, data := range map[string][]byte{"mainnet": mainnetData, "hoodi": hoodiData} {
 		key := layout.GenerationKey(network, gen)
 		if err := st.Put(ctx, key, data, ""); err != nil {
 			t.Fatal(err)
@@ -511,8 +512,8 @@ func TestRestoreSkipsUnconfiguredNetworks(t *testing.T) {
 	if got := len(restored.SnapshotNetworks([]string{"mainnet"})["mainnet"]); got != 1 {
 		t.Errorf("mainnet count = %d, want 1", got)
 	}
-	if got := len(restored.SnapshotNetworks([]string{"sepolia"})["sepolia"]); got != 0 {
-		t.Errorf("sepolia count = %d, want 0 for an unconfigured network", got)
+	if got := len(restored.SnapshotNetworks([]string{"hoodi"})["hoodi"]); got != 0 {
+		t.Errorf("hoodi count = %d, want 0 for an unconfigured network", got)
 	}
 	if len(m.Networks) != 2 {
 		t.Errorf("returned manifest has %d networks, want the full stored set of 2", len(m.Networks))
@@ -776,21 +777,21 @@ func TestShrankTooMuch(t *testing.T) {
 }
 
 func TestShrankTooMuchAcrossForkActivation(t *testing.T) {
-	activation := time.Unix(1791294816, 0)
-	sepolia := func(at time.Time, total, current int) *snapshot.Manifest {
+	activation := netconftest.Activation
+	manifestAt := func(at time.Time, total, current int) *snapshot.Manifest {
 		return &snapshot.Manifest{GeneratedAt: at, Networks: map[string]snapshot.NetworkSnapshot{
-			"sepolia": {NodeCount: total, CurrentNodeCount: current},
+			netconftest.Network: {NodeCount: total, CurrentNodeCount: current},
 		}}
 	}
-	prev := sepolia(activation.Add(-2*time.Minute), 3000, 2700)
-	if got := shrankTooMuch(prev, sepolia(activation.Add(3*time.Minute), 3000, 40), 50); got != "" {
+	prev := manifestAt(activation.Add(-2*time.Minute), 3000, 2700)
+	if got := shrankTooMuch(prev, manifestAt(activation.Add(3*time.Minute), 3000, 40), 50); got != "" {
 		t.Fatalf("collapse across Glamsterdam = %q, want no reason", got)
 	}
-	if got := shrankTooMuch(prev, sepolia(activation.Add(3*time.Minute), 200, 40), 50); got != "collapse_total" {
+	if got := shrankTooMuch(prev, manifestAt(activation.Add(3*time.Minute), 200, 40), 50); got != "collapse_total" {
 		t.Fatalf("gutted set across Glamsterdam = %q, want collapse_total", got)
 	}
-	after := sepolia(activation.Add(3*time.Minute), 3000, 2700)
-	if got := shrankTooMuch(after, sepolia(activation.Add(8*time.Minute), 3000, 40), 50); got != "collapse_current" {
+	after := manifestAt(activation.Add(3*time.Minute), 3000, 2700)
+	if got := shrankTooMuch(after, manifestAt(activation.Add(8*time.Minute), 3000, 40), 50); got != "collapse_current" {
 		t.Fatalf("collapse after Glamsterdam = %q, want collapse_current", got)
 	}
 }
@@ -903,8 +904,8 @@ func TestDistinctStatePersistsHourlyAndAtShutdownDespiteRejectedPublish(t *testi
 }
 
 func TestPublishIntervalShortensNearActivation(t *testing.T) {
-	activation := time.Unix(1791294816, 0)
-	networks := []string{"mainnet", "sepolia"}
+	activation := netconftest.Activation
+	networks := []string{"mainnet", netconftest.Network}
 	for _, tc := range []struct {
 		name string
 		at   time.Time

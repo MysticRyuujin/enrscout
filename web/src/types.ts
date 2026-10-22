@@ -220,6 +220,16 @@ export interface ReadinessPoint {
   cl_clients?: Record<string, Partial<ReadinessCounts>>;
 }
 
+export interface ScheduledFork {
+  name: string;
+  el?: string;
+  cl?: string;
+  time: number;
+  cl_epoch?: number;
+  activated: boolean;
+  tracked: boolean;
+}
+
 export interface ForkReadiness {
   network: string;
   fork_evaluated_at: string;
@@ -249,4 +259,5 @@ export interface ForkReadiness {
   releases: ClientRelease[];
   layers: Partial<Record<"el" | "cl", LayerReadiness>>;
   history?: { points: ReadinessPoint[] | null };
+  schedule?: ScheduledFork[];
 }

@@ -293,8 +293,8 @@ func TestCLBootnodesParseAndHaveUniqueIDs(t *testing.T) {
 }
 
 func TestParseNetworkList(t *testing.T) {
-	got, err := ParseNetworkList(" mainnet, hoodi ,,sepolia")
-	if err != nil || !slices.Equal(got, []string{"mainnet", "hoodi", "sepolia"}) {
+	got, err := ParseNetworkList(" hoodi, mainnet ,,")
+	if err != nil || !slices.Equal(got, []string{"hoodi", "mainnet"}) {
 		t.Fatalf("ParseNetworkList = %v, %v", got, err)
 	}
 	for _, csv := range []string{"", "  ", "mainnet,mainnet", "../mainnet", "bad/name", "devnet.local", "mainet", "devnet-1"} {

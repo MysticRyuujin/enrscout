@@ -30,11 +30,11 @@ func decodeReleases(data []byte) (netconf.ClientReleaseTable, error) {
 	return table, nil
 }
 
-// maxReleasesFileBytes bounds an operator file; the built-in table is a few kilobytes.
+// maxReleasesFileBytes bounds an operator file; a fork's full table is a few kilobytes.
 const maxReleasesFileBytes = 1 << 20
 
-// releasesFile overlays the built-in client release table by key, so an operator can publish a newly
-// shipped fork-ready release without an ENRScout release. It is reloaded when its content changes,
+// releasesFile is the whole client release table, so an operator can publish a newly shipped
+// fork-ready release without an ENRScout release. It is reloaded when its content changes,
 // compared by hash because a copy that preserves mtime and size would otherwise be missed; a file that
 // fails to read or validate keeps the table already in use.
 type releasesFile struct {
@@ -51,23 +51,15 @@ func (f *releasesFile) load() error {
 	if sum == f.sum {
 		return nil
 	}
-	overlay, err := decodeReleases(data)
+	table, err := decodeReleases(data)
 	if err != nil {
 		return fmt.Errorf("decode %s: %w", f.path, err)
 	}
-	// Validated alone first: the merge would hide a duplicate key inside the file.
-	if err := overlay.Validate(); err != nil {
-		return fmt.Errorf("validate %s: %w", f.path, err)
-	}
-	table, redundant := netconf.BuiltinClientReleases().Overlay(overlay)
 	if err := netconf.SetClientReleases(table); err != nil {
 		return fmt.Errorf("validate %s: %w", f.path, err)
 	}
 	f.sum = sum
-	for _, key := range redundant {
-		slog.Warn("client release override matches the built-in entry; remove it from the file", "file", f.path, "entry", key)
-	}
-	slog.Info("client release table loaded", "file", f.path, "updated", table.Updated, "overrides", len(overlay.Releases), "entries", len(table.Releases))
+	slog.Info("client release table loaded", "file", f.path, "updated", table.Updated, "entries", len(table.Releases))
 	return nil
 }
 

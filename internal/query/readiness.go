@@ -61,6 +61,7 @@ type ForkReadiness struct {
 	Releases            []netconf.ClientRelease    `json:"releases"`
 	Layers              map[string]*LayerReadiness `json:"layers"`
 	History             *snapshot.ReadinessHistory `json:"history,omitempty"`
+	Schedule            []netconf.ScheduledFork    `json:"schedule"`
 }
 
 const readinessVersionRows = 15
@@ -88,6 +89,9 @@ func (e *Engine) ForkReadinessAt(ctx context.Context, network string, at time.Ti
 		return out, err
 	}
 	out.Fork, out.Phase = target, target.Phase()
+	if out.Schedule, err = netconf.ScheduleAt(network, at); err != nil {
+		return out, err
+	}
 	if out.Phase == netconf.PhaseNone {
 		return out, nil
 	}

@@ -17,12 +17,13 @@ import (
 	"github.com/ethereum/go-ethereum/rlp"
 
 	"github.com/MysticRyuujin/enrscout/internal/netconf"
+	"github.com/MysticRyuujin/enrscout/internal/netconf/netconftest"
 	"github.com/MysticRyuujin/enrscout/internal/nodeset"
 )
 
-const sepoliaAmsterdam = 1791294816
+var forkTime = uint64(netconftest.Activation.Unix())
 
-type sepoliaRecord struct {
+type elRecord struct {
 	next     uint64 // ENR eth Next; the row's fork_next mirrors it unless rowNext is set
 	rowNext  *uint64
 	score    int32
@@ -31,7 +32,7 @@ type sepoliaRecord struct {
 	ownPort6 bool
 }
 
-func elRow(t *testing.T, network string, i int, rec sepoliaRecord, at time.Time) nodeset.Row {
+func elRow(t *testing.T, network string, i int, rec elRecord, at time.Time) nodeset.Row {
 	t.Helper()
 	key, err := crypto.GenerateKey()
 	if err != nil {
@@ -80,7 +81,7 @@ func elRow(t *testing.T, network string, i int, rec sepoliaRecord, at time.Time)
 	return row
 }
 
-var beforeAmsterdam = time.Unix(sepoliaAmsterdam-3600, 0)
+var beforeAmsterdam = netconftest.Activation.Add(-time.Hour)
 
 func readySelectOpts(limit int) selectOpts {
 	return selectOpts{minScore: 1, protocol: "any", layer: "el", limit: limit, balance: balanceProportional}
@@ -91,11 +92,11 @@ func TestReadyRecordsFillEachClientQuotaFirst(t *testing.T) {
 	var rows []nodeset.Row
 	for i, client := range []string{"Geth", "Besu"} {
 		for j := range 10 {
-			rec := sepoliaRecord{next: sepoliaAmsterdam, score: 5, client: client}
+			rec := elRecord{next: forkTime, score: 5, client: client}
 			if j >= 6 {
-				rec = sepoliaRecord{next: 0, score: 50, client: client}
+				rec = elRecord{next: 0, score: 50, client: client}
 			}
-			rows = append(rows, elRow(t, "sepolia", i*10+j, rec, beforeAmsterdam))
+			rows = append(rows, elRow(t, netconftest.Network, i*10+j, rec, beforeAmsterdam))
 		}
 	}
 	picked := pick(rankCandidates(rows, readySelectOpts(10), beforeAmsterdam), readySelectOpts(10))
@@ -112,12 +113,12 @@ func TestReadyRecordsFillEachClientQuotaFirst(t *testing.T) {
 }
 
 func TestReadinessRanksMismatchLastAndReadsTheRecord(t *testing.T) {
-	fork := uint64(sepoliaAmsterdam)
+	fork := uint64(forkTime)
 	rows := []nodeset.Row{
-		elRow(t, "sepolia", 0, sepoliaRecord{next: sepoliaAmsterdam + 600, score: 90, client: "Geth"}, beforeAmsterdam),
-		elRow(t, "sepolia", 1, sepoliaRecord{next: 0, rowNext: &fork, score: 80, client: "Geth"}, beforeAmsterdam),
-		elRow(t, "sepolia", 2, sepoliaRecord{next: 0, score: 70, client: "Geth"}, beforeAmsterdam),
-		elRow(t, "sepolia", 3, sepoliaRecord{next: sepoliaAmsterdam, score: 10, client: "Geth"}, beforeAmsterdam),
+		elRow(t, netconftest.Network, 0, elRecord{next: forkTime + 600, score: 90, client: "Geth"}, beforeAmsterdam),
+		elRow(t, netconftest.Network, 1, elRecord{next: 0, rowNext: &fork, score: 80, client: "Geth"}, beforeAmsterdam),
+		elRow(t, netconftest.Network, 2, elRecord{next: 0, score: 70, client: "Geth"}, beforeAmsterdam),
+		elRow(t, netconftest.Network, 3, elRecord{next: forkTime, score: 10, client: "Geth"}, beforeAmsterdam),
 	}
 	cands := rankCandidates(rows, readySelectOpts(0), beforeAmsterdam)
 	var got []string
@@ -133,8 +134,8 @@ func TestReadinessRanksMismatchLastAndReadsTheRecord(t *testing.T) {
 
 func TestIPv6ReservationKeepsExplicitPortsFirst(t *testing.T) {
 	rows := []nodeset.Row{
-		elRow(t, "sepolia", 0, sepoliaRecord{next: sepoliaAmsterdam, score: 90, client: "Geth", v6: true}, beforeAmsterdam),
-		elRow(t, "sepolia", 1, sepoliaRecord{next: 0, score: 10, client: "Geth", v6: true, ownPort6: true}, beforeAmsterdam),
+		elRow(t, netconftest.Network, 0, elRecord{next: forkTime, score: 90, client: "Geth", v6: true}, beforeAmsterdam),
+		elRow(t, netconftest.Network, 1, elRecord{next: 0, score: 10, client: "Geth", v6: true, ownPort6: true}, beforeAmsterdam),
 	}
 	picked := pick(rankCandidates(rows, readySelectOpts(1), beforeAmsterdam), readySelectOpts(1))
 	if len(picked) != 1 || picked[0].row.IP != "1.2.0.2" {
@@ -142,8 +143,8 @@ func TestIPv6ReservationKeepsExplicitPortsFirst(t *testing.T) {
 	}
 
 	rows = []nodeset.Row{
-		elRow(t, "sepolia", 0, sepoliaRecord{next: 0, score: 90, client: "Geth", v6: true, ownPort6: true}, beforeAmsterdam),
-		elRow(t, "sepolia", 1, sepoliaRecord{next: sepoliaAmsterdam, score: 10, client: "Geth", v6: true, ownPort6: true}, beforeAmsterdam),
+		elRow(t, netconftest.Network, 0, elRecord{next: 0, score: 90, client: "Geth", v6: true, ownPort6: true}, beforeAmsterdam),
+		elRow(t, netconftest.Network, 1, elRecord{next: forkTime, score: 10, client: "Geth", v6: true, ownPort6: true}, beforeAmsterdam),
 	}
 	picked = pick(rankCandidates(rows, readySelectOpts(1), beforeAmsterdam), readySelectOpts(1))
 	if len(picked) != 1 || picked[0].rank != rankReady {
@@ -188,14 +189,14 @@ func clRecordRow(t *testing.T, network string, i int, epoch uint64, at time.Time
 }
 
 func TestCLRecordSchedulingTheTargetRanksReady(t *testing.T) {
-	state, err := netconf.CLForkStateAt("sepolia", beforeAmsterdam)
+	state, err := netconf.CLForkStateAt(netconftest.Network, beforeAmsterdam)
 	if err != nil {
 		t.Fatal(err)
 	}
 	opt := selectOpts{minScore: 1, protocol: "any", layer: "cl"}
 	cands := rankCandidates([]nodeset.Row{
-		clRecordRow(t, "sepolia", 1, math.MaxUint64, beforeAmsterdam),
-		clRecordRow(t, "sepolia", 2, state.NextForkEpoch, beforeAmsterdam),
+		clRecordRow(t, netconftest.Network, 1, math.MaxUint64, beforeAmsterdam),
+		clRecordRow(t, netconftest.Network, 2, state.NextForkEpoch, beforeAmsterdam),
 	}, opt, beforeAmsterdam)
 	if len(cands) != 2 || cands[0].row.IP != "1.2.3.2" || cands[0].rank != rankReady || cands[1].rank != rankNeutral {
 		t.Fatalf("CL ranks = %+v, want the record scheduling the target first and ready", cands)
@@ -215,13 +216,13 @@ func readinessTreeConfig(t *testing.T, outDir string, publisher recordPublisher)
 	}
 }
 
-func seedSepoliaBaseline(t *testing.T, outDir, suffix string, nodes int, seq uint64) {
+func seedBaseline(t *testing.T, outDir, suffix string, nodes int, seq uint64) {
 	t.Helper()
 	for _, capability := range []string{"all", "snap"} {
-		domain := capability + ".sepolia.nodes.example.org"
+		domain := capability + "." + netconftest.Network + ".nodes.example.org"
 		seedArtifact(t, outDir, domain+suffix, output{
 			SchemaVersion: outputSchemaVersion, URL: "enrtree://X@" + domain, Domain: domain,
-			Network: "sepolia", Capability: capability, Nodes: nodes, Seq: seq,
+			Network: netconftest.Network, Capability: capability, Nodes: nodes, Seq: seq,
 			Records: map[string]string{domain: fmt.Sprintf("enrtree-root:v1 seq=%d", seq)},
 		})
 	}
@@ -230,11 +231,11 @@ func seedSepoliaBaseline(t *testing.T, outDir, suffix string, nodes int, seq uin
 func readinessRows(t *testing.T, ready, notReady int, at time.Time) []nodeset.Row {
 	var rows []nodeset.Row
 	for i := range ready + notReady {
-		next := uint64(sepoliaAmsterdam)
+		next := uint64(forkTime)
 		if i >= ready {
 			next = 0
 		}
-		rows = append(rows, elRow(t, "sepolia", i, sepoliaRecord{next: next, score: 5, client: "Geth"}, at))
+		rows = append(rows, elRow(t, netconftest.Network, i, elRecord{next: next, score: 5, client: "Geth"}, at))
 	}
 	return rows
 }
@@ -260,7 +261,7 @@ func TestReadyOnlyTreeNearActivation(t *testing.T) {
 		wantReadyOnly bool
 	}{
 		{"inside the window", beforeAmsterdam, 0, 1, 7, true},
-		{"outside the window", time.Unix(sepoliaAmsterdam, 0).Add(-24 * time.Hour), 0, 1, 10, false},
+		{"outside the window", netconftest.Activation.Add(-24 * time.Hour), 0, 1, 10, false},
 		{"ready-only would collapse", beforeAmsterdam, 20, 1, 10, false},
 		{"ready-only would fall below the floor", beforeAmsterdam, 0, 8, 10, false},
 	}
@@ -270,9 +271,9 @@ func TestReadyOnlyTreeNearActivation(t *testing.T) {
 			cfg := readinessTreeConfig(t, outDir, nil)
 			cfg.minTreeNodes = tc.minTree
 			if tc.previous > 0 {
-				seedSepoliaBaseline(t, outDir, "", tc.previous, uint64(tc.at.Add(-6*time.Hour).Unix()))
+				seedBaseline(t, outDir, "", tc.previous, uint64(tc.at.Add(-6*time.Hour).Unix()))
 			}
-			trees, skip, err := buildNetworkTrees(readinessRows(t, 7, 3, tc.at), "sepolia", tc.at, tc.at, cfg, map[string]uint64{})
+			trees, skip, err := buildNetworkTrees(readinessRows(t, 7, 3, tc.at), netconftest.Network, tc.at, tc.at, cfg, map[string]uint64{})
 			if err != nil || skip.reason != "" {
 				t.Fatalf("skipped as %q: %v", skip.reason, err)
 			}
@@ -288,7 +289,7 @@ func TestReadyOnlyTreeNearActivation(t *testing.T) {
 // build sequence past activation, and reading that instead would close the exemption and wedge the
 // domain again.
 func TestCollapseExemptionAfterActivation(t *testing.T) {
-	activation := time.Unix(sepoliaAmsterdam, 0)
+	activation := netconftest.Activation
 	for _, tc := range []struct {
 		name     string
 		at       time.Time
@@ -308,10 +309,10 @@ func TestCollapseExemptionAfterActivation(t *testing.T) {
 			cfg := readinessTreeConfig(t, outDir, &stubPublisher{})
 			cfg.minTreeNodes = tc.minTree
 			publishedSeq := uint64(activation.Add(-2 * time.Hour).Unix())
-			seedSepoliaBaseline(t, outDir, publishedSuffix, 100, publishedSeq)
-			seedSepoliaBaseline(t, outDir, "", 100, max(publishedSeq, tc.builtSeq))
+			seedBaseline(t, outDir, publishedSuffix, 100, publishedSeq)
+			seedBaseline(t, outDir, "", 100, max(publishedSeq, tc.builtSeq))
 			rows := readinessRows(t, 0, tc.records, tc.at)
-			trees, skip, err := buildNetworkTrees(rows, "sepolia", tc.at, tc.at, cfg, map[string]uint64{})
+			trees, skip, err := buildNetworkTrees(rows, netconftest.Network, tc.at, tc.at, cfg, map[string]uint64{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -327,9 +328,9 @@ func TestCollapseExemptionAfterActivation(t *testing.T) {
 	outDir := t.TempDir()
 	cfg := readinessTreeConfig(t, outDir, &stubPublisher{})
 	at := activation.Add(10 * 24 * time.Hour)
-	seedSepoliaBaseline(t, outDir, publishedSuffix, 100, uint64(at.Add(-6*time.Hour).Unix()))
-	seedSepoliaBaseline(t, outDir, "", 100, uint64(at.Add(-6*time.Hour).Unix()))
-	if _, skip, err := buildNetworkTrees(readinessRows(t, 0, 10, at), "sepolia", at, at, cfg, map[string]uint64{}); err != nil || skip.reason != "collapse" {
+	seedBaseline(t, outDir, publishedSuffix, 100, uint64(at.Add(-6*time.Hour).Unix()))
+	seedBaseline(t, outDir, "", 100, uint64(at.Add(-6*time.Hour).Unix()))
+	if _, skip, err := buildNetworkTrees(readinessRows(t, 0, 10, at), netconftest.Network, at, at, cfg, map[string]uint64{}); err != nil || skip.reason != "collapse" {
 		t.Fatalf("skip = %q (%v), want collapse with no activation since the last publish", skip.reason, err)
 	}
 }
@@ -375,7 +376,7 @@ func TestForkWindowsCountOnlyTheTreeLayer(t *testing.T) {
 		clRecordRow(t, "devnet", 3, math.MaxUint64, at),
 	}
 	for i := range 3 {
-		rows = append(rows, elRow(t, "devnet", 10+i, sepoliaRecord{next: 0, score: 5, client: "Geth"}, at))
+		rows = append(rows, elRow(t, "devnet", 10+i, elRecord{next: 0, score: 5, client: "Geth"}, at))
 	}
 	trees, skip, err := buildNetworkTrees(rows, "devnet", at, at, cfg, map[string]uint64{})
 	if err != nil || skip.reason != "" {
@@ -388,7 +389,7 @@ func TestForkWindowsCountOnlyTheTreeLayer(t *testing.T) {
 	// With no ready CL record, the EL records alone must not pass as a ready-only tree.
 	rows = []nodeset.Row{clRecordRow(t, "devnet", 1, math.MaxUint64, at), clRecordRow(t, "devnet", 2, math.MaxUint64, at)}
 	for i := range 3 {
-		rows = append(rows, elRow(t, "devnet", 10+i, sepoliaRecord{next: 0, score: 5, client: "Geth"}, at))
+		rows = append(rows, elRow(t, "devnet", 10+i, elRecord{next: 0, score: 5, client: "Geth"}, at))
 	}
 	trees, skip, err = buildNetworkTrees(rows, "devnet", at, at, cfg, map[string]uint64{})
 	if err != nil || skip.reason != "" {

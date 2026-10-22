@@ -5,12 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
+	"reflect"
 	"sort"
 	"strings"
 
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/p2p/enode"
+	"github.com/ethereum/go-ethereum/params"
 )
 
 // DevnetConfig defines a devnet registered at startup; its fork id/digest are per-enclave, so it can't be compiled in.
@@ -55,6 +58,10 @@ func RegisterDevnet(cfg DevnetConfig) error {
 		return fmt.Errorf("EL network ID must be non-zero and supplied separately from chain ID")
 	}
 	genesis := g
+	extra, err := unknownELForks(cfg.ELGenesisJSON)
+	if err != nil {
+		return fmt.Errorf("parse EL genesis.json: %w", err)
+	}
 
 	root, err := hex.DecodeString(strings.TrimPrefix(strings.TrimSpace(cfg.GenesisValidatorsRoot), "0x"))
 	if err != nil || len(root) != 32 {
@@ -113,13 +120,17 @@ func RegisterDevnet(cfg DevnetConfig) error {
 		return errors.New("blob schedule is empty but a Fulu fork version is set")
 	}
 
+	for _, f := range extra {
+		slog.Info("devnet EL fork unknown to go-ethereum", "fork", f.name, "time", f.time)
+	}
 	registry = append(registry, &Network{
-		Name:        name,
-		NetworkID:   cfg.NetworkID,
-		ChainConfig: genesis.Config,
-		genesisFn:   func() *core.Genesis { return &genesis },
-		bootnodes:   records,
-		clBootnodes: records,
+		Name:         name,
+		extraELForks: extra,
+		NetworkID:    cfg.NetworkID,
+		ChainConfig:  genesis.Config,
+		genesisFn:    func() *core.Genesis { return &genesis },
+		bootnodes:    records,
+		clBootnodes:  records,
 		cl: &clNetwork{
 			name:           name,
 			gvr:            gvr,
@@ -132,4 +143,50 @@ func RegisterDevnet(cfg DevnetConfig) error {
 		},
 	})
 	return nil
+}
+
+// unknownELForks reads the genesis config's <fork>Time keys that params.ChainConfig has no field
+// for. core.Genesis drops them silently, which would leave the fork out of the devnet's fork id.
+func unknownELForks(genesisJSON []byte) ([]elForkTime, error) {
+	var raw struct {
+		Config map[string]json.RawMessage `json:"config"`
+	}
+	if err := json.Unmarshal(genesisJSON, &raw); err != nil {
+		return nil, err
+	}
+	known := map[string]bool{}
+	t := reflect.TypeFor[params.ChainConfig]()
+	for i := range t.NumField() {
+		tag, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
+		known[strings.ToLower(tag)] = true
+	}
+	// encoding/json matches keys case-insensitively, so two spellings of one unknown key would leave
+	// clients disagreeing on which one counts.
+	seen := map[string]bool{}
+	var out []elForkTime
+	for key, value := range raw.Config {
+		lower := strings.ToLower(key)
+		if !strings.HasSuffix(lower, "time") || lower == "time" || known[lower] {
+			continue
+		}
+		if seen[lower] {
+			return nil, fmt.Errorf("genesis config %s: duplicate key", key)
+		}
+		seen[lower] = true
+		if string(value) == "null" {
+			continue
+		}
+		name := key[:len(key)-len("time")]
+		var at uint64
+		if err := json.Unmarshal(value, &at); err != nil {
+			return nil, fmt.Errorf("genesis config %s: %w", key, err)
+		}
+		if lower := strings.ToLower(name); strings.HasPrefix(lower, "bpo") {
+			name = "BPO" + name[3:]
+		} else {
+			name = capitalize(name)
+		}
+		out = append(out, elForkTime{name: name, time: at})
+	}
+	return out, nil
 }

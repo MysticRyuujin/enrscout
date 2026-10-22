@@ -1,0 +1,135 @@
+# ENRScout client release table for the API (--client-releases-file).
+# This file is the whole table: an entry not listed here has no release label.
+# One entry per network, fork, layer, and client. fork_time is the activation the
+# entry was verified against; a rescheduled fork withholds the entry's labels.
+# The API reloads the file when its content changes and keeps the last good table
+# when an edit fails validation.
+---
+updated: 2026-10-21
+releases:
+  # v30.0.0 schedules Amsterdam on Hoodi at amsterdamTime 1793036568 (PR #7391).
+  - fork: Glamsterdam
+    network: hoodi
+    layer: el
+    client: Ethrex
+    fork_time: 1793036568
+    min_versions: ["30.0.0"]
+    released: 2026-10-16
+    url: https://github.com/lambdaclass/ethrex/releases/tag/v30.0.0
+  # 2.2.0 schedules Amsterdam on Hoodi at 1793036568 (#14489).
+  - fork: Glamsterdam
+    network: hoodi
+    layer: el
+    client: Nethermind
+    fork_time: 1793036568
+    min_versions: ["2.2.0"]
+    released: 2026-10-16
+    url: https://github.com/NethermindEth/nethermind/releases/tag/2.2.0
+  # 26.10.0 schedules Amsterdam on Hoodi at timestamp 1793036568 (#11531).
+  - fork: Glamsterdam
+    network: hoodi
+    layer: el
+    client: Besu
+    fork_time: 1793036568
+    min_versions: ["26.10.0"]
+    released: 2026-10-16
+    url: https://github.com/besu-eth/besu/releases/tag/26.10.0
+  # v0.4.3 execution_chain/common/chain_config.nim: amsterdamTime 1793036568.
+  - fork: Glamsterdam
+    network: hoodi
+    layer: el
+    client: Nimbus
+    fork_time: 1793036568
+    min_versions: ["0.4.3"]
+    released: 2026-10-17
+    url: https://github.com/status-im/nimbus-eth1/releases/tag/v0.4.3
+  # v3.8.0 hoodi.json: amsterdamTime 1793036568.
+  - fork: Glamsterdam
+    network: hoodi
+    layer: el
+    client: Erigon
+    fork_time: 1793036568
+    min_versions: ["3.8.0"]
+    released: 2026-10-20
+    url: https://github.com/erigontech/erigon/releases/tag/v3.8.0
+  # v1.17.9 params/chainspecs/hoodi.json: amsterdamTime 1793036568 (#35974).
+  - fork: Glamsterdam
+    network: hoodi
+    layer: el
+    client: Geth
+    fork_time: 1793036568
+    min_versions: ["1.17.9"]
+    released: 2026-10-21
+    url: https://github.com/ethereum/go-ethereum/releases/tag/v1.17.9
+  # v2.8.0 alloy-hardforks 0.4.10: HOODI_AMSTERDAM_TIMESTAMP 1793036568 (#27811).
+  - fork: Glamsterdam
+    network: hoodi
+    layer: el
+    client: Reth
+    fork_time: 1793036568
+    min_versions: ["2.8.0"]
+    released: 2026-10-20
+    url: https://github.com/paradigmxyz/reth/releases/tag/v2.8.0
+  # v8.3.0 schedules Gloas on Hoodi at epoch 132352.
+  - fork: Glamsterdam
+    network: hoodi
+    layer: cl
+    client: Lighthouse
+    fork_time: 1793036568
+    min_versions: ["8.3.0"]
+    released: 2026-10-19
+    url: https://github.com/sigp/lighthouse/releases/tag/v8.3.0
+  # v7.3.0 schedules Gloas on Hoodi at epoch 132352 (PR #17650).
+  - fork: Glamsterdam
+    network: hoodi
+    layer: cl
+    client: Prysm
+    fork_time: 1793036568
+    min_versions: ["7.3.0"]
+    released: 2026-10-16
+    url: https://github.com/OffchainLabs/prysm/releases/tag/v7.3.0
+  # 26.10.1 schedules Gloas on Hoodi at epoch 132352.
+  - fork: Glamsterdam
+    network: hoodi
+    layer: cl
+    client: Teku
+    fork_time: 1793036568
+    min_versions: ["26.10.1"]
+    released: 2026-10-15
+    url: https://github.com/Consensys-Incorporated/teku/releases/tag/26.10.1
+  # v26.10.1 schedules the Hoodi Glamsterdam activation.
+  - fork: Glamsterdam
+    network: hoodi
+    layer: cl
+    client: Nimbus
+    fork_time: 1793036568
+    min_versions: ["26.10.1"]
+    released: 2026-10-16
+    url: https://github.com/status-im/nimbus-eth2/releases/tag/v26.10.1
+  # v1.50.0 packages/config/src/chainConfig/networks/hoodi.ts: GLOAS_FORK_EPOCH 132352.
+  - fork: Glamsterdam
+    network: hoodi
+    layer: cl
+    client: Lodestar
+    fork_time: 1793036568
+    min_versions: ["1.50.0"]
+    released: 2026-10-12
+    url: https://github.com/ChainSafe/lodestar/releases/tag/v1.50.0
+  # Caplin ships in Erigon v3.8.0, which schedules Gloas on Hoodi at epoch 132352.
+  - fork: Glamsterdam
+    network: hoodi
+    layer: cl
+    client: Caplin
+    fork_time: 1793036568
+    min_versions: ["3.8.0"]
+    released: 2026-10-20
+    url: https://github.com/erigontech/erigon/releases/tag/v3.8.0
+  # 3.0.0-rc.1 schedules Gloas on Hoodi at epoch 132352 (PR #980).
+  - fork: Glamsterdam
+    network: hoodi
+    layer: cl
+    client: Grandine
+    fork_time: 1793036568
+    prerelease: "3.0.0-rc.1"
+    released: 2026-10-19
+    url: https://github.com/grandinetech/grandine/releases/tag/3.0.0-rc.1

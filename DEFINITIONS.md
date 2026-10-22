@@ -109,12 +109,19 @@ default node results just like stale execution observations.
 ## Upcoming fork readiness
 
 The fork tracker evaluates each row of a network against that network's next scheduled fork.
-Each layer has its own target: the next EL fork time from the go-ethereum chain configuration,
+Each layer has its own target: the next EL fork time from the go-ethereum chain configuration
+(with `elScheduleOverrides`, and devnet `genesis.json` fork keys that go-ethereum has no field for),
 and the next CL fork version change from `internal/netconf/consensus.go`. When both activate at
 the same instant they share one name, such as Glamsterdam (Amsterdam and Gloas). When the two
 layers' forks fall at different instants they are different upgrades: the tracker follows the next
 scheduled one, or else the most recently activated one. A fork stays tracked for 14 days after
 activation unless a later fork is already scheduled.
+
+The fork schedule (`schedule`) lists every timestamp-scheduled upgrade after genesis with the same
+pairing and names. Block-numbered EL forks, before the Merge, have no activation time and are left out.
+Forks active at genesis are the genesis ruleset, not upgrades: an EL fork at or before the genesis
+timestamp (EIP-6122), and a CL fork at epoch 0. A FAR_FUTURE epoch is not scheduled. `tracked` marks
+the upgrade that the readiness counts refer to.
 
 Readiness is taken from the fork schedule that the node itself advertises, not from its version
 string:
@@ -149,8 +156,8 @@ verified handshake in the last 7 days; every other row is `unidentified`. The cr
 `enrscout`, which announce every scheduled fork) are excluded from all readiness counts, from the
 readiness history, and from the `readiness` node filter.
 
-The release table is curated by hand: built into `internal/netconf/releases.go`, and overlaid entry by entry at
-runtime with the API's `--client-releases-file`. For each client it lists the first release of
+The release table is the API's `--client-releases-file`, which the operator maintains. There is no
+built-in table, so without the file no version is labelled. For each client it lists the first release of
 each release line that ships the schedule (`min_versions`). A reported version is labelled:
 
 - `meets`: a release build at or above the floor of its own major.minor line, or at or above the

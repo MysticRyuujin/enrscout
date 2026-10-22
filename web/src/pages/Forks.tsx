@@ -32,6 +32,7 @@ import type {
   Readiness,
   ReadinessCounts,
   ReadinessPoint,
+  ScheduledFork,
 } from "../types";
 
 const REFRESH_MS = 60_000;
@@ -282,6 +283,57 @@ const VERSION_BADGE: Record<string, string> = {
   mixed: "mixed builds",
 };
 
+function ForkSchedule({
+  network,
+  schedule,
+  now,
+}: {
+  network: string;
+  schedule?: ScheduledFork[];
+  now: number;
+}) {
+  if (!schedule?.length) return null;
+  return (
+    <div className="card">
+      <h3>Fork schedule</h3>
+      <p className="card-subtitle">
+        Every upgrade on <span className="net-name">{network}</span> that
+        activates at a set time after genesis. Execution and consensus forks
+        that activate at the same time share a row.
+      </p>
+      <div className="table-wrap">
+        <table className="nodes-table">
+          <thead>
+            <tr>
+              <th>Upgrade</th>
+              <th>Execution</th>
+              <th>Consensus</th>
+              <th>Activation</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {schedule.map((f) => (
+              <tr key={`${f.time}-${f.name}`}>
+                <td>{f.tracked ? <strong>{f.name}</strong> : f.name}</td>
+                <td>{f.el ?? "-"}</td>
+                <td>
+                  {f.cl ? `${f.cl} at epoch ${num(f.cl_epoch ?? 0)}` : "-"}
+                </td>
+                <td>{utc(f.time)}</td>
+                <td>
+                  {countdown(f.time, now)}
+                  {f.tracked && " · tracked"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function nodesLink(layer: "el" | "cl", params: Record<string, string>) {
   return {
     pathname: nodesPath(layer),
@@ -484,12 +536,12 @@ export default function Forks() {
         <div className="card">
           <p className="empty">
             No fork is scheduled on <span className="net-name">{network}</span>.
-            The tracker follows the next execution fork in the go-ethereum chain
-            configuration and the next consensus fork in the crawler&apos;s
-            schedule, and keeps a fork for 14 days after it activates unless a
-            later fork is scheduled.
+            The tracker follows the next execution and consensus fork in the
+            crawler&apos;s schedule for the network, and keeps a fork for 14
+            days after it activates unless a later fork is scheduled.
           </p>
         </div>
+        <ForkSchedule network={network} schedule={data.schedule} now={now} />
       </div>
     );
   }
@@ -662,9 +714,15 @@ export default function Forks() {
           {activated
             ? "Upgraded means the identity advertises the new fork. Pending means it scheduled the fork, but the crawler has not seen it on the fork yet. Left behind means it did not advertise the fork."
             : "Ready means the identity itself advertises the fork: the execution fork ID names the fork time, or the consensus record names the fork version and epoch."}{" "}
-          This is the node&apos;s own schedule, not its version string. Release
-          labels come from a hand-curated table, updated {data.releases_updated}
-          . <Link to="/about#fork-readiness">Methodology</Link>
+          This is the node&apos;s own schedule, not its version string.
+          {releases.length > 0 && (
+            <>
+              {" "}
+              Release labels come from an operator-maintained release file
+              {data.releases_updated && <>, updated {data.releases_updated}</>}.
+            </>
+          )}{" "}
+          <Link to="/about#fork-readiness">Methodology</Link>
         </span>
       </section>
 
@@ -798,8 +856,8 @@ export default function Forks() {
           <p className="card-subtitle">
             First release of each client that ships the {data.fork.name}{" "}
             schedule for <span className="net-name">{network}</span>, and the
-            latest release to run, which can carry later fixes. Updated{" "}
-            {data.releases_updated}.
+            latest release to run, which can carry later fixes.
+            {data.releases_updated && <> Updated {data.releases_updated}.</>}
           </p>
           <div className="table-wrap">
             <table className="nodes-table">
@@ -831,6 +889,8 @@ export default function Forks() {
           </div>
         </div>
       )}
+
+      <ForkSchedule network={network} schedule={data.schedule} now={now} />
     </div>
   );
 }

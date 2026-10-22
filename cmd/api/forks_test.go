@@ -12,13 +12,14 @@ import (
 	"time"
 
 	"github.com/MysticRyuujin/enrscout/internal/netconf"
+	"github.com/MysticRyuujin/enrscout/internal/netconf/netconftest"
 	"github.com/MysticRyuujin/enrscout/internal/nodeset"
 	"github.com/MysticRyuujin/enrscout/internal/query"
 	"github.com/MysticRyuujin/enrscout/internal/snapshot"
 	"github.com/MysticRyuujin/enrscout/internal/store"
 )
 
-func forksTestEngine(t *testing.T, networks []string) (*query.Engine, store.Store) {
+func forksTestEngine(t *testing.T, networks []string, at time.Time) (*query.Engine, store.Store) {
 	t.Helper()
 	ctx := context.Background()
 	st, err := store.NewFS(t.TempDir())
@@ -26,7 +27,7 @@ func forksTestEngine(t *testing.T, networks []string) (*query.Engine, store.Stor
 		t.Fatal(err)
 	}
 	layout := snapshot.Layout{}
-	gen := time.Now().Truncate(time.Second)
+	gen := at.Truncate(time.Second)
 	m := &snapshot.Manifest{
 		SchemaVersion: snapshot.SchemaVersion, GeneratedAt: gen, CrawlerID: "test-crawler",
 		Run: snapshot.RunMetadata{
@@ -71,10 +72,11 @@ func forksTestEngine(t *testing.T, networks []string) (*query.Engine, store.Stor
 }
 
 func TestForksEndpoint(t *testing.T) {
-	networks := []string{"mainnet", "sepolia"}
-	eng, st := forksTestEngine(t, networks)
+	networks := []string{"mainnet", netconftest.Network}
+	pinForksClock(t, netconftest.Before)
+	eng, st := forksTestEngine(t, networks, netconftest.Before)
 	layout := snapshot.Layout{}
-	now := time.Now()
+	now := netconftest.Before
 	tracked := map[string]bool{}
 	for _, network := range networks {
 		target, err := netconf.ForkTargetAt(network, now)
@@ -82,6 +84,9 @@ func TestForksEndpoint(t *testing.T) {
 			t.Fatal(err)
 		}
 		if target.Name == "" {
+			if network == netconftest.Network {
+				t.Fatalf("%s has no tracked fork at %s", network, now)
+			}
 			continue
 		}
 		tracked[network] = true
@@ -116,7 +121,7 @@ func TestForksEndpoint(t *testing.T) {
 		if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
 			t.Fatal(err)
 		}
-		target, err := netconf.ForkTargetAt(network, time.Now())
+		target, err := netconf.ForkTargetAt(network, now)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -130,6 +135,14 @@ func TestForksEndpoint(t *testing.T) {
 		if tracked[network] && (body.History == nil || len(body.History.Points) != 1) {
 			t.Errorf("%s: history = %+v, want the stored point", network, body.History)
 		}
+		if len(body.Schedule) == 0 {
+			t.Errorf("%s: no fork schedule, even with no fork tracked", network)
+		}
+		for _, f := range body.Schedule {
+			if f.Tracked != (f.Name == target.Name && f.Time == target.Activation().Unix()) {
+				t.Errorf("%s: schedule entry %+v disagrees with target %s", network, f, target.Name)
+			}
+		}
 		if rr.Header().Get("Cache-Control") == "" {
 			t.Errorf("%s: no Cache-Control", network)
 		}
@@ -137,20 +150,15 @@ func TestForksEndpoint(t *testing.T) {
 }
 
 func TestForksEndpointSurvivesCorruptHistory(t *testing.T) {
-	networks := []string{"sepolia"}
-	eng, st := forksTestEngine(t, networks)
-	target, err := netconf.ForkTargetAt("sepolia", time.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if target.Name == "" {
-		t.Skip("no fork tracked on sepolia at this date")
-	}
-	if err := st.Put(context.Background(), historyKey(t, snapshot.Layout{}, "sepolia", target.Name), []byte("{"), "application/json"); err != nil {
+	networks := []string{netconftest.Network}
+	pinForksClock(t, netconftest.Before)
+	eng, st := forksTestEngine(t, networks, netconftest.Before)
+	target := netconftest.Target(t)
+	if err := st.Put(context.Background(), historyKey(t, snapshot.Layout{}, netconftest.Network, target.Name), []byte("{"), "application/json"); err != nil {
 		t.Fatal(err)
 	}
 	rr := httptest.NewRecorder()
-	routes(eng, "", time.Hour, networks).ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/v1/forks?network=sepolia", nil))
+	routes(eng, "", time.Hour, networks).ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/v1/forks?network="+netconftest.Network, nil))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 with live counts", rr.Code)
 	}
@@ -169,6 +177,13 @@ func TestNodeFilterClientExact(t *testing.T) {
 	if _, err := nodeFilter(url.Values{"client_exact": {"true"}}, known); err == nil {
 		t.Fatal("client_exact=true accepted")
 	}
+}
+
+func pinForksClock(t *testing.T, at time.Time) {
+	t.Helper()
+	prev := forksNow
+	forksNow = func() time.Time { return at }
+	t.Cleanup(func() { forksNow = prev })
 }
 
 func historyKey(t *testing.T, layout snapshot.Layout, network, fork string) string {

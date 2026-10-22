@@ -285,14 +285,16 @@ network_params:
   seconds_per_slot: 12
   deneb_fork_epoch: 0      # chain starts on Deneb
   electra_fork_epoch: 1
-  fulu_fork_epoch: 3
-  bpo_1_epoch: 5
+  fulu_fork_epoch: 2
+  bpo_1_epoch: 3
   bpo_1_max_blobs: 12
 ```
 
 **Epoch arithmetic.** With the mainnet preset an epoch is 32 slots, so at 12s
 slots one epoch is 384s (6.4 min): the schedule above transitions at roughly
-T+6m, T+19m and T+32m, and the whole run wants ~50 minutes. The `minimal` preset
+T+6m, T+13m and T+19m, and the whole run wants ~30 minutes. Put each fork in the
+next epoch: an empty epoch between forks only adds 6.4 minutes of waiting. Start
+ENRScout right after genesis so it still sees the scheduled phase. The `minimal` preset
 uses 8 slots per epoch and is far faster, but it selects a different set of
 client images and constrains `seconds_per_slot` (Nimbus rejects anything other
 than 6s on minimal, and anything below 12s on mainnet), so prefer the mainnet
@@ -323,14 +325,18 @@ EPOCH=$((32 * SPS))   # mainnet preset; 8 * SPS for the minimal preset
 # GNU date wants -d @<epoch>; BSD/macOS date wants -r <epoch>.
 epoch_utc() { date -u -d "@$1" +%H:%M:%S 2>/dev/null || date -u -r "$1" +%H:%M:%S; }
 
-for e in 1 3 5; do
+for e in 1 2 3; do
   printf 'epoch %s -> %s UTC\n' "$e" "$(epoch_utc $((G + e*EPOCH)))"
 done
 ```
 
 The devnet bundle also records the schedule itself (`*_FORK_EPOCH` and
 `BLOB_SCHEDULE` in `config.yaml`, EL fork timestamps in `genesis.json`), so
-verify your arithmetic against it rather than against the args file.
+verify your arithmetic against it rather than against the args file. A `genesis.json` fork key
+that the pinned go-ethereum has no field for (a fork newer than its release, or `bpo6Time` and
+later) is still tracked: the crawler and the API log `devnet EL fork unknown to go-ethereum` at
+startup and include it in the EL fork id. The Forks page and `/api/v1/forks` `schedule` list every
+upgrade the bundle schedules, from the first snapshot, not only the next one.
 
 ### What to watch on each side
 
@@ -553,6 +559,28 @@ branch images. `/api/v1/forks?network=devnet` tracked Fusaka from the first snap
 - **Sparse chains show the lag projection limit.** The devnet produced about one block per ten
   slots, so older EL heads projected slightly ahead of the median (`head_lag` of -4). See
   DEFINITIONS.md "Sync state".
+
+### Fork schedule run on 2026-10-21
+
+Upstream ethereum-package, all seven pairs with their curated images, bootnodoor as the only crawler
+seed, mainnet preset with 12-second slots. Electra is at genesis (19:45:34 UTC), Fulu at epoch 2,
+BPO1 at epoch 4 and BPO2 at epoch 6.
+
+- **Schedule.** The first snapshot listed Fusaka (tracked), BPO1 and BPO2 in `schedule`, and the
+  Forks page showed all three. After each activation the tracker moved to the next upgrade, and after
+  BPO2 it showed BPO2 as activated with the whole schedule activated.
+- **Transitions.** Every identity was current again 89 s after Fusaka, 78 s after BPO1 and 67 s after
+  BPO2. `fork=current` plus `fork=stale` equalled the total in all 77 samples, and the verified class
+  equalled the nodeset size (15) at the end.
+- **Release file.** Devnet entries hot-reloaded without a restart and labelled versions `meets`,
+  `below` and `dev_build`. An entry with another `fork_time` read as outdated, and an invalid edit kept
+  the last good table.
+- **Besu ENR over discv5.** Besu `26.10-develop-90d559a` re-publishes `seq=2` with the new fork id
+  (`admin_nodeInfo`), but its discv5 service keeps serving the startup `seq=1` record (`devp2p discv5
+  resolve`): `PeerDiscoveryAgentV5.updateNodeRecord` updates `NodeRecordManager` and never the
+  discovery system (besu-eth/besu#11708). bootnodoor therefore relays the stale record. ENRScout let each re-sighting of
+  that unchanged record replace the fresher Status fork id, so the row flapped between current and
+  stale. Now only a newer record replaces a Status fork id; Besu held `status` through BPO2.
 
 ### Earlier discovery findings
 

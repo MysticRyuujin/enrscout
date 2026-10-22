@@ -79,13 +79,18 @@ type Network struct {
 	bootnodes   []string
 	clBootnodes []string
 
-	once    sync.Once
-	genesis *types.Block
-	elForks []elForkTime
-	hashMu  sync.RWMutex
-	hashes  map[[4]byte]struct{}
-	hashAt  time.Time
-	fork    atomic.Pointer[forkMemo]
+	// extraELForks are devnet genesis forks that the pinned go-ethereum has no field for.
+	extraELForks []elForkTime
+
+	once     sync.Once
+	genesis  *types.Block
+	elForks  []elForkTime
+	idBlocks []uint64
+	idTimes  []uint64
+	hashMu   sync.RWMutex
+	hashes   map[[4]byte]struct{}
+	hashAt   time.Time
+	fork     atomic.Pointer[forkMemo]
 }
 
 // Racing writers compute the same id for the same era, so the store is benign.
@@ -97,7 +102,9 @@ type forkMemo struct {
 func (n *Network) load() {
 	n.once.Do(func() {
 		n.genesis = n.genesisFn().ToBlock()
-		n.elForks = forkTimes(n.ChainConfig)
+		n.elForks = mergeELForks(forkTimes(n.ChainConfig), elScheduleOverrides[n.Name], n.extraELForks)
+		n.idBlocks = forkBlocks(n.ChainConfig)
+		n.idTimes = idForkTimes(n.elForks, n.genesis.Time())
 	})
 }
 
@@ -131,10 +138,10 @@ func (n *Network) gatherHashes(at time.Time) map[[4]byte]struct{} {
 	}
 	// With the head block fixed, the id changes only at scheduled fork times (the same invariant
 	// forkEraAt relies on), so the window is the id at its start plus each boundary inside it.
-	set[forkid.NewID(n.ChainConfig, n.genesis, forkHeadBlock, uint64(start)).Hash] = struct{}{}
+	set[n.forkIDAt(uint64(start)).Hash] = struct{}{}
 	for _, f := range n.elForks {
 		if t := int64(f.time); t >= start && t <= now+ahead {
-			set[forkid.NewID(n.ChainConfig, n.genesis, forkHeadBlock, f.time).Hash] = struct{}{}
+			set[n.forkIDAt(f.time).Hash] = struct{}{}
 		}
 	}
 	return set
@@ -189,7 +196,7 @@ func (n *Network) CurrentForkIDAt(at time.Time) forkid.ID {
 }
 
 func (n *Network) currentForkIDAt(at time.Time) forkid.ID {
-	return forkid.NewID(n.ChainConfig, n.genesis, forkHeadBlock, uint64(clampUnix(at)))
+	return n.forkIDAt(uint64(clampUnix(at)))
 }
 
 // Every fork evaluator clamps: a pre-1970 evaluation time would otherwise wrap into a
@@ -335,21 +342,16 @@ func RowForkCurrentAt(layer, network, forkHash string, forkNext uint64, at time.
 var registry = []*Network{
 	{Name: "mainnet", NetworkID: 1, ChainConfig: params.MainnetChainConfig, genesisFn: core.DefaultGenesisBlock,
 		cl: mainnetCL, bootnodes: mainnetELBootnodes, clBootnodes: mainnetCLBootnodes},
-	{Name: "hoodi", NetworkID: 560048, ChainConfig: hoodiChainConfig, genesisFn: core.DefaultHoodiGenesisBlock,
+	{Name: "hoodi", NetworkID: 560048, ChainConfig: params.HoodiChainConfig, genesisFn: core.DefaultHoodiGenesisBlock,
 		cl: hoodiCL, bootnodes: hoodiELBootnodes, clBootnodes: hoodiCLBootnodes},
 	{Name: "sepolia", NetworkID: 11155111, ChainConfig: params.SepoliaChainConfig, genesisFn: core.DefaultSepoliaGenesisBlock,
 		cl: sepoliaCL, bootnodes: sepoliaELBootnodes, clBootnodes: sepoliaCLBootnodes},
 }
 
-const hoodiGlamsterdam = 1793036568
-
-// geth v1.17.8 does not schedule Amsterdam on Hoodi (eth-clients/hoodi#31). Drop this once it does.
-var hoodiChainConfig = func() *params.ChainConfig {
-	cfg := *params.HoodiChainConfig
-	amsterdam := uint64(hoodiGlamsterdam)
-	cfg.AmsterdamTime = &amsterdam
-	return &cfg
-}()
+// elScheduleOverrides schedules EL forks that the pinned go-ethereum does not carry yet, by network.
+// A name is the genesis key without "Time", such as "Amsterdam". Delete an entry once go-ethereum
+// ships it: TestELScheduleOverridesAreStillNeeded fails from that upgrade on.
+var elScheduleOverrides = map[string][]elForkTime{}
 
 // Execution bootnodes are the NodeOps fleet's dual-stack records (discv4 and discv5 on the EL
 // port), as go-ethereum PR #35682 ships them. They carry no eth entry, so they never need

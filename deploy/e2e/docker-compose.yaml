@@ -11,8 +11,10 @@ services:
       - --data=/fixtures
       - --prefix=snapshots
       - --max-snapshot-age=87600h
+      - --client-releases-file=/etc/enrscout/client-releases.yaml
     volumes:
       - ./fixtures:/fixtures:ro
+      - ./client-releases.yaml:/etc/enrscout/client-releases.yaml:ro
     ports:
       - "127.0.0.1:8080:8080"
     read_only: true

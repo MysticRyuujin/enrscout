@@ -135,8 +135,9 @@ export default function About() {
           fork.
         </p>
         <p>
-          Release labels come from a hand-curated table and never change the
-          counts. Each client entry lists the first release of each release line
+          Release labels come from a release file that the operator maintains,
+          and never change the counts. Without that file, no release labels
+          show. Each client entry lists the first release of each release line
           that ships the fork, so later releases on that line count without a
           table change, and a backport to an older line gets its own entry.
           Release candidates, unstable and development builds never earn the

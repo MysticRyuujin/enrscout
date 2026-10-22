@@ -55,10 +55,10 @@ node web/e2e/browse.mjs    # Playwright browse test (needs: cd web && npm ci && 
   CL reads ENR-only columns (`enr_*`) because Status overwrites `fork_hash` and `ObserveAuthenticatedCL`
   zeroes `fork_next`. `/api/v1/forks` classifies grouped rows in Go; the `readiness=` node filter
   mirrors the rule in SQL (`query.readinessConditionAt`), pinned by `TestReadinessMatchesSQLAndGo`.
-  `netconf/releases.go` is a hand-curated label table that readiness never depends on: one floor per
-  release line (`min_versions`), plus the `fork_time` each entry was verified against, so a rescheduled
-  fork withholds its labels. The API's `--client-releases-file` (strict YAML, so it can carry comments) overlays the table at runtime by network/fork/layer/client and
-  reloads on change; an invalid file keeps the last good table (`netconf.SetClientReleases` validates
+  Release labels, which readiness never depends on, come only from the API's `--client-releases-file`
+  (strict YAML, so it can carry comments; `netconf/releases.go` holds the types and rules, no data):
+  one floor per release line (`min_versions`), plus the `fork_time` each entry was verified against, so
+  a rescheduled fork withholds its labels. The file is the whole table and reloads on change; an invalid file keeps the last good table (`netconf.SetClientReleases` validates
   before it swaps). The forks cache key includes `ClientReleasesGeneration`, so a reload is visible at once.
   Readiness history (`<prefix>/state/readiness/<network>/<fork>.json`, `snapshot.ReadinessHistory`) is
   written by the crawler after each manifest commit, one point per 15 minutes (per publish within 3 h of activation) for 30 days, by
@@ -109,6 +109,10 @@ Reviewed and deliberately not fixed; re-litigate only with new information.
 - **Two overlapping Status exchanges with one peer can store the older head.** `SetHead` keeps the
   last one to finish. Ordering guards were rejected: any time-window heuristic also hides a real head
   drop, such as a peer that restarts behind and reconnects at once, and the next Status corrects it.
+  The same holds for the fork id: a re-seen identical ENR no longer replaces a Status fork id (Besu
+  serves its startup ENR over discv5 forever), so a Status that loses such a race to another Status or
+  to a record install with equal fork fields keeps its fork id until the next Status, not the next
+  ENR sighting.
 - **Inbound EL Status proves the key, not the endpoint.** An inbound RLPx handshake from IP Y can
   promote a row whose endpoint came from elsewhere: an unsigned discv4 sighting (`pendingLegacy`, a
   retained candidate, or the cached Status in `resolverPool.resolve`), or an ENR the key holder signed
@@ -136,9 +140,13 @@ Reviewed and deliberately not fixed; re-litigate only with new information.
   (`netconf.gatherHashes`). Genesis-sharing forks (PulseChain) reuse mainnet's ancient
   Frontier hash `fc64ec04`; an all-history sweep misclassifies them as mainnet.
   Guarded by `TestAncientForkDoesNotClassify`; don't widen the window back to genesis.
-- **Fork upgrades are pre-activation work.** Upgrade geth before every EL fork and
-  update `internal/netconf/consensus.go` before every CL fork/BPO. The CI head-bound
-  assertion tells you when `ForkHeadBlock` must advance. A missed update collapses
+- **Fork upgrades are pre-activation work, but not go-ethereum upgrades.** EL fork ids are
+  computed in `netconf/forkid.go` from go-ethereum's `ChainConfig` plus `elScheduleOverrides`, so
+  an EL fork that the pinned geth lacks gets an override entry, not a dependency bump;
+  `TestELScheduleOverridesAreStillNeeded` fails once a geth upgrade carries it, and
+  `TestForkIDMatchesGeth` pins the computation to geth's. Devnet `genesis.json` fork keys that geth
+  has no field for become extra forks the same way. Update `internal/netconf/consensus.go` before
+  every CL fork/BPO. The CI head-bound assertion tells you when `forkHeadBlock` must advance. A missed update collapses
   current classification and should trip the current-node floor.
 - **Devnet registration is startup-only and singular.** `RegisterDevnet` mutates the
   process-global network registry before crawler goroutines start and reserves the
