@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { fetchForks } from "./api";
+import { whileVisible } from "./theme";
 import type { ForkReadiness, Readiness } from "./types";
 
 // For a cancelled fork, ready means the node no longer schedules it, so every label inverts.
@@ -95,11 +96,16 @@ export function useForkMode(network: string, layer: "el" | "cl"): ForkMode {
   useEffect(() => {
     let live = true;
     setMode("scheduled");
-    fetchForks(network)
-      .then((d) => live && setMode(layerForkMode(d, layer)))
-      .catch(() => {});
+    // A restart that applies a cancellation inverts the filter's meaning under an open page.
+    const load = () =>
+      fetchForks(network)
+        .then((d) => live && setMode(layerForkMode(d, layer)))
+        .catch(() => {});
+    void load();
+    const timer = window.setInterval(whileVisible(load), 60_000);
     return () => {
       live = false;
+      window.clearInterval(timer);
     };
   }, [network, layer]);
   return mode;
