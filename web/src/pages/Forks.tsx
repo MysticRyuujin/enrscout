@@ -213,7 +213,10 @@ function releaseText(r?: ClientRelease, mode?: ForkMode): string {
   if (!r) return "not tracked";
   if (r.outdated) return "table outdated for this fork date";
   if (mode === "cancelled") {
-    if (!r.min_versions?.length) return "no affected release";
+    if (!r.min_versions?.length)
+      return r.prerelease
+        ? `affected pre-release ${r.prerelease}`
+        : "no affected release";
     const fixed = r.unscheduled_in?.length
       ? ` · fixed in ${r.unscheduled_in.join(" / ")}`
       : " · no fix yet";
@@ -895,8 +898,11 @@ export default function Forks() {
                     <td className={hasRelease(r) ? "rd-rel ok" : "rd-rel"}>
                       <ReleaseLink
                         text={
-                          cancelled
-                            ? (r.min_versions?.join(" / ") ?? "-")
+                          cancelled && !r.outdated
+                            ? (r.min_versions?.join(" / ") ??
+                              (r.prerelease
+                                ? `pre-release ${r.prerelease}`
+                                : "-"))
                             : releaseText(r)
                         }
                         url={r.url}
@@ -904,7 +910,11 @@ export default function Forks() {
                     </td>
                     <td>
                       {cancelled ? (
-                        (r.unscheduled_in?.join(" / ") ?? "no fix yet")
+                        r.outdated ? (
+                          "-"
+                        ) : (
+                          (r.unscheduled_in?.join(" / ") ?? "no fix yet")
+                        )
                       ) : (
                         <LatestRelease r={r} />
                       )}
