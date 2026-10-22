@@ -15,7 +15,9 @@ import (
 )
 
 // readinessPointAt applies the same rule as /api/v1/forks, so a history point and the live counts
-// agree for the same rows.
+// agree for the same rows. A point always counts as ready the rows that schedule the fork, so the
+// series recorded while it was scheduled continues across a cancellation, whose live ready means the
+// opposite.
 func readinessPointAt(target netconf.ForkTarget, network string, rows []nodeset.Row, at time.Time) snapshot.ReadinessPoint {
 	point := snapshot.ReadinessPoint{At: at.Unix()}
 	if target.EL != nil {
@@ -43,6 +45,14 @@ func readinessPointAt(target netconf.ForkTarget, network string, rows []nodeset.
 			Layer: row.Layer, ForkHash: row.ForkHash, ForkNext: row.ForkNext,
 			ENRForkDigest: row.ENRForkDigest, ENRNextForkVersion: row.ENRNextForkVersion, ENRNextForkEpoch: row.ENRNextForkEpoch,
 		}, at)
+		if cancelledLayer(target, row.Layer) {
+			switch readiness {
+			case netconf.Ready:
+				readiness = netconf.NotReady
+			case netconf.NotReady:
+				readiness = netconf.Ready
+			}
+		}
 		layer[string(readiness)]++
 		if readiness == netconf.Stale || !clientname.Charted(row.FPStatus, row.FPAt, at) || !clientname.Recognized(row.Layer, row.Client) {
 			continue
@@ -53,6 +63,16 @@ func readinessPointAt(target netconf.ForkTarget, network string, rows []nodeset.
 		clients[row.Client][string(readiness)]++
 	}
 	return point
+}
+
+func cancelledLayer(target netconf.ForkTarget, layer string) bool {
+	switch layer {
+	case "el":
+		return target.EL != nil && target.EL.Phase == netconf.PhaseCancelled
+	case "cl":
+		return target.CL != nil && target.CL.Phase == netconf.PhaseCancelled
+	}
+	return false
 }
 
 // recordReadiness appends one history point per tracked network. It reads the stored object back
@@ -72,7 +92,7 @@ func (p *publisher) recordReadiness(ctx context.Context, byNet map[string][]node
 			p.readinessAt = map[string]time.Time{}
 		}
 		p.readinessAt[network] = now
-		key, err := p.layout.ReadinessHistoryKey(network, target.HistoryName())
+		key, err := p.layout.ReadinessHistoryKey(network, target.Name)
 		if err != nil {
 			slog.Warn("readiness history key", "network", network, "err", err)
 			continue

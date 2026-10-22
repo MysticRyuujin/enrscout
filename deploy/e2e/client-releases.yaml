@@ -53,8 +53,12 @@ releases:
     client: Besu
     fork_time: 1793036568
     min_versions: ["26.10.0"]
+    # 26.10.1 drops amsterdamTime from hoodi.json again (besu-eth/besu#11709).
+    unscheduled_in: ["26.10.1"]
     released: 2026-10-16
     url: https://github.com/besu-eth/besu/releases/tag/26.10.0
+    latest: 26.10.1
+    latest_url: https://github.com/besu-eth/besu/releases/tag/26.10.1
   # v0.4.3 execution_chain/common/chain_config.nim: amsterdamTime 1793036568.
   - fork: Glamsterdam
     network: hoodi
@@ -134,8 +138,12 @@ releases:
     client: Lodestar
     fork_time: 1793036568
     min_versions: ["1.50.0"]
+    # v1.50.1 sets the Hoodi GLOAS_FORK_EPOCH to Infinity again (#10461).
+    unscheduled_in: ["1.50.1"]
     released: 2026-10-12
     url: https://github.com/ChainSafe/lodestar/releases/tag/v1.50.0
+    latest: 1.50.1
+    latest_url: https://github.com/ChainSafe/lodestar/releases/tag/v1.50.1
   # Caplin ships in Erigon v3.8.0, which schedules Gloas on Hoodi at epoch 132352.
   - fork: Glamsterdam
     network: hoodi

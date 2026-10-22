@@ -212,6 +212,10 @@ func withForkReadiness(ctx context.Context, st store.Store, layout snapshot.Layo
 	for i := range 24 {
 		at := gen.Add(-time.Duration(23-i) * snapshot.ReadinessInterval)
 		ready := i / 8
+		if target.IsCancelled() {
+			// Scheduling rose before the cancellation and falls after it.
+			ready = min(i, 23-i) / 4
+		}
 		point := snapshot.ReadinessPoint{
 			At: at.Unix(),
 			EL: map[string]int{"ready": ready, "not_ready": 4 - ready},
@@ -236,7 +240,7 @@ func withForkReadiness(ctx context.Context, st store.Store, layout snapshot.Layo
 	if err != nil {
 		return err
 	}
-	key, err := layout.ReadinessHistoryKey(network, target.HistoryName())
+	key, err := layout.ReadinessHistoryKey(network, target.Name)
 	if err != nil {
 		return err
 	}

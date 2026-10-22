@@ -482,7 +482,7 @@ func TestForkReadinessCancelled(t *testing.T) {
 	if err := st.Put(ctx, key, data, "application/json"); err != nil {
 		t.Fatal(err)
 	}
-	if h, err := eng.ReadinessHistoryFor(ctx, netconftest.Network, r.Fork); err != nil || h != nil {
-		t.Fatalf("the scheduled-fork history leaked into the cancelled view: %+v, %v", h, err)
+	if h, err := eng.ReadinessHistoryFor(ctx, netconftest.Network, r.Fork); err != nil || h == nil || len(h.Points) != 1 {
+		t.Fatalf("the series recorded while the fork was scheduled must continue in the cancelled view: %+v, %v", h, err)
 	}
 }

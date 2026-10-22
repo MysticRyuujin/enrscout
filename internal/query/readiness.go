@@ -328,7 +328,7 @@ const maxHistoryPoints = 480
 // is one recorded against another schedule: after a reschedule it holds measurements of the old
 // date until an updated crawler starts a new series.
 func (e *Engine) ReadinessHistoryFor(ctx context.Context, network string, target netconf.ForkTarget) (*snapshot.ReadinessHistory, error) {
-	key, err := e.layout.ReadinessHistoryKey(network, target.HistoryName())
+	key, err := e.layout.ReadinessHistoryKey(network, target.Name)
 	if err != nil {
 		return nil, err
 	}

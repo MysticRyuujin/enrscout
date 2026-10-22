@@ -365,15 +365,6 @@ func activatedReadiness(current bool, forkHash, pre string, readable, scheduled 
 	}
 }
 
-// HistoryName keys a target's readiness history. A cancelled fork gets its own series, because its
-// ready means unscheduled, the opposite of the scheduled series recorded before the cancellation.
-func (t ForkTarget) HistoryName() string {
-	if t.IsCancelled() {
-		return t.Name + "-cancelled"
-	}
-	return t.Name
-}
-
 func containsFold(list []string, s string) bool {
 	return slices.ContainsFunc(list, func(x string) bool { return strings.EqualFold(x, s) })
 }

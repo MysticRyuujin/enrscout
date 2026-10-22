@@ -1491,9 +1491,28 @@ code.wrap {
   display: flex;
   flex-wrap: wrap;
   gap: 6px 18px;
-  margin: 8px 0 0;
+  margin: 10px 0 0;
   padding: 0;
   list-style: none;
+}
+
+.notice-links a,
+.notice-strip a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.notice-links a:hover,
+.notice-strip a:hover {
+  text-decoration-thickness: 2px;
+}
+
+.notice-links a::after {
+  content: " ↗";
+  text-decoration: none;
+  display: inline-block;
+  margin-left: 2px;
 }
 
 .notice-strip {

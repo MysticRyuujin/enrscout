@@ -737,7 +737,7 @@ export default function Forks() {
         <h3>Adoption over time</h3>
         <p className="card-subtitle">
           {cancelled
-            ? "Share of identities that no longer schedule the cancelled fork"
+            ? "Share of identities that have the fork in their schedule. It rose while the fork was scheduled and falls as nodes drop it"
             : "Share of identities that have the fork in their schedule"}
           {trendView === "overall"
             ? "."
@@ -831,6 +831,7 @@ export default function Forks() {
         <ReadinessTrend
           points={trendPoints}
           activation={activation}
+          cancelled={cancelled}
           series={trendSeries}
           seenLines={trendView === "overall"}
         />
@@ -916,7 +917,16 @@ export default function Forks() {
                           r.outdated ? (
                             "-"
                           ) : (
-                            (r.unscheduled_in?.join(" / ") ?? "no fix yet")
+                            <ReleaseLink
+                              text={
+                                r.unscheduled_in?.join(" / ") ?? "no fix yet"
+                              }
+                              url={
+                                r.latest && r.unscheduled_in?.includes(r.latest)
+                                  ? r.latest_url
+                                  : undefined
+                              }
+                            />
                           )
                         ) : (
                           <LatestRelease r={r} />

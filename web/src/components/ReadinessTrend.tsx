@@ -91,9 +91,12 @@ export default function ReadinessTrend({
   activation,
   series: input,
   seenLines,
+  cancelled,
 }: {
   points: ReadinessPoint[];
   activation?: number;
+  // A cancelled fork keeps its would-be time as a reference line; nothing activates there.
+  cancelled?: boolean;
   series: TrendSeries[];
   // The dashed "seen on the fork" line doubles every series, so only the overall view draws it.
   seenLines: boolean;
@@ -155,7 +158,10 @@ export default function ReadinessTrend({
   const series = input.map((s) => {
     const values = s.counts.map(scheduledShare);
     const upgraded = s.counts.map((c, i) =>
-      seenLines && activation !== undefined && points[i].at >= activation
+      seenLines &&
+      !cancelled &&
+      activation !== undefined &&
+      points[i].at >= activation
         ? readyShare(c)
         : null,
     );
@@ -263,6 +269,7 @@ export default function ReadinessTrend({
             <text
               className="trend-axis"
               x={x(activation) - 4}
+              textDecoration={cancelled ? "line-through" : undefined}
               y={PAD.top + 10}
               textAnchor="end"
             >
@@ -363,7 +370,8 @@ export default function ReadinessTrend({
             const c = s.counts[hover!];
             const v = s.values[hover!];
             if (v === null || !c) return null;
-            const after = activation !== undefined && hp.at >= activation;
+            const after =
+              !cancelled && activation !== undefined && hp.at >= activation;
             return (
               <div key={s.key}>
                 <span className="swatch" style={{ background: s.color }} />

@@ -63,7 +63,9 @@ node web/e2e/browse.mjs    # Playwright browse test (needs: cd web && npm ci && 
   Readiness history (`<prefix>/state/readiness/<network>/<fork>.json`, `snapshot.ReadinessHistory`) is
   written by the crawler after each manifest commit, one point per 15 minutes (per publish within 3 h of activation) for 30 days, by
   read-modify-write so restarts keep earlier points. It is not part of a generation or the manifest,
-  it is never overwritten when unreadable, and the API reads it best-effort. It cannot be backfilled:
+  it is never overwritten when unreadable, and the API reads it best-effort. A point always counts the
+  rows that schedule the fork as ready: under a cancelled target the crawler swaps ready and not_ready
+  before it writes, so the series continues across the cancellation and its line rises, then falls. It cannot be backfilled:
   ship the writer before a fork is scheduled, or the trend starts late.
 - **Advertiser ports are deterministic.** Starting at `--advertiser-port-base`, each
   network consumes three ports: EL discovery UDP/RLPx TCP, CL discovery UDP, and CL

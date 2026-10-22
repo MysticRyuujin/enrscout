@@ -124,7 +124,7 @@ func TestRecordReadinessIsDenseAroundActivation(t *testing.T) {
 	}
 }
 
-func TestRecordReadinessKeepsCancelledSeriesApart(t *testing.T) {
+func TestRecordReadinessContinuesAcrossCancellation(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.NewFS(t.TempDir())
 	if err != nil {
@@ -135,7 +135,7 @@ func TestRecordReadinessKeepsCancelledSeriesApart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	scheduled := []byte(`{"version":1,"network":"hoodi","fork":"Glamsterdam","el_time":1793036568,"cl_epoch":132352,"points":[{"at":1}]}`)
+	scheduled := []byte(`{"version":1,"network":"hoodi","fork":"Glamsterdam","el_time":1793036568,"cl_epoch":132352,"points":[{"at":1792946568}]}`)
 	if err := st.Put(ctx, scheduledKey, scheduled, "application/json"); err != nil {
 		t.Fatal(err)
 	}
@@ -146,14 +146,7 @@ func TestRecordReadinessKeepsCancelledSeriesApart(t *testing.T) {
 	}}
 	pub := &publisher{store: st, layout: layout, networks: []string{netconftest.Network}}
 	pub.recordReadiness(ctx, rows, netconftest.Before)
-	if data, _ := st.Get(ctx, scheduledKey); string(data) != string(scheduled) {
-		t.Fatalf("the scheduled series was rewritten: %s", data)
-	}
-	key, err := layout.ReadinessHistoryKey(netconftest.Network, netconftest.Fork+"-cancelled")
-	if err != nil {
-		t.Fatal(err)
-	}
-	data, err := st.Get(ctx, key)
+	data, err := st.Get(ctx, scheduledKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +154,8 @@ func TestRecordReadinessKeepsCancelledSeriesApart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(h.Points) != 1 || h.Points[0].EL["ready"] != 1 || h.Points[0].EL["not_ready"] != 1 {
-		t.Fatalf("cancelled history = %+v", h)
+	// Row a still schedules the cancelled fork: it stays ready in the series' scheduled meaning.
+	if len(h.Points) != 2 || h.Points[0].At != 1792946568 || h.Points[1].EL["ready"] != 1 || h.Points[1].EL["not_ready"] != 1 {
+		t.Fatalf("history = %+v", h)
 	}
 }
