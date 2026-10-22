@@ -137,3 +137,17 @@ func TestCancelledReleaseStatus(t *testing.T) {
 		t.Error("unscheduled_in without min_versions accepted")
 	}
 }
+
+func TestCancelledReleaseStatusBackport(t *testing.T) {
+	scheduled, fixed := []string{"1.39.4", "2.0.0"}, []string{"1.39.5"}
+	for version, want := range map[string]string{
+		"v1.39.4": ReleaseAffected, "v1.39.5": ReleaseUnaffected, "v2.0.0": ReleaseAffected, "v2.0.1": ReleaseAffected, "v1.39.3": ReleaseUnaffected,
+	} {
+		if got := CancelledReleaseStatus(scheduled, fixed, version); got != want {
+			t.Errorf("%s = %q, want %q", version, got, want)
+		}
+	}
+	if got := CancelledReleaseStatus([]string{"2.0.0"}, []string{"2.1.0"}, "v2.2.0"); got != ReleaseUnaffected {
+		t.Errorf("a later line after the fix line = %q, want unaffected", got)
+	}
+}

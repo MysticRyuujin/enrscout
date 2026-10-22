@@ -61,19 +61,49 @@ func (c cancellation) hasCL() bool { return c.clName != "" }
 // at startup, before any network is used and before concurrent users start; it returns the forks that
 // the compiled schedule no longer carries, which are kept for tracking only.
 func ApplyCancellations(list []CancelledFork) (absent []string, err error) {
+	return applyCancellations(list, func(name string) (*Network, error) {
+		n, err := Get(name)
+		if err == nil && n.genesis != nil {
+			return nil, errors.New("network already in use; apply cancellations at startup")
+		}
+		return n, err
+	})
+}
+
+// ValidateCancellations checks a cancellation list against the compiled schedules without applying it,
+// so a reloaded file cannot ask for a restart that would then fail.
+func ValidateCancellations(list []CancelledFork) error {
+	copies := map[string]*Network{}
+	_, err := applyCancellations(list, func(name string) (*Network, error) {
+		if n, ok := copies[name]; ok {
+			return n, nil
+		}
+		n, err := Get(name)
+		if err != nil {
+			return nil, err
+		}
+		copies[name] = n.unloadedCopy()
+		return copies[name], nil
+	})
+	return err
+}
+
+func applyCancellations(list []CancelledFork, get func(string) (*Network, error)) (absent []string, err error) {
 	seen := map[string]bool{}
+	touched := map[*Network]bool{}
 	for _, c := range list {
 		key := c.Network + "/" + strings.ToLower(c.Fork)
 		if seen[key] {
 			return nil, fmt.Errorf("cancelled fork %s: duplicate entry", key)
 		}
 		seen[key] = true
-		n, err := Get(c.Network)
+		n, err := get(c.Network)
 		if err != nil {
 			return nil, fmt.Errorf("cancelled fork %s: %w", key, err)
 		}
-		if n.genesis != nil {
-			return nil, fmt.Errorf("cancelled fork %s: network already in use; apply cancellations at startup", key)
+		touched[n] = true
+		if n.originalCL == nil && n.cl != nil {
+			n.originalCL = n.cl.clone()
 		}
 		got, missing, err := n.cancel(c)
 		if err != nil {
@@ -83,7 +113,7 @@ func ApplyCancellations(list []CancelledFork) (absent []string, err error) {
 		n.cancellations = append(n.cancellations, got)
 		slices.SortFunc(n.cancellations, func(a, b cancellation) int { return cmp.Compare(a.at(n), b.at(n)) })
 	}
-	for _, n := range registry {
+	for n := range touched {
 		if err := n.cancelledDigests(); err != nil {
 			return nil, fmt.Errorf("cancelled forks on %s: %w", n.Name, err)
 		}
@@ -302,6 +332,13 @@ func (n *Network) cancelledTargetsAt(at time.Time, t *ForkTarget) {
 // cancelledELHashes are the fork ids of nodes that went onto a cancelled fork. They keep the network's
 // membership, so such nodes stay visible as stale instead of disappearing as unclassified.
 func (n *Network) cancelledELHashes(set map[[4]byte]struct{}) {
+	if len(n.cancellations) > 0 {
+		original := n.compiledELForks()
+		times := idForkTimes(original, n.genesis.Time())
+		for _, f := range original {
+			set[n.forkIDFrom(times, f.time).Hash] = struct{}{}
+		}
+	}
 	for _, c := range n.cancellations {
 		if !c.hasEL() {
 			continue
@@ -315,7 +352,15 @@ func (n *Network) cancelledELHashes(set map[[4]byte]struct{}) {
 	}
 }
 
+// cancelledCLDigest also accepts every digest of the original compiled schedule, which a node that ran
+// several cancelled forks in a row advertises.
 func (n *Network) cancelledCLDigest(digest [4]byte) bool {
+	if n.originalCL != nil {
+		n.originalCL.compute()
+		if _, ok := n.originalCL.digests[digest]; ok {
+			return true
+		}
+	}
 	return slices.ContainsFunc(n.cancellations, func(c cancellation) bool { return c.hasCL() && c.clPostDigest == digest })
 }
 
@@ -384,7 +429,9 @@ func WithCancellations(list []CancelledFork) (restore func(), err error) {
 func (n *Network) unloadedCopy() *Network {
 	c := &Network{Name: n.Name, NetworkID: n.NetworkID, ChainConfig: n.ChainConfig, genesisFn: n.genesisFn,
 		bootnodes: n.bootnodes, clBootnodes: n.clBootnodes, extraELForks: n.extraELForks}
-	if n.cl != nil {
+	if n.originalCL != nil {
+		c.cl = n.originalCL.clone()
+	} else if n.cl != nil {
 		c.cl = n.cl.clone()
 	}
 	return c

@@ -329,3 +329,44 @@ func TestRetainedBPOCancellationAfterTheCodeDropsIt(t *testing.T) {
 		t.Fatalf("ApplyCancellations = %v, %v; want the BPO at epoch 100 tracked as absent", absent, err)
 	}
 }
+
+func TestNodesOnSeveralCancelledForksStayClassified(t *testing.T) {
+	cl := []CLForkConfig{{Epoch: 0, Version: "0x10000038"}, {Epoch: 0, Version: "0x60000038"}, {Epoch: 0, Version: "0x70000038"},
+		{Name: "gloas", Epoch: 100, Version: "0x80000038"}, {Name: "heze", Epoch: 200, Version: "0x90000038"}}
+	n := registerCancelDevnet(t, fmt.Sprintf(`, "amsterdamTime": %d, "bogotaTime": %d`, devnetEpochTime(100), devnetEpochTime(200)), cl,
+		[]BlobParams{{Epoch: 100, MaxBlobs: 21}})
+	original := n.cl.clone()
+	if _, err := ApplyCancellations([]CancelledFork{
+		{Network: "devnet", Fork: "Hegota", EL: &CancelledELFork{Name: "Bogota", Time: uint64(devnetEpochTime(200))},
+			CL: &CancelledCLFork{Name: "heze", Epoch: 200, Version: "90000038"}},
+		{Network: "devnet", Fork: "Glamsterdam", EL: &CancelledELFork{Name: "Amsterdam", Time: uint64(devnetEpochTime(100))},
+			CL: &CancelledCLFork{Name: "gloas", Epoch: 100, Version: "80000038"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	both, _, _ := original.digestAt(250)
+	if got := ClassifyCL(both); got != "devnet" {
+		t.Errorf("a CL node that ran both cancelled forks classifies as %q", got)
+	}
+	n.load()
+	orig := idForkTimes(n.compiledELForks(), n.genesis.Time())
+	hash := n.forkIDFrom(orig, uint64(devnetEpochTime(250))).Hash
+	if _, ok := n.gatherHashes(time.Unix(int64(devnetEpochTime(250)), 0))[hash]; !ok {
+		t.Error("an EL node that ran both cancelled forks no longer classifies")
+	}
+}
+
+func TestValidateCancellationsDoesNotApply(t *testing.T) {
+	n := freshNetwork(t, "hoodi")
+	bad := hoodiGlamsterdamCancellation()
+	bad.EL.Time++
+	if err := ValidateCancellations([]CancelledFork{bad}); err == nil {
+		t.Fatal("a mistyped time validated")
+	}
+	if err := ValidateCancellations([]CancelledFork{hoodiGlamsterdamCancellation()}); err != nil {
+		t.Fatal(err)
+	}
+	if len(n.cancellations) != 0 || n.genesis != nil {
+		t.Fatal("validation changed the registered network")
+	}
+}

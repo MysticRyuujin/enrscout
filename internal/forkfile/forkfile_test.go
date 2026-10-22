@@ -183,6 +183,14 @@ func TestOpenAppliesCancellationsAndReloadsNotices(t *testing.T) {
 		t.Fatalf("notice not reloaded: %+v", got)
 	}
 
+	mistyped := strings.Replace(edited, "time: 1793036568", "time: 1793036569", 1)
+	if err := os.WriteFile(path, []byte(mistyped), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Reload(); err == nil || w.RestartRequired() {
+		t.Fatalf("a cancellation that would fail at startup reloaded: %v, restart required %v", err, w.RestartRequired())
+	}
+
 	uncancelled := edited[:strings.Index(edited, "cancelled_forks:")] + edited[strings.Index(edited, "notices:"):]
 	if err := os.WriteFile(path, []byte(uncancelled), 0o600); err != nil {
 		t.Fatal(err)

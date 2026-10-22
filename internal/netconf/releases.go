@@ -259,12 +259,16 @@ func semverCore(v string) ([3]int, bool) {
 	return out, true
 }
 
-// CancelledReleaseStatus labels a version against a cancelled fork. Versions from the floors that
-// shipped the schedule up to the floors that drop it again are affected; older ones never had it.
+// CancelledReleaseStatus labels a version against a cancelled fork. A version is affected when it
+// reaches the floor that shipped the schedule on its line, and not the floor that drops it again. A
+// fix floor clears a version only when it is not older than the scheduling floor the version reached,
+// so a fix backported to an older line never clears a newer line that still schedules the fork.
 func CancelledReleaseStatus(scheduled, unscheduled []string, version string) string {
 	switch s := ReleaseStatus(scheduled, version); s {
 	case ReleaseMeets:
-		if len(unscheduled) > 0 && ReleaseStatus(unscheduled, version) == ReleaseMeets {
+		got, _ := semverCore(version)
+		reached, _ := lineFloor(scheduled, got)
+		if fix, ok := lineFloor(unscheduled, got); ok && !semverLess(got, fix) && !semverLess(fix, reached) {
 			return ReleaseUnaffected
 		}
 		return ReleaseAffected
@@ -273,4 +277,23 @@ func CancelledReleaseStatus(scheduled, unscheduled []string, version string) str
 	default:
 		return s
 	}
+}
+
+// lineFloor is the floor on the version's own major.minor line, or else the highest floor.
+func lineFloor(floors []string, got [3]int) ([3]int, bool) {
+	var highest [3]int
+	found := false
+	for _, f := range floors {
+		floor, ok := semverCore(f)
+		if !ok {
+			continue
+		}
+		if floor[0] == got[0] && floor[1] == got[1] {
+			return floor, true
+		}
+		if !found || semverLess(highest, floor) {
+			highest, found = floor, true
+		}
+	}
+	return highest, found
 }

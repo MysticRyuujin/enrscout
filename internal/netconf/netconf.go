@@ -85,6 +85,7 @@ type Network struct {
 	// Set only by ApplyCancellations at startup.
 	cancelledEL   []elForkTime
 	cancellations []cancellation
+	originalCL    *clNetwork
 
 	once     sync.Once
 	genesis  *types.Block

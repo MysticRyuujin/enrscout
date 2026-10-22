@@ -121,10 +121,15 @@ func (w *Watcher) Reload() error {
 	if sum == w.sum {
 		return nil
 	}
+	changed := !reflect.DeepEqual(f.CancelledForks, w.cancelled)
+	if changed {
+		if err := netconf.ValidateCancellations(f.CancelledForks); err != nil {
+			return fmt.Errorf("validate %s: a restart would fail: %w", w.path, err)
+		}
+	}
 	if err := w.set(f, sum); err != nil {
 		return err
 	}
-	changed := !reflect.DeepEqual(f.CancelledForks, w.cancelled)
 	w.restartRequired.Store(changed)
 	if changed {
 		slog.Warn("cancelled forks changed; restart crawler, dnspublisher and api to apply them", "file", w.path)
