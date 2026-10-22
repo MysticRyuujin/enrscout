@@ -71,7 +71,7 @@ Sybil identities, key rotation, and multiple identities per machine can increase
 docker compose -f deploy/local/docker-compose.yaml up --build
 ```
 
-Open **http://localhost:8081** (map explorer). API on **:8080**, MinIO console on
+Open **http://localhost:18081** (map explorer). API on **:8080**, MinIO console on
 **:9001** (`minioadmin`/`minioadmin`). This is an IPv4 development profile: HTTP/admin
 ports are loopback-bound, while crawler TCP/UDP 30303 remains subject to the host
 firewall and upstream NAT. See the [local deployment guide](deploy/local/README.md)
@@ -357,7 +357,7 @@ pages, asserts data populates, and writes screenshots to `web/e2e/screenshots/`:
 make e2e-fixtures        # writes deploy/e2e/fixtures with timestamps of now
 docker compose -f deploy/e2e/docker-compose.yaml up --build --force-recreate -d
 cd web && npm ci && npx playwright install chromium
-node e2e/browse.mjs        # WEB_BASE defaults to http://localhost:8081
+node e2e/browse.mjs        # WEB_BASE defaults to http://localhost:18081
 ```
 
 `make design` (`web/e2e/design.mjs`) renders every page at four viewports against the same

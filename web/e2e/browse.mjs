@@ -1,7 +1,7 @@
 import { chromium } from "playwright";
 import { mkdirSync } from "node:fs";
 
-const BASE = process.env.WEB_BASE || "http://localhost:8081";
+const BASE = process.env.WEB_BASE || "http://localhost:18081";
 const OUT = new URL("./screenshots/", import.meta.url).pathname;
 const NETWORKS = (process.env.WEB_NETWORKS || "mainnet,hoodi,sepolia")
   .split(",")

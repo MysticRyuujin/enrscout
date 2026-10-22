@@ -17,7 +17,7 @@ import {
 import pixelmatch from "pixelmatch";
 import { PNG } from "pngjs";
 
-const BASE = process.env.WEB_BASE || "http://localhost:8081";
+const BASE = process.env.WEB_BASE || "http://localhost:18081";
 const NETWORK = process.env.WEB_NETWORK || "hoodi";
 const UPDATE = process.argv.includes("--update");
 const ROOT = new URL("./design/", import.meta.url).pathname;
