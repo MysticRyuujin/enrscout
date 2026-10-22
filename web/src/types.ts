@@ -181,13 +181,21 @@ export interface VersionReadiness {
   version: string;
   total: number;
   counts: ReadinessCounts;
-  release?: "meets" | "below" | "dev_build" | "unparsable" | "mixed";
+  release?:
+    | "meets"
+    | "below"
+    | "dev_build"
+    | "unparsable"
+    | "mixed"
+    | "affected"
+    | "unaffected";
 }
 
 export interface ClientRelease {
   layer: "el" | "cl";
   client: string;
   min_versions?: string[];
+  unscheduled_in?: string[];
   fork_time?: number;
   outdated?: boolean;
   prerelease?: string;
@@ -228,6 +236,7 @@ export interface ScheduledFork {
   cl_epoch?: number;
   activated: boolean;
   tracked: boolean;
+  cancelled?: boolean;
 }
 
 export interface ForkReadiness {
@@ -235,9 +244,10 @@ export interface ForkReadiness {
   fork_evaluated_at: string;
   snapshot_generated_at?: string;
   fingerprint_window_seconds: number;
-  phase: "scheduled" | "activated" | "none";
+  phase: "scheduled" | "activated" | "cancelled" | "none";
   fork: {
     name: string;
+    cancelled?: boolean;
     el?: {
       name: string;
       time: number;
@@ -260,4 +270,16 @@ export interface ForkReadiness {
   layers: Partial<Record<"el" | "cl", LayerReadiness>>;
   history?: { points: ReadinessPoint[] | null };
   schedule?: ScheduledFork[];
+  notices?: Notice[];
+}
+
+export interface Notice {
+  network?: string;
+  fork?: string;
+  severity: "info" | "warning" | "critical";
+  title: string;
+  body?: string;
+  links?: { label: string; url: string }[];
+  starts?: string;
+  expires?: string;
 }

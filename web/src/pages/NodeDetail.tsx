@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router";
 import { ApiError, fetchNode } from "../api";
+import { useNetwork } from "../network";
+import { stateLabel, useForkMode } from "../readiness";
 import {
   layerName as layerLabel,
   networkColor,
@@ -9,7 +11,7 @@ import {
   relTime,
   SUPERNODE_CGC,
 } from "../theme";
-import type { Node, Readiness } from "../types";
+import type { Node } from "../types";
 
 function Row({
   label,
@@ -30,14 +32,9 @@ function Row({
   );
 }
 
-const READINESS_TEXT: Record<Readiness, string> = {
-  ready: "Scheduled / upgraded",
-  pending: "Scheduled, not seen on the fork yet",
-  not_ready: "Not scheduled / left behind",
-  mismatch: "Advertises another schedule",
-  unknown: "No schedule advertised",
-  stale: "On an older fork",
-};
+function capitalize(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
 
 function syncText(node: Node) {
   const unit = node.layer === "cl" ? "slots" : "blocks";
@@ -59,6 +56,8 @@ function discoveryHistory(score: number) {
 export default function NodeDetail() {
   const { key } = useParams();
   const [node, setNode] = useState<Node | null>(null);
+  const { network } = useNetwork();
+  const mode = useForkMode(node?.network ?? network);
   const [state, setState] = useState<"loading" | "ok" | "missing" | "error">(
     "loading",
   );
@@ -198,7 +197,7 @@ export default function NodeDetail() {
               label="Next fork"
               value={
                 <Link to={`/forks?network=${encodeURIComponent(node.network)}`}>
-                  {READINESS_TEXT[node.fork_readiness]}
+                  {capitalize(stateLabel(node.fork_readiness, mode))}
                 </Link>
               }
             />

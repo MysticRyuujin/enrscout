@@ -3,7 +3,10 @@ import type { ReactNode } from "react";
 import { Link } from "react-router";
 import { fetchForks } from "../api";
 import { useNetwork } from "../network";
+import { forkMode, legendStates, stateHint, stateLabel } from "../readiness";
+import type { ForkMode } from "../readiness";
 import StatTiles from "../components/StatTiles";
+import Notices from "../components/Notices";
 import ReadinessTrend, {
   fmtTime,
   MAX_LABELED_SERIES,
@@ -111,56 +114,6 @@ const STATE_COLOR: Record<Readiness, string> = {
   stale: "#2a3547",
 };
 
-function stateLabel(state: Readiness, activated: boolean): string {
-  switch (state) {
-    case "ready":
-      return activated ? "upgraded" : "fork scheduled";
-    case "pending":
-      return "pending";
-    case "not_ready":
-      return activated ? "left behind" : "not scheduled";
-    case "mismatch":
-      return "other schedule";
-    case "unknown":
-      return "no schedule advertised";
-    case "stale":
-      return "older fork";
-  }
-}
-
-// Only the states a layer's bars can draw: stale rows never reach a client row, execution rows are
-// never unknown, and after activation mismatch is folded into left behind.
-function legendStates(layer: "el" | "cl", activated: boolean): Readiness[] {
-  if (activated)
-    return layer === "el"
-      ? ["ready", "pending", "not_ready"]
-      : ["ready", "pending", "not_ready", "unknown"];
-  return layer === "el"
-    ? ["ready", "not_ready", "mismatch"]
-    : ["ready", "not_ready", "mismatch", "unknown"];
-}
-
-function stateHint(state: Readiness, activated: boolean): string {
-  switch (state) {
-    case "ready":
-      return activated
-        ? "The identity advertises the new fork."
-        : "The identity names this fork in its own schedule: the execution fork ID Next field, or the consensus record's next fork version and epoch.";
-    case "pending":
-      return "The identity scheduled the fork, but its last observation is still on the fork before it. The crawler has not seen it since activation, or the node has not synced to the fork.";
-    case "not_ready":
-      return activated
-        ? "The identity still advertises the fork before this one, without this one in its schedule."
-        : "The identity advertises no next fork: Next is 0, or the next fork epoch is far-future.";
-    case "mismatch":
-      return "The identity advertises a next fork that is not this one: a custom or overridden fork time, or a client bug in how it encodes the schedule.";
-    case "unknown":
-      return "The record carries no eth2 entry, or its digest does not match the fork observed over Status, so its schedule cannot be read.";
-    case "stale":
-      return "The identity is not on the current fork.";
-  }
-}
-
 function countdown(target: number, now: number): string {
   const s = target - now;
   if (s <= 0) return `activated ${durationAgo(-s)}`;
@@ -168,6 +121,17 @@ function countdown(target: number, now: number): string {
   const h = Math.floor((s % 86400) / 3600);
   const m = Math.floor((s % 3600) / 60);
   return d > 0 ? `activates in ${d}d ${h}h` : `activates in ${h}h ${m}m`;
+}
+
+function cancelledCountdown(
+  target: number,
+  now: number,
+  prefix = "cancelled · ",
+): string {
+  const s = target - now;
+  return s > 0
+    ? `${prefix}would have activated in ${countdown(target, now).replace("activates in ", "")}`
+    : `${prefix}would have activated ${durationAgo(-s)}`;
 }
 
 function utc(unix: number): string {
@@ -182,11 +146,11 @@ function pct(n: number, of: number): string {
 
 function StackedBar({
   counts,
-  activated,
+  mode,
   total,
 }: {
   counts: ReadinessCounts;
-  activated: boolean;
+  mode: ForkMode;
   total: number;
 }) {
   const present = STATES.filter((s) => counts[s] > 0);
@@ -195,7 +159,7 @@ function StackedBar({
       className="rd-bar"
       role="img"
       aria-label={present
-        .map((s) => `${num(counts[s])} ${stateLabel(s, activated)}`)
+        .map((s) => `${num(counts[s])} ${stateLabel(s, mode)}`)
         .join(", ")}
     >
       {present.map((s) => (
@@ -203,26 +167,20 @@ function StackedBar({
           key={s}
           className="rd-seg"
           style={{ flexGrow: counts[s], background: STATE_COLOR[s] }}
-          title={`${stateLabel(s, activated)}: ${num(counts[s])} (${pct(counts[s], total)})`}
+          title={`${stateLabel(s, mode)}: ${num(counts[s])} (${pct(counts[s], total)})`}
         />
       ))}
     </span>
   );
 }
 
-function Legend({
-  layer,
-  activated,
-}: {
-  layer: "el" | "cl";
-  activated: boolean;
-}) {
+function Legend({ layer, mode }: { layer: "el" | "cl"; mode: ForkMode }) {
   return (
     <div className="rd-legend">
-      {legendStates(layer, activated).map((s) => (
-        <span key={s} title={stateHint(s, activated)}>
+      {legendStates(layer, mode).map((s) => (
+        <span key={s} title={stateHint(s, mode)}>
           <span className="swatch" style={{ background: STATE_COLOR[s] }} />
-          {stateLabel(s, activated)}
+          {stateLabel(s, mode)}
         </span>
       ))}
       <Link to="/about#fork-readiness">What these mean</Link>
@@ -246,13 +204,21 @@ function LineKey({ dashed }: { dashed?: boolean }) {
   );
 }
 
-function hasRelease(r?: ClientRelease): boolean {
+function hasRelease(r?: ClientRelease, mode?: ForkMode): boolean {
+  if (mode === "cancelled") return !!r?.unscheduled_in?.length && !r.outdated;
   return !!r?.min_versions?.length && !r.outdated;
 }
 
-function releaseText(r?: ClientRelease): string {
+function releaseText(r?: ClientRelease, mode?: ForkMode): string {
   if (!r) return "not tracked";
   if (r.outdated) return "table outdated for this fork date";
+  if (mode === "cancelled") {
+    if (!r.min_versions?.length) return "no affected release";
+    const fixed = r.unscheduled_in?.length
+      ? ` · fixed in ${r.unscheduled_in.join(" / ")}`
+      : " · no fix yet";
+    return `affected from ${r.min_versions.join(" / ")}${fixed}`;
+  }
   if (r.min_versions?.length) return `✓ ${r.min_versions.join(" / ")}`;
   if (r.prerelease) return `pre-release ${r.prerelease}`;
   return "no release yet";
@@ -281,6 +247,8 @@ const VERSION_BADGE: Record<string, string> = {
   below: "older release",
   dev_build: "dev / rc build",
   mixed: "mixed builds",
+  affected: "schedules the cancelled fork",
+  unaffected: "does not schedule it",
 };
 
 function ForkSchedule({
@@ -315,14 +283,24 @@ function ForkSchedule({
           <tbody>
             {schedule.map((f) => (
               <tr key={`${f.time}-${f.name}`}>
-                <td>{f.tracked ? <strong>{f.name}</strong> : f.name}</td>
+                <td>
+                  {f.cancelled ? (
+                    <s>{f.name}</s>
+                  ) : f.tracked ? (
+                    <strong>{f.name}</strong>
+                  ) : (
+                    f.name
+                  )}
+                </td>
                 <td>{f.el ?? "-"}</td>
                 <td>
                   {f.cl ? `${f.cl} at epoch ${num(f.cl_epoch ?? 0)}` : "-"}
                 </td>
                 <td>{utc(f.time)}</td>
                 <td>
-                  {countdown(f.time, now)}
+                  {f.cancelled
+                    ? cancelledCountdown(f.time, now)
+                    : countdown(f.time, now)}
                   {f.tracked && " · tracked"}
                 </td>
               </tr>
@@ -344,18 +322,18 @@ function nodesLink(layer: "el" | "cl", params: Record<string, string>) {
 function ReadinessCells({
   counts,
   total,
-  activated,
+  mode,
   ready,
 }: {
   counts: ReadinessCounts;
   total: number;
-  activated: boolean;
+  mode: ForkMode;
   ready?: ReactNode;
 }) {
   return (
     <>
       <td className="rd-bar-cell">
-        <StackedBar counts={counts} activated={activated} total={total} />
+        <StackedBar counts={counts} mode={mode} total={total} />
       </td>
       <td className="num">
         {ready ?? num(counts.ready)} / {num(total)}
@@ -369,12 +347,12 @@ function ClientRow({
   layer,
   c,
   release,
-  activated,
+  mode,
 }: {
   layer: "el" | "cl";
   c: ClientReadiness;
   release?: ClientRelease;
-  activated: boolean;
+  mode: ForkMode;
 }) {
   const { network } = useNetwork();
   const [open, setOpen] = useState(false);
@@ -390,13 +368,13 @@ function ClientRow({
             {open ? "▾" : "▸"} {c.client}
           </button>
         </td>
-        <td className={hasRelease(release) ? "rd-rel ok" : "rd-rel"}>
-          {releaseText(release)}
+        <td className={hasRelease(release, mode) ? "rd-rel ok" : "rd-rel"}>
+          {releaseText(release, mode)}
         </td>
         <ReadinessCells
           counts={c.counts}
           total={c.total}
-          activated={activated}
+          mode={mode}
           ready={
             <Link
               to={nodesLink(layer, {
@@ -417,11 +395,7 @@ function ClientRow({
           <tr key={v.version} className="rd-version">
             <td className="mono">{v.version}</td>
             <td>{v.release ? (VERSION_BADGE[v.release] ?? "") : ""}</td>
-            <ReadinessCells
-              counts={v.counts}
-              total={v.total}
-              activated={activated}
-            />
+            <ReadinessCells counts={v.counts} total={v.total} mode={mode} />
           </tr>
         ))}
     </>
@@ -432,12 +406,12 @@ function LayerCard({
   layer,
   data,
   releases,
-  activated,
+  mode,
 }: {
   layer: "el" | "cl";
   data: LayerReadiness;
   releases: ClientRelease[];
-  activated: boolean;
+  mode: ForkMode;
 }) {
   const releaseOf = new Map(
     releases.filter((r) => r.layer === layer).map((r) => [r.client, r]),
@@ -450,15 +424,25 @@ function LayerCard({
         a verified handshake in the last 7 days. Ready counts link to the
         matching nodes.
       </p>
-      <Legend layer={layer} activated={activated} />
+      <Legend layer={layer} mode={mode} />
       <div className="table-wrap">
         <table className="nodes-table">
           <thead>
             <tr>
               <th>Client</th>
-              <th>Release with the fork</th>
+              <th>
+                {mode === "cancelled"
+                  ? "Affected releases"
+                  : "Release with the fork"}
+              </th>
               <th>Readiness</th>
-              <th className="num">{activated ? "Upgraded" : "Ready"}</th>
+              <th className="num">
+                {mode === "activated"
+                  ? "Upgraded"
+                  : mode === "cancelled"
+                    ? "Unscheduled"
+                    : "Ready"}
+              </th>
               <th className="num">Share</th>
             </tr>
           </thead>
@@ -469,7 +453,7 @@ function LayerCard({
                 layer={layer}
                 c={c}
                 release={releaseOf.get(c.client)}
-                activated={activated}
+                mode={mode}
               />
             ))}
           </tbody>
@@ -533,6 +517,7 @@ export default function Forks() {
             readiness
           </h1>
         </div>
+        <Notices notices={data.notices} />
         <div className="card">
           <p className="empty">
             No fork is scheduled on <span className="net-name">{network}</span>.
@@ -547,9 +532,12 @@ export default function Forks() {
   }
 
   const activated = data.phase === "activated";
+  const mode = forkMode(data.phase);
+  const cancelled = mode === "cancelled";
   const activation =
     data.fork.el?.time ??
     (data.fork.cl ? Date.parse(data.fork.cl.time) / 1000 : undefined);
+  const passed = cancelled && activation !== undefined && now >= activation;
   const layers = (["el", "cl"] as const).filter((l) => data.layers[l]);
   const tiles = layers.flatMap((l) => {
     const c = data.layers[l]!.counts;
@@ -557,7 +545,7 @@ export default function Forks() {
     const share = readyShare(c);
     return [
       {
-        label: `${l.toUpperCase()} ${activated ? "upgraded" : "ready"}`,
+        label: `${l.toUpperCase()} ${activated ? "upgraded" : cancelled ? "unscheduled" : "ready"}`,
         value: c.ready,
         hint:
           share === null
@@ -574,7 +562,7 @@ export default function Forks() {
           ]
         : []),
       {
-        label: `${l.toUpperCase()} ${activated ? "left behind" : "not scheduled"}`,
+        label: `${l.toUpperCase()} ${activated ? "left behind" : cancelled ? (passed ? "on cancelled fork" : "still scheduled") : "not scheduled"}`,
         value: c.not_ready,
         hint: pct(c.not_ready, pool),
       },
@@ -655,8 +643,8 @@ export default function Forks() {
       return next;
     });
   const releases = data.releases;
-  const released = releases.filter(hasRelease).length;
-  if (releases.length && !activated)
+  const released = releases.filter((r) => hasRelease(r)).length;
+  if (releases.length && mode === "scheduled")
     tiles.push({
       label: "clients with a release",
       value: released,
@@ -669,14 +657,27 @@ export default function Forks() {
         <h1>
           <span className="net-dot" style={{ background: color }} />{" "}
           {data.fork.name} on {network}
-          <span className={activated ? "phase-badge activated" : "phase-badge"}>
+          <span
+            className={
+              activated
+                ? "phase-badge activated"
+                : cancelled
+                  ? "phase-badge cancelled"
+                  : "phase-badge"
+            }
+          >
             {data.phase}
           </span>
         </h1>
         <p className="sub">
           {activation && (
             <>
-              <strong>{countdown(activation, now)}</strong> · {utc(activation)}
+              <strong>
+                {cancelled
+                  ? cancelledCountdown(activation, now, "")
+                  : countdown(activation, now)}
+              </strong>{" "}
+              · {utc(activation)}
             </>
           )}
           {data.fork.el && (
@@ -701,6 +702,7 @@ export default function Forks() {
         </p>
       </div>
 
+      <Notices notices={data.notices} />
       {err && <div className="error">API unreachable: {err}</div>}
       {preActivationSnapshot && (
         <div className="error">
@@ -711,9 +713,11 @@ export default function Forks() {
 
       <section className="disclaimer-banner" aria-label="Methodology">
         <span>
-          {activated
-            ? "Upgraded means the identity advertises the new fork. Pending means it scheduled the fork, but the crawler has not seen it on the fork yet. Left behind means it did not advertise the fork."
-            : "Ready means the identity itself advertises the fork: the execution fork ID names the fork time, or the consensus record names the fork version and epoch."}{" "}
+          {cancelled
+            ? "This fork is cancelled. Unscheduled means the identity no longer advertises it: the execution fork ID Next is not the cancelled time, or the consensus record does not name the cancelled version and epoch. Still scheduled means it does, and the node forks away from the network at the time the fork would have activated."
+            : activated
+              ? "Upgraded means the identity advertises the new fork. Pending means it scheduled the fork, but the crawler has not seen it on the fork yet. Left behind means it did not advertise the fork."
+              : "Ready means the identity itself advertises the fork: the execution fork ID names the fork time, or the consensus record names the fork version and epoch."}{" "}
           This is the node&apos;s own schedule, not its version string.
           {releases.length > 0 && (
             <>
@@ -731,7 +735,9 @@ export default function Forks() {
       <div className="card">
         <h3>Adoption over time</h3>
         <p className="card-subtitle">
-          Share of identities that have the fork in their schedule
+          {cancelled
+            ? "Share of identities that no longer schedule the cancelled fork"
+            : "Share of identities that have the fork in their schedule"}
           {trendView === "overall"
             ? "."
             : `, per ${layerName(trendView).toLowerCase()} client with a fresh fingerprint.`}
@@ -846,7 +852,7 @@ export default function Forks() {
           layer={l}
           data={data.layers[l]!}
           releases={releases}
-          activated={activated}
+          mode={mode}
         />
       ))}
 
@@ -854,9 +860,20 @@ export default function Forks() {
         <div className="card">
           <h3>Client releases</h3>
           <p className="card-subtitle">
-            First release of each client that ships the {data.fork.name}{" "}
-            schedule for <span className="net-name">{network}</span>, and the
-            latest release to run, which can carry later fixes.
+            {cancelled ? (
+              <>
+                Releases of each client that schedule the cancelled{" "}
+                {data.fork.name} for <span className="net-name">{network}</span>
+                : versions from the first release up to the fixed release fork
+                away. Older releases never had the schedule.
+              </>
+            ) : (
+              <>
+                First release of each client that ships the {data.fork.name}{" "}
+                schedule for <span className="net-name">{network}</span>, and
+                the latest release to run, which can carry later fixes.
+              </>
+            )}
             {data.releases_updated && <> Updated {data.releases_updated}.</>}
           </p>
           <div className="table-wrap">
@@ -865,8 +882,8 @@ export default function Forks() {
                 <tr>
                   <th>Client</th>
                   <th>Layer</th>
-                  <th>Minimum</th>
-                  <th>Latest</th>
+                  <th>{cancelled ? "Schedules the fork from" : "Minimum"}</th>
+                  <th>{cancelled ? "Fixed in" : "Latest"}</th>
                   <th>Minimum date</th>
                 </tr>
               </thead>
@@ -876,10 +893,21 @@ export default function Forks() {
                     <td>{r.client}</td>
                     <td>{layerName(r.layer)}</td>
                     <td className={hasRelease(r) ? "rd-rel ok" : "rd-rel"}>
-                      <ReleaseLink text={releaseText(r)} url={r.url} />
+                      <ReleaseLink
+                        text={
+                          cancelled
+                            ? (r.min_versions?.join(" / ") ?? "-")
+                            : releaseText(r)
+                        }
+                        url={r.url}
+                      />
                     </td>
                     <td>
-                      <LatestRelease r={r} />
+                      {cancelled ? (
+                        (r.unscheduled_in?.join(" / ") ?? "no fix yet")
+                      ) : (
+                        <LatestRelease r={r} />
+                      )}
                     </td>
                     <td>{r.released ?? "-"}</td>
                   </tr>

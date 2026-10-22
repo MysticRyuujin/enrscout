@@ -46,7 +46,7 @@ export default function UnderConstruction() {
             d.fork.el?.time ??
             (d.fork.cl ? Date.parse(d.fork.cl.time) / 1000 : undefined);
           setActivation(
-            d.phase === "none" || at === undefined
+            d.phase === "none" || d.phase === "cancelled" || at === undefined
               ? null
               : { name: d.fork.name, at },
           );
