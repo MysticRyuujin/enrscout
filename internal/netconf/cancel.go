@@ -351,8 +351,8 @@ func (n *Network) cancelledELHashes(start, end int64) [][4]byte {
 		return nil
 	}
 	var out [][4]byte
-	add := func(id forkid.ID) {
-		if !slices.Contains(out, id.Hash) {
+	add := func(id forkid.ID, at uint64) {
+		if id.Hash != n.forkIDAt(at).Hash && !slices.Contains(out, id.Hash) {
 			out = append(out, id.Hash)
 		}
 	}
@@ -361,7 +361,7 @@ func (n *Network) cancelledELHashes(start, end int64) [][4]byte {
 	times := idForkTimes(original, n.genesis.Time())
 	for _, f := range original {
 		if f.time >= first && inWindow(f.time) {
-			add(n.forkIDFrom(times, f.time))
+			add(n.forkIDFrom(times, f.time), f.time)
 		}
 	}
 	for _, c := range n.cancellations {
@@ -369,11 +369,11 @@ func (n *Network) cancelledELHashes(start, end int64) [][4]byte {
 			continue
 		}
 		if inWindow(c.elTime) {
-			add(n.forkIDWithCancelledAt(c.elTime, c.elTime))
+			add(n.forkIDWithCancelledAt(c.elTime, c.elTime), c.elTime)
 		}
 		for _, f := range n.elForks {
 			if f.time > c.elTime && inWindow(f.time) {
-				add(n.forkIDWithCancelledAt(c.elTime, f.time))
+				add(n.forkIDWithCancelledAt(c.elTime, f.time), f.time)
 			}
 		}
 	}

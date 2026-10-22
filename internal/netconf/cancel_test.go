@@ -405,3 +405,16 @@ func TestCancelledHashesStayInTheMembershipWindow(t *testing.T) {
 		t.Fatalf("a CL-only cancellation added EL hashes: %x", got)
 	}
 }
+
+func TestAbsentCancellationNeverMarksCanonicalHashes(t *testing.T) {
+	n := registerCancelDevnet(t, fmt.Sprintf(`, "bpo1Time": %d`, devnetEpochTime(200)), nil, []BlobParams{{Epoch: 200, MaxBlobs: 30}})
+	if _, err := ApplyCancellations([]CancelledFork{{Network: "devnet", Fork: "Gone",
+		EL: &CancelledELFork{Name: "Gone", Time: uint64(devnetEpochTime(100))}}}); err != nil {
+		t.Fatal(err)
+	}
+	n.load()
+	canonical := n.CurrentForkIDAt(time.Unix(int64(devnetEpochTime(250)), 0)).Hash
+	if slices.Contains(n.cancelledELHashes(0, math.MaxInt64), canonical) {
+		t.Fatal("a canonical fork id is listed as on the cancelled fork")
+	}
+}
