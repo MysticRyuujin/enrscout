@@ -24,17 +24,17 @@ Sybil identities, key rotation, and multiple identities per machine can increase
 ## Architecture
 
 ```text
- crawler (one process, all protocols)          object storage (S3/MinIO)        serving
- ┌──────────────────────────────────┐          ┌───────────────────────┐   ┌──────────────┐
- │ discv5 + discv4  (IPv4 + IPv6)    │ Parquet  │ snapshots/mainnet/     │   │ api          │
- │ dedup by node id                 │─────────▶│ snapshots/hoodi/       │◀──│ DuckDB query │
- │ classify EL (forkid) / CL (digest)│  per net │ snapshots/sepolia/     │   │ JSON/GeoJSON │
- │ enrich: RLPx + libp2p, geo, ASN  │          └───────────────────────┘   └──────┬───────┘
- └──────────────────────────────────┘                                        CDN  │
-                                                                             ┌─────▼──────┐
-                                                                             │ web (SPA)  │
-                                                                             │ deck.gl map│
-                                                                             └────────────┘
+ crawler (one process, all protocols)            object storage (S3/MinIO)     serving
+ ┌────────────────────────────────────┐          ┌─────────────────────────┐   ┌──────────────┐
+ │ discv5 + discv4  (IPv4 + IPv6)     │  Parquet │ snapshots/mainnet/      │   │ api          │
+ │ dedup by node id                   │─────────▶│ snapshots/hoodi/        │◀──│ DuckDB query │
+ │ classify EL (forkid) / CL (digest) │  per net │ snapshots/sepolia/      │   │ JSON/GeoJSON │
+ │ enrich: RLPx + libp2p, geo, ASN    │          └─────────────────────────┘   └───────┬──────┘
+ └────────────────────────────────────┘                                           CDN  │
+                                                                                ┌──────▼──────┐
+                                                                                │ web (SPA)   │
+                                                                                │ deck.gl map │
+                                                                                └─────────────┘
 ```
 
 - **One crawler** runs discv4 + discv5 on IPv4 + IPv6 simultaneously. The discovery
