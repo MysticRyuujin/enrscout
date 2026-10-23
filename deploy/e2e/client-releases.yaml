@@ -35,8 +35,11 @@ releases:
     client: Ethrex
     fork_time: 1793036568
     min_versions: ["30.0.0"]
+    # Only pre-releases drop amsterdamTime from networks/hoodi/genesis.json so far (f2602cd).
+    unscheduled_in: ["30.0.1-rc.2"]
     released: 2026-10-16
     url: https://github.com/lambdaclass/ethrex/releases/tag/v30.0.0
+    latest_url: https://github.com/lambdaclass/ethrex/releases/tag/v30.0.1-rc.3
   # 2.2.0 schedules Amsterdam on Hoodi at 1793036568 (#14489).
   - fork: Glamsterdam
     network: hoodi

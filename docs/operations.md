@@ -152,7 +152,10 @@ After the restart:
   schedule it. After the time, it excludes them.
 
 As clients ship releases without the schedule, add their first version to `unscheduled_in` on the
-existing release entry. Versions from `min_versions` up to that floor read as affected.
+existing release entry. Versions from `min_versions` up to that floor read as affected. A fix that
+ships only as a pre-release (`30.0.1-rc.2`) is allowed: the floor compares its core version, and nodes
+on a pre-release build keep the dev build label. Set `latest_url` to link the "Fixed in" cell, and
+leave `latest` out for a pre-release, since `latest` must be a release that meets `min_versions`.
 
 Delete the cancellation only when both hold: the time plus 14 days has passed, and no deployed
 binary still compiles the fork (go-ethereum and `internal/netconf/consensus.go` both dropped it).

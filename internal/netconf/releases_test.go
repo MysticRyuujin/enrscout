@@ -138,6 +138,25 @@ func TestCancelledReleaseStatus(t *testing.T) {
 	}
 }
 
+func TestCancelledReleaseStatusPrereleaseFix(t *testing.T) {
+	scheduled, fixed := []string{"30.0.0"}, []string{"30.0.1-rc.2"}
+	for version, want := range map[string]string{
+		"v30.0.0": ReleaseAffected, "v30.0.1": ReleaseUnaffected, "v30.0.1-rc.3": ReleaseDevBuild,
+	} {
+		if got := CancelledReleaseStatus(scheduled, fixed, version); got != want {
+			t.Errorf("%s = %q, want %q", version, got, want)
+		}
+	}
+	for _, r := range []ClientRelease{
+		{Fork: "Glamsterdam", Network: "hoodi", Layer: "el", Client: "Ethrex", ForkTime: 1, MinVersions: scheduled, UnscheduledIn: fixed},
+		{Fork: "Glamsterdam", Network: "hoodi", Layer: "cl", Client: "Grandine", ForkTime: 1, Prerelease: "3.0.0-rc.1", UnscheduledIn: []string{"3.0.0-rc.2"}},
+	} {
+		if err := (ClientReleaseTable{Releases: []ClientRelease{r}}).Validate(); err != nil {
+			t.Errorf("%s pre-release fix rejected: %v", r.Client, err)
+		}
+	}
+}
+
 func TestCancelledReleaseStatusBackport(t *testing.T) {
 	scheduled, fixed := []string{"1.39.4", "2.0.0"}, []string{"1.39.5"}
 	for version, want := range map[string]string{

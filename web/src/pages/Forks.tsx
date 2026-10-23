@@ -922,7 +922,7 @@ export default function Forks() {
                                 r.unscheduled_in?.join(" / ") ?? "no fix yet"
                               }
                               url={
-                                r.latest && r.unscheduled_in?.includes(r.latest)
+                                r.unscheduled_in?.length
                                   ? r.latest_url
                                   : undefined
                               }

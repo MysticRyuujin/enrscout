@@ -122,13 +122,15 @@ func (t ClientReleaseTable) Validate() error {
 				errs = append(errs, fmt.Errorf("%s: min version %q is not a release version", key, v))
 			}
 		}
+		// A client may ship the fix only as a pre-release before the fork time. Only its core version
+		// is compared, and nodes on a pre-release build are labelled dev builds whatever the floor says.
 		for _, v := range r.UnscheduledIn {
-			if _, ok := semverCore(v); !ok || devBuildToken.MatchString(versionSuffix(v)) {
-				errs = append(errs, fmt.Errorf("%s: unscheduled_in version %q is not a release version", key, v))
+			if _, ok := semverCore(v); !ok {
+				errs = append(errs, fmt.Errorf("%s: unscheduled_in version %q is not a version", key, v))
 			}
 		}
-		if len(r.UnscheduledIn) > 0 && len(r.MinVersions) == 0 {
-			errs = append(errs, fmt.Errorf("%s: unscheduled_in needs the min_versions that scheduled the fork", key))
+		if len(r.UnscheduledIn) > 0 && len(r.MinVersions) == 0 && r.Prerelease == "" {
+			errs = append(errs, fmt.Errorf("%s: unscheduled_in needs the min_versions or prerelease that scheduled the fork", key))
 		}
 	}
 	return errors.Join(errs...)
