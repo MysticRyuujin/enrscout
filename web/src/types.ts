@@ -154,6 +154,7 @@ export interface NodeQuery {
   client?: string;
   client_exact?: string;
   country?: string;
+  os?: string;
   layer?: string;
   protocol?: string;
   ipstack?: string;
