@@ -10,12 +10,15 @@ import (
 )
 
 const (
-	Network = "hoodi"
-	Fork    = "Glamsterdam"
+	Network   = "sepolia"
+	Fork      = "Glamsterdam"
+	CLEpoch   = 353024
+	CLVersion = "90000076"
+	ELPreHash = "268956b6"
 )
 
-// Activation is Hoodi Glamsterdam: EL Amsterdam and CL Gloas (epoch 132352).
-var Activation = time.Unix(1793036568, 0).UTC()
+// Activation is Sepolia Glamsterdam: EL Amsterdam and CL Gloas at CLEpoch.
+var Activation = time.Unix(1791294816, 0).UTC()
 
 // Before is a day ahead of Activation, inside the scheduled phase.
 var Before = Activation.Add(-24 * time.Hour)
@@ -39,7 +42,7 @@ func Cancel(t testing.TB) {
 	t.Cleanup(netconf.ResetForTest(Network))
 	if _, err := netconf.ApplyCancellations([]netconf.CancelledFork{{Network: Network, Fork: Fork,
 		EL: &netconf.CancelledELFork{Name: "Amsterdam", Time: uint64(Activation.Unix())},
-		CL: &netconf.CancelledCLFork{Name: "gloas", Epoch: 132352, Version: "80000910"}}}); err != nil {
+		CL: &netconf.CancelledCLFork{Name: "gloas", Epoch: CLEpoch, Version: CLVersion}}}); err != nil {
 		t.Fatal(err)
 	}
 }

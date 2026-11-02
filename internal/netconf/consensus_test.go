@@ -166,8 +166,7 @@ func lastScheduledEpoch(c *clNetwork) uint64 {
 }
 
 // Glamsterdam activates both layers at one instant. The digests are computed
-// independently of this package. Hoodi's post-Amsterdam id extends geth's BPO2 checksum
-// with the fork time.
+// independently of this package.
 func TestGlamsterdamTransition(t *testing.T) {
 	for _, net := range []struct {
 		name              string
@@ -176,7 +175,7 @@ func TestGlamsterdamTransition(t *testing.T) {
 		elBefore, elAfter string
 		clBefore, clAfter string
 	}{
-		{"hoodi", hoodiGlamsterdam, 132352, "23aa1351", "3d068b59", "c6ecb76c", "5ad30129"},
+		{"sepolia", sepoliaGlamsterdam, 353024, "268956b6", "6c1d9423", "74d01459", "669e6c11"},
 	} {
 		n, _ := Get(net.name)
 		for _, tc := range []struct {

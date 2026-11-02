@@ -33,11 +33,17 @@ func hoodiGlamsterdamCancellation() CancelledFork {
 		CL: &CancelledCLFork{Name: "gloas", Epoch: 132352, Version: "80000910"}}
 }
 
+func sepoliaGlamsterdamCancellation() CancelledFork {
+	return CancelledFork{Network: "sepolia", Fork: "Glamsterdam",
+		EL: &CancelledELFork{Name: "Amsterdam", Time: sepoliaGlamsterdam},
+		CL: &CancelledCLFork{Name: "gloas", Epoch: 353024, Version: "90000076"}}
+}
+
 func TestCancelHoodiGlamsterdam(t *testing.T) {
 	n := freshNetwork(t, "hoodi")
 	absent, err := ApplyCancellations([]CancelledFork{hoodiGlamsterdamCancellation()})
-	if err != nil || len(absent) != 0 {
-		t.Fatalf("ApplyCancellations = %v, %v", absent, err)
+	if err != nil || len(absent) != 2 {
+		t.Fatalf("ApplyCancellations = %v, %v; want both layers absent from the compiled schedule", absent, err)
 	}
 	before, activation := time.Unix(hoodiGlamsterdam-86400, 0), time.Unix(hoodiGlamsterdam, 0)
 
@@ -128,14 +134,14 @@ func TestApplyCancellationsRejects(t *testing.T) {
 	for name, mutate := range map[string]func(*CancelledFork){
 		"el wrong time":      func(c *CancelledFork) { c.EL.Time++ },
 		"cl wrong epoch":     func(c *CancelledFork) { c.CL.Epoch++ },
-		"cl wrong version":   func(c *CancelledFork) { c.CL.Version = "80000911" },
+		"cl wrong version":   func(c *CancelledFork) { c.CL.Version = "90000077" },
 		"no layer":           func(c *CancelledFork) { c.EL, c.CL = nil, nil },
 		"unknown network":    func(c *CancelledFork) { c.Network = "nowhere" },
-		"different instants": func(c *CancelledFork) { c.EL = &CancelledELFork{Name: "Bogota", Time: hoodiGlamsterdam + 1} },
+		"different instants": func(c *CancelledFork) { c.EL = &CancelledELFork{Name: "Bogota", Time: sepoliaGlamsterdam + 1} },
 	} {
 		t.Run(name, func(t *testing.T) {
-			freshNetwork(t, "hoodi")
-			c := hoodiGlamsterdamCancellation()
+			freshNetwork(t, "sepolia")
+			c := sepoliaGlamsterdamCancellation()
 			mutate(&c)
 			if _, err := ApplyCancellations([]CancelledFork{c}); err == nil {
 				t.Fatal("accepted")
@@ -143,16 +149,16 @@ func TestApplyCancellationsRejects(t *testing.T) {
 		})
 	}
 	t.Run("duplicate", func(t *testing.T) {
-		freshNetwork(t, "hoodi")
-		c := hoodiGlamsterdamCancellation()
+		freshNetwork(t, "sepolia")
+		c := sepoliaGlamsterdamCancellation()
 		if _, err := ApplyCancellations([]CancelledFork{c, c}); err == nil {
 			t.Fatal("accepted")
 		}
 	})
 	t.Run("network in use", func(t *testing.T) {
-		n := freshNetwork(t, "hoodi")
+		n := freshNetwork(t, "sepolia")
 		n.load()
-		if _, err := ApplyCancellations([]CancelledFork{hoodiGlamsterdamCancellation()}); err == nil {
+		if _, err := ApplyCancellations([]CancelledFork{sepoliaGlamsterdamCancellation()}); err == nil {
 			t.Fatal("accepted after the network was loaded")
 		}
 	})
@@ -210,7 +216,7 @@ func TestCancelAbsentForkTracksOnly(t *testing.T) {
 		t.Fatalf("ApplyCancellations = %v, %v; want both layers reported absent", absent, err)
 	}
 	at := time.Unix(hoodiGlamsterdam+3600, 0)
-	if id := n.CurrentForkIDAt(at); id != (forkid.ID{Hash: [4]byte{0x3d, 0x06, 0x8b, 0x59}}) {
+	if id := n.CurrentForkIDAt(at); id != (forkid.ID{Hash: [4]byte{0x23, 0xaa, 0x13, 0x51}}) {
 		t.Fatalf("canonical schedule changed: %x/%d", id.Hash, id.Next)
 	}
 	target, err := ForkTargetAt("hoodi", time.Unix(later-60, 0))

@@ -87,8 +87,12 @@ releases:
     client: Geth
     fork_time: 1793036568
     min_versions: ["1.17.9"]
+    # v1.17.10 drops amsterdamTime from params/chainspecs/hoodi.json again (#36001).
+    unscheduled_in: ["1.17.10"]
     released: 2026-10-21
     url: https://github.com/ethereum/go-ethereum/releases/tag/v1.17.9
+    latest: 1.17.10
+    latest_url: https://github.com/ethereum/go-ethereum/releases/tag/v1.17.10
   # v2.8.0 alloy-hardforks 0.4.10: HOODI_AMSTERDAM_TIMESTAMP 1793036568 (#27811).
   - fork: Glamsterdam
     network: hoodi

@@ -484,9 +484,9 @@ func TestCancelledForkTrees(t *testing.T) {
 func TestCancelledForkDropsCachedCLRecordsAfterTheTime(t *testing.T) {
 	netconftest.Cancel(t)
 	before := netconftest.Before
-	gloas := [4]byte{0x80, 0x00, 0x09, 0x10}
+	gloas := [4]byte{0x90, 0x00, 0x00, 0x76}
 	rows := []nodeset.Row{
-		clScheduleRow(t, netconftest.Network, 1, gloas, 132352, before),
+		clScheduleRow(t, netconftest.Network, 1, gloas, netconftest.CLEpoch, before),
 		clRecordRow(t, netconftest.Network, 2, math.MaxUint64, before),
 	}
 	sel := selectOpts{minScore: 1, protocol: "any", layer: "cl", balance: balanceProportional}
