@@ -135,6 +135,7 @@ export default function NodesPage({ layer }: { layer: "el" | "cl" }) {
     client: param("client"),
     client_exact: param("client_exact"),
     country: param("country"),
+    os: param("os"),
     protocol: param("protocol"),
     ipstack: param("ipstack"),
     hosting: param("hosting"),
@@ -315,6 +316,14 @@ export default function NodesPage({ layer }: { layer: "el" | "cl" }) {
           className="f-in"
           placeholder="country (US, DE…)"
           maxLength={2}
+        />
+        <DebouncedParamInput
+          param="os"
+          value={query.os ?? ""}
+          patch={patch}
+          className="f-in"
+          placeholder="OS (linux/riscv64…)"
+          maxLength={64}
         />
         <select
           value={query.protocol}

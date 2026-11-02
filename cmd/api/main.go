@@ -775,7 +775,7 @@ func parseIntParam(s string, def, min, max int) (int, error) {
 	return n, nil
 }
 
-var nodeQueryLimits = map[string]int{"client": 128, "country": 16, "ip": 64, "q": 1024, "cgc_min": 10, "cgc_max": 10}
+var nodeQueryLimits = map[string]int{"client": 128, "country": 16, "os": 64, "ip": 64, "q": 1024, "cgc_min": 10, "cgc_max": 10}
 
 // nodeFilter bounds the free-text parameters and leaves enum, sort, and CGC checks to
 // query.Filter.Validate, so the two layers cannot disagree about what the engine supports.
@@ -801,7 +801,7 @@ func nodeFilter(q url.Values, known map[string]bool) (query.Filter, error) {
 		return query.Filter{}, fmt.Errorf("invalid client_exact %q", clientExact)
 	}
 	f := query.Filter{
-		Network: q.Get("network"), Client: q.Get("client"), Country: q.Get("country"),
+		Network: q.Get("network"), Client: q.Get("client"), Country: q.Get("country"), OS: q.Get("os"),
 		ClientExact: clientExact == "yes",
 		Layer:       q.Get("layer"), Protocol: q.Get("protocol"), IPStack: q.Get("ipstack"), Hosting: q.Get("hosting"),
 		Dialable: q.Get("dialable"), ForkStatus: q.Get("fork"),

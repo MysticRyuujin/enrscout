@@ -180,9 +180,12 @@ func TestNodeProjectionAndScanContract(t *testing.T) {
 		t.Fatalf("cgc_max filter = %+v, %v", none, err)
 	}
 
-	res, err := eng.Nodes(context.Background(), Filter{Client: "ienta", Country: "u", IP: "1.1", ForkStatus: "all", Limit: 10})
+	res, err := eng.Nodes(context.Background(), Filter{Client: "ienta", Country: "u", OS: "sa", IP: "1.1", ForkStatus: "all", Limit: 10})
 	if err != nil || res.Total != 1 || len(res.Nodes) != 1 || res.Nodes[0].ID != "id-a" {
 		t.Fatalf("partial filters = %+v, %v", res, err)
+	}
+	if other, err := eng.Nodes(context.Background(), Filter{OS: "riscv", ForkStatus: "all", Limit: 10}); err != nil || other.Total != 0 {
+		t.Fatalf("os filter = %+v, %v; want no match", other, err)
 	}
 	ctx := context.Background()
 	stale, err := eng.Nodes(ctx, Filter{Network: "mainnet", ForkStatus: "stale", Limit: 10})

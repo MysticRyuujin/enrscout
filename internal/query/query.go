@@ -214,6 +214,7 @@ type Filter struct {
 	Client      string
 	ClientExact bool
 	Country     string
+	OS          string
 	Layer       string
 	Protocol    string
 	IPStack     string
@@ -613,6 +614,10 @@ func (f Filter) where(networks []string) (string, []any, error) {
 	if f.Country != "" {
 		conds = append(conds, "lower(country) LIKE lower(?) ESCAPE '$'")
 		args = append(args, "%"+escapeLike(f.Country)+"%")
+	}
+	if f.OS != "" {
+		conds = append(conds, "lower(os) LIKE lower(?) ESCAPE '$'")
+		args = append(args, "%"+escapeLike(f.OS)+"%")
 	}
 	if f.Layer != "" {
 		conds = append(conds, "layer = ?")
