@@ -38,8 +38,8 @@ func TestWatcherLoadsReloadsAndKeepsLastGood(t *testing.T) {
 
 	start := time.Unix(1_790_000_000, 0)
 	write(`{"updated":"2026-09-25","releases":[
-		{"fork":"Glamsterdam","network":"hoodi","layer":"el","client":"Besu","fork_time":1793036568,"min_versions":["26.9.9"]},
-		{"fork":"Glamsterdam","network":"hoodi","layer":"cl","client":"Teku","fork_time":1793036568,"min_versions":["26.10.1"]}]}`, start)
+		{"fork":"Glamsterdam","network":"sepolia","layer":"el","client":"Besu","fork_time":1791294816,"min_versions":["26.9.9"]},
+		{"fork":"Glamsterdam","network":"sepolia","layer":"cl","client":"Teku","fork_time":1791294816,"min_versions":["26.10.1"]}]}`, start)
 	gen := netconf.ClientReleasesGeneration()
 	f, err := Open(path)
 	if err != nil {
@@ -53,12 +53,12 @@ func TestWatcherLoadsReloadsAndKeepsLastGood(t *testing.T) {
 	}
 
 	write(`{"updated":"2026-09-26","releases":[
-		{"fork":"Glamsterdam","network":"hoodi","layer":"el","client":"Besu"},
-		{"fork":"glamsterdam","network":"hoodi","layer":"el","client":"Besu"}]}`, start.Add(30*time.Second))
+		{"fork":"Glamsterdam","network":"sepolia","layer":"el","client":"Besu"},
+		{"fork":"glamsterdam","network":"sepolia","layer":"el","client":"Besu"}]}`, start.Add(30*time.Second))
 	if err := f.Reload(); err == nil {
 		t.Fatal("duplicate key inside the file accepted")
 	}
-	write(`{"updated":"2026-09-26","releases":[{"fork":"Glamsterdam","network":"hoodi","layer":"el","client":"besu"}]}`, start.Add(time.Minute))
+	write(`{"updated":"2026-09-26","releases":[{"fork":"Glamsterdam","network":"sepolia","layer":"el","client":"besu"}]}`, start.Add(time.Minute))
 	if err := f.Reload(); err == nil {
 		t.Fatal("non-canonical client name accepted")
 	}
@@ -75,7 +75,7 @@ func TestWatcherLoadsReloadsAndKeepsLastGood(t *testing.T) {
 	}
 
 	write(`{"updated":"2026-09-27","releases":[
-		{"fork":"Glamsterdam","network":"hoodi","layer":"el","client":"Besu","fork_time":1793036568,"min_versions":["26.9.9"]}]}`, start.Add(3*time.Minute))
+		{"fork":"Glamsterdam","network":"sepolia","layer":"el","client":"Besu","fork_time":1791294816,"min_versions":["26.9.9"]}]}`, start.Add(3*time.Minute))
 	if err := f.Reload(); err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestWatcherLoadsReloadsAndKeepsLastGood(t *testing.T) {
 	}
 	// Same size and mtime, as `cp -p` leaves it: only the content changed.
 	write(`{"updated":"2026-09-28","releases":[
-		{"fork":"Glamsterdam","network":"hoodi","layer":"el","client":"Besu","fork_time":1793036568,"min_versions":["26.9.9"]}]}`, start.Add(3*time.Minute))
+		{"fork":"Glamsterdam","network":"sepolia","layer":"el","client":"Besu","fork_time":1791294816,"min_versions":["26.9.9"]}]}`, start.Add(3*time.Minute))
 	if err := f.Reload(); err != nil {
 		t.Fatal(err)
 	}
@@ -106,10 +106,10 @@ func TestDecodeYAMLWithComments(t *testing.T) {
 updated: 2026-09-25
 releases:
   - fork: Glamsterdam
-    network: hoodi
+    network: sepolia
     layer: el
     client: Besu
-    fork_time: 1793036568 # Hoodi Glamsterdam, checked in the tagged genesis
+    fork_time: 1791294816 # Hoodi Glamsterdam, checked in the tagged genesis
     min_versions: ["26.9.0"]
     released: 2026-09-25
 `))
@@ -117,7 +117,7 @@ releases:
 		t.Fatal(err)
 	}
 	if table.Updated != "2026-09-25" || len(table.Releases) != 1 || table.Releases[0].Released != "2026-09-25" ||
-		table.Releases[0].ForkTime != 1793036568 || table.Releases[0].MinVersions[0] != "26.9.0" {
+		table.Releases[0].ForkTime != 1791294816 || table.Releases[0].MinVersions[0] != "26.9.0" {
 		t.Fatalf("decoded %+v", table)
 	}
 	if err := table.Validate(); err != nil {
@@ -126,7 +126,7 @@ releases:
 	for name, body := range map[string]string{
 		"misspelt key":    "updated: x\nrelease: []\n",
 		"second document": "updated: x\nreleases: []\n---\nupdated: y\n",
-		"response field":  "updated: x\nreleases:\n  - {fork: G, network: hoodi, layer: el, client: Geth, outdated: true}\n",
+		"response field":  "updated: x\nreleases:\n  - {fork: G, network: sepolia, layer: el, client: Geth, outdated: true}\n",
 	} {
 		if _, err := Decode([]byte(body)); err == nil {
 			t.Errorf("%s accepted", name)
@@ -136,12 +136,12 @@ releases:
 
 const cancelledHoodi = `updated: 2026-10-22
 cancelled_forks:
-  - network: hoodi
+  - network: sepolia
     fork: Glamsterdam
-    el: {name: Amsterdam, time: 1793036568}
-    cl: {name: gloas, epoch: 132352, version: "80000910"}
+    el: {name: Amsterdam, time: 1791294816}
+    cl: {name: gloas, epoch: 353024, version: "90000076"}
 notices:
-  - network: hoodi
+  - network: sepolia
     severity: warning
     title: Hoodi Glamsterdam is cancelled
     body: Downgrade or upgrade before the old activation time.
@@ -183,7 +183,7 @@ func TestOpenAppliesCancellationsAndReloadsNotices(t *testing.T) {
 		t.Fatalf("notice not reloaded: %+v", got)
 	}
 
-	mistyped := strings.Replace(edited, "time: 1793036568", "time: 1793036569", 1)
+	mistyped := strings.Replace(edited, "time: 1791294816", "time: 1791294817", 1)
 	if err := os.WriteFile(path, []byte(mistyped), 0o600); err != nil {
 		t.Fatal(err)
 	}

@@ -9,8 +9,8 @@ import (
 	"time"
 )
 
-func TestScheduleHoodi(t *testing.T) {
-	got, err := ScheduleAt("hoodi", time.Unix(hoodiGlamsterdam-86400, 0))
+func TestScheduleSepolia(t *testing.T) {
+	got, err := ScheduleAt("sepolia", time.Unix(sepoliaGlamsterdam-86400, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -18,11 +18,11 @@ func TestScheduleHoodi(t *testing.T) {
 	for _, f := range got {
 		names = append(names, f.Name)
 	}
-	if want := []string{"Pectra", "Fusaka", "BPO1", "BPO2", "Glamsterdam"}; !slices.Equal(names, want) {
+	if want := []string{"Altair", "Bellatrix", "Shapella", "Dencun", "Pectra", "Fusaka", "BPO1", "BPO2", "Glamsterdam"}; !slices.Equal(names, want) {
 		t.Fatalf("schedule = %v, want %v", names, want)
 	}
 	last := got[len(got)-1]
-	if last.EL != "Amsterdam" || last.CL != "gloas" || last.CLEpoch != 132352 || last.Time != hoodiGlamsterdam || last.Activated || !last.Tracked {
+	if last.EL != "Amsterdam" || last.CL != "gloas" || last.CLEpoch != 353024 || last.Time != sepoliaGlamsterdam || last.Activated || !last.Tracked {
 		t.Fatalf("Glamsterdam = %+v", last)
 	}
 	for _, f := range got[:len(got)-1] {

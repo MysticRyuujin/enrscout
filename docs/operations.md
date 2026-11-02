@@ -136,6 +136,8 @@ It needs no ENRScout release.
 1. Add a `cancelled_forks` entry with the coordinates of the compiled schedule: the EL fork name
    and time, and the CL fork name, epoch and version. A blob-parameter-only fork also needs its
    `max_blobs`. A typo stops startup, because each coordinate must match the compiled schedule.
+   After an upgrade drops the fork from the compiled schedule, that check cannot run: startup logs
+   the entry as `tracking only` and keeps tracking the fork from the file's coordinates.
 2. Add a `notices` entry: the severity, a title, a plain-text body, and links to the config change
    and the call that decided it. It shows on the Forks page and as a strip on every page.
 3. Restart the crawler, the DNS publisher and the API. Cancellations apply only at startup; notice

@@ -67,7 +67,7 @@ func TestReadinessMatchesSQLAndGo(t *testing.T) {
 	var args []any
 	for _, r := range rows {
 		// Unsigned values bind as strings: database/sql rejects a uint64 with the high bit set.
-		tuples = append(tuples, "(?, 'hoodi', ?, ?, CAST(? AS UBIGINT), ?, ?, CAST(? AS UBIGINT))")
+		tuples = append(tuples, "(?, 'sepolia', ?, ?, CAST(? AS UBIGINT), ?, ?, CAST(? AS UBIGINT))")
 		args = append(args, r.id, r.ev.Layer, r.ev.ForkHash, strconv.FormatUint(r.ev.ForkNext, 10),
 			r.ev.ENRForkDigest, r.ev.ENRNextForkVersion, strconv.FormatUint(r.ev.ENRNextForkEpoch, 10))
 	}
@@ -78,7 +78,7 @@ func TestReadinessMatchesSQLAndGo(t *testing.T) {
 	// NULL columns reach Go as zero values, so they must classify the same as the empty evidence.
 	for _, layer := range []string{"el", "cl"} {
 		id := "null-" + layer
-		if _, err := eng.db.Exec("INSERT INTO nodes (id, network, layer, fork_hash, fork_next, enr_fork_digest, enr_next_fork_version, enr_next_fork_epoch) VALUES (?, 'hoodi', ?, NULL, NULL, NULL, NULL, NULL)", id, layer); err != nil {
+		if _, err := eng.db.Exec("INSERT INTO nodes (id, network, layer, fork_hash, fork_next, enr_fork_digest, enr_next_fork_version, enr_next_fork_epoch) VALUES (?, 'sepolia', ?, NULL, NULL, NULL, NULL, NULL)", id, layer); err != nil {
 			t.Fatal(err)
 		}
 		rows = append(rows, readinessRow{id: id, ev: netconf.ReadinessEvidence{Layer: layer}})
@@ -182,16 +182,16 @@ func TestForkReadinessAggregate(t *testing.T) {
 	fresh := at.Unix()
 	_, err = eng.db.Exec(`INSERT INTO nodes (id, network, layer, fork_hash, fork_next, enr_fork_digest, enr_next_fork_version, enr_next_fork_epoch,
 		client, client_version, fp_status, fp_at) VALUES
-		('g1', 'hoodi', 'el', ?, ?, '', '', 0, 'Geth', 'v1.17.6-stable-3d84c6b2', 'ok', ?),
-		('g2', 'hoodi', 'el', ?, 0, '', '', 0, 'Geth', 'v1.17.5-stable-9621c6ad', 'ok', ?),
-		('g3', 'hoodi', 'el', ?, 0, '', '', 0, 'Geth', 'v1.17.5-stable-9621c6ad', 'ok', ?),
-		('n1', 'hoodi', 'el', ?, ?, '', '', 0, 'Nethermind', 'v2.0.0+bec830cd-hp', 'ok', ?),
-		('u1', 'hoodi', 'el', ?, 0, '', '', 0, 'Geth', 'v1.17.6', '', 0),
-		('l1', 'hoodi', 'cl', ?, 0, ?, ?, CAST('18446744073709551615' AS UBIGINT), 'Lighthouse', 'v8.2.2', 'ok', ?),
-		('p1', 'hoodi', 'cl', ?, 0, '', '', 0, 'Prysm', 'v7.1.8', 'ok', ?),
-		('s1', 'hoodi', 'el', 'deadbeef', 0, '', '', 0, 'Geth', 'v1.16.0', 'ok', ?),
-		('o1', 'hoodi', 'el', ?, ?, '', '', 0, 'Silkworm', 'v0.1.0', 'ok', ?),
-		('e1', 'hoodi', 'el', ?, ?, '', '', 0, 'enrscout', '', 'ok', ?)`,
+		('g1', 'sepolia', 'el', ?, ?, '', '', 0, 'Geth', 'v1.17.6-stable-3d84c6b2', 'ok', ?),
+		('g2', 'sepolia', 'el', ?, 0, '', '', 0, 'Geth', 'v1.17.5-stable-9621c6ad', 'ok', ?),
+		('g3', 'sepolia', 'el', ?, 0, '', '', 0, 'Geth', 'v1.17.5-stable-9621c6ad', 'ok', ?),
+		('n1', 'sepolia', 'el', ?, ?, '', '', 0, 'Nethermind', 'v2.0.0+bec830cd-hp', 'ok', ?),
+		('u1', 'sepolia', 'el', ?, 0, '', '', 0, 'Geth', 'v1.17.6', '', 0),
+		('l1', 'sepolia', 'cl', ?, 0, ?, ?, CAST('18446744073709551615' AS UBIGINT), 'Lighthouse', 'v8.2.2', 'ok', ?),
+		('p1', 'sepolia', 'cl', ?, 0, '', '', 0, 'Prysm', 'v7.1.8', 'ok', ?),
+		('s1', 'sepolia', 'el', 'deadbeef', 0, '', '', 0, 'Geth', 'v1.16.0', 'ok', ?),
+		('o1', 'sepolia', 'el', ?, ?, '', '', 0, 'Silkworm', 'v0.1.0', 'ok', ?),
+		('e1', 'sepolia', 'el', ?, ?, '', '', 0, 'enrscout', '', 'ok', ?)`,
 		el, forkTime, fresh, el, fresh, el, fresh, el, forkTime, fresh, el,
 		cl, cl, current, fresh, cl, fresh, fresh, el, forkTime, fresh, el, forkTime, fresh)
 	if err != nil {
@@ -384,7 +384,7 @@ func TestChartFingerprintMatchesSQLAndGo(t *testing.T) {
 	for i, status := range []string{"ok", "stale", "failed", "pending", ""} {
 		for j, fpAt := range []int64{0, cutoff - 1, cutoff, at.Unix()} {
 			id := fmt.Sprintf("r%d-%d", i, j)
-			if _, err := eng.db.Exec("INSERT INTO nodes (id, network, layer, fp_status, fp_at) VALUES (?, 'hoodi', 'el', NULLIF(?, ''), ?)", id, status, fpAt); err != nil {
+			if _, err := eng.db.Exec("INSERT INTO nodes (id, network, layer, fp_status, fp_at) VALUES (?, 'sepolia', 'el', NULLIF(?, ''), ?)", id, status, fpAt); err != nil {
 				t.Fatal(err)
 			}
 			want[id] = clientname.Charted(status, fpAt, at)
@@ -439,9 +439,9 @@ func TestForkReadinessCancelled(t *testing.T) {
 	at := netconftest.Before
 	fresh := at.Unix()
 	if _, err := eng.db.Exec(`INSERT INTO nodes (id, network, layer, fork_hash, fork_next, client, client_version, fp_status, fp_at) VALUES
-		('still', 'hoodi', 'el', '23aa1351', ?, 'Geth', 'v1.17.9-stable-aaaaaaaa', 'ok', ?),
-		('downgraded', 'hoodi', 'el', '23aa1351', 0, 'Geth', 'v1.17.8-stable-bbbbbbbb', 'ok', ?),
-		('fixed', 'hoodi', 'el', '23aa1351', 0, 'Geth', 'v1.17.10-stable-cccccccc', 'ok', ?)`,
+		('still', 'sepolia', 'el', '268956b6', ?, 'Geth', 'v1.17.9-stable-aaaaaaaa', 'ok', ?),
+		('downgraded', 'sepolia', 'el', '268956b6', 0, 'Geth', 'v1.17.8-stable-bbbbbbbb', 'ok', ?),
+		('fixed', 'sepolia', 'el', '268956b6', 0, 'Geth', 'v1.17.10-stable-cccccccc', 'ok', ?)`,
 		forkTime, fresh, fresh, fresh); err != nil {
 		t.Fatal(err)
 	}
@@ -470,7 +470,7 @@ func TestForkReadinessCancelled(t *testing.T) {
 	}
 
 	stored := &snapshot.ReadinessHistory{Version: snapshot.ReadinessHistoryVersion, Network: netconftest.Network, Fork: netconftest.Fork,
-		ELTime: forkTime, CLEpoch: 132352, Points: []snapshot.ReadinessPoint{{At: at.Unix(), EL: map[string]int{"ready": 1}}}}
+		ELTime: forkTime, CLEpoch: netconftest.CLEpoch, Points: []snapshot.ReadinessPoint{{At: at.Unix(), EL: map[string]int{"ready": 1}}}}
 	data, err := stored.Encode()
 	if err != nil {
 		t.Fatal(err)
