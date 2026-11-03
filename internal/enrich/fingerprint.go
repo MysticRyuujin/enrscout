@@ -618,9 +618,17 @@ func parseName(name string) (client, version, os, lang string) {
 	parts := strings.Split(name, "/")
 	client = strings.TrimSpace(parts[0])
 	// Geth and Besu insert an operator-chosen --identity after the client name, and it may itself
-	// look like a version, so a name with more than four segments is read from the end.
+	// look like a version, so a name with more than four segments is read from the end. Reth SDK
+	// builds append a tag after the platform instead; that shape wins only when the end-read finds
+	// no platform, because an identity can itself look like version/platform.
 	if len(parts) > 4 {
-		parts = append(parts[:1], parts[len(parts)-3:]...)
+		suffixed := !isPlatform(parts[len(parts)-2]) && isPlatform(parts[2]) &&
+			len(parts[1]) > 1 && parts[1][0] == 'v' && parts[1][1] >= '0' && parts[1][1] <= '9'
+		if suffixed {
+			parts = parts[:4]
+		} else {
+			parts = append(parts[:1], parts[len(parts)-3:]...)
+		}
 	}
 	if len(parts) > 1 {
 		version = strings.TrimSpace(parts[1])
@@ -632,6 +640,10 @@ func parseName(name string) (client, version, os, lang string) {
 		lang = strings.TrimSpace(parts[3])
 	}
 	return client, version, os, lang
+}
+
+func isPlatform(s string) bool {
+	return strings.Contains(NormalizeOS(s), "/")
 }
 
 // archTokens maps whole-token GOARCH names, and the Rust target spellings for the same CPUs, to

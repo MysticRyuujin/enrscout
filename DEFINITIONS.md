@@ -61,7 +61,10 @@ population.
 Some clients let the operator insert a free-text name (`--identity`) into the handshake
 string, as in `Geth/<name>/v1.17.6-stable/linux-amd64/go1.26`. The name is not stored.
 When the string has more than four `/`-separated parts, the version, OS, and runtime are
-read from the last three.
+read from the last three. Some builds append a tag after the runtime instead, as in
+`reth/v2.8.1/x86_64-unknown-linux-gnu/ethgas/v0.1.0`. When the second-last part is not a
+platform, the second part is a `v` version, and the third part is a platform, the second,
+third, and fourth parts are the version, OS, and runtime, and the rest is ignored.
 
 ## Network membership and fork readiness
 
