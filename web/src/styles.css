@@ -301,6 +301,12 @@ a {
   white-space: nowrap;
 }
 
+.warn-tag {
+  color: #f2994a;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 .tiles {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));

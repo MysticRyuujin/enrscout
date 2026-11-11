@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/bits"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	_ "github.com/duckdb/duckdb-go/v2"
+	"github.com/ethereum/go-ethereum/p2p/enode"
 
 	"github.com/MysticRyuujin/enrscout/internal/clientname"
 	"github.com/MysticRyuujin/enrscout/internal/netconf"
@@ -31,13 +33,15 @@ const columns = `id, enode, enr, seq, ip, ip6, tcp, udp, tcp6, udp6, quic, quic6
 	coalesce(membership_source, ''), coalesce(membership_verified_at, 0), coalesce(fork_source, ''), coalesce(fork_observed_at, 0),
 	coalesce(fp_direction, ''), coalesce(pinned, false), dialable,
 	coalesce(head, 0), coalesce(head_observed_at, 0), ` + syncStateColumn + `, head_lag,
-	` + enrScheduleColumns
+	` + enrScheduleColumns + `, ` + metadataColumns
 
 const verifiedFingerprintCondition = "fp_status IN ('ok', 'stale')"
 
 const syncStateColumn = "coalesce(sync_state, 'unknown')"
 
 const enrScheduleColumns = "coalesce(enr_fork_digest, ''), coalesce(enr_next_fork_version, ''), coalesce(enr_next_fork_epoch, 0)"
+
+const metadataColumns = "coalesce(md_cgc, 0), coalesce(md_cgc_known, false), coalesce(md_attnets, 0), coalesce(md_syncnets, 0), coalesce(md_at, 0)"
 
 // warmupPeriod gates the disclosure banner only — not the same window as clientname.ChartMaxFingerprintAge.
 const warmupPeriod = 48 * time.Hour
@@ -205,6 +209,12 @@ type Node struct {
 	ENRForkDigest      string `json:"enr_fork_digest,omitempty"`
 	ENRNextForkVersion string `json:"enr_next_fork_version,omitempty"`
 	ENRNextForkEpoch   uint64 `json:"enr_next_fork_epoch,omitempty,string"`
+	// MetaData is served as subnet counts: a 64-bit attnets bitfield loses precision as a JSON number.
+	MetadataCGC        uint32 `json:"md_cgc"`
+	MetadataCGCKnown   bool   `json:"md_cgc_known"`
+	MetadataAttnets    int    `json:"md_attnets_subscribed"`
+	MetadataSyncnets   int    `json:"md_syncnets_subscribed"`
+	MetadataObservedAt int64  `json:"md_observed_at"`
 	// ForkReadiness is the row's state against its network's tracked fork, empty when none is tracked.
 	ForkReadiness netconf.Readiness `json:"fork_readiness,omitempty"`
 }
@@ -261,11 +271,18 @@ type Stats struct {
 	Consensus      int `json:"consensus"`
 	Discv4         int `json:"discv4"`
 	Discv5         int `json:"discv5"`
-	Geolocated     int `json:"geolocated"`
-	IPv6           int `json:"ipv6"`
-	DualStack      int `json:"dualstack"`
-	Hosting        int `json:"hosting"`
-	Dialable       int `json:"dialable"`
+	// The split counts execution rows only: consensus clients speak only discv5, so counting them
+	// would measure the layer mix, not discv4 adoption. A row counts for a protocol when it was
+	// sighted or answered over it; has_v4/has_v5 are also set by fallback and Status-only paths,
+	// and they are never cleared.
+	ELDiscv4Only    int `json:"el_discv4_only"`
+	ELDiscv5Only    int `json:"el_discv5_only"`
+	ELDiscoveryBoth int `json:"el_discovery_both"`
+	Geolocated      int `json:"geolocated"`
+	IPv6            int `json:"ipv6"`
+	DualStack       int `json:"dualstack"`
+	Hosting         int `json:"hosting"`
+	Dialable        int `json:"dialable"`
 	// IPv6 reachability, which IPv6 alone does not imply. IPv6ExplicitPort is the subset carrying
 	// their own tcp6/quic6: sigp's enr crate reads tcp6 with no fallback to tcp, so a discv5-based
 	// client can only dial these over v6.
@@ -283,6 +300,11 @@ type Stats struct {
 	ByClientCL    map[string]int `json:"by_client_cl"`
 	ByDirectionEL map[string]int `json:"by_direction_el"`
 	ByDirectionCL map[string]int `json:"by_direction_cl"`
+	// Hello capabilities of chart-eligible EL rows. Advertising snap in the Hello does not mean
+	// the peer serves snap.
+	CapsKnown      int            `json:"caps_known"`
+	SnapAdvertised int            `json:"snap_advertised"`
+	ByEthVersion   map[string]int `json:"by_eth_version"`
 	// Generation identifies the loaded table this aggregate was computed against, so a caller
 	// pairing it with a separately cached VersionsForMembershipAt result can tell that the two
 	// halves straddled a refresh. A caller's own LastRefresh reading cannot: it is taken before
@@ -388,7 +410,8 @@ const emptyTableDDL = `CREATE TABLE IF NOT EXISTS nodes (
 	membership_source VARCHAR, membership_verified_at BIGINT, fork_source VARCHAR, fork_observed_at BIGINT,
 	fp_direction VARCHAR, pinned BOOLEAN, dialable BOOLEAN,
 	head UBIGINT, head_observed_at BIGINT, sync_state VARCHAR, head_lag BIGINT,
-	enr_fork_digest VARCHAR, enr_next_fork_version VARCHAR, enr_next_fork_epoch UBIGINT
+	enr_fork_digest VARCHAR, enr_next_fork_version VARCHAR, enr_next_fork_epoch UBIGINT,
+	md_cgc UINTEGER, md_cgc_known BOOLEAN, md_attnets UBIGINT, md_syncnets UINTEGER, md_at BIGINT
 )`
 
 // migrateStagingSchema supplies defaults for additive columns that older,
@@ -406,6 +429,7 @@ func migrateStagingSchema(ctx context.Context, db *sql.DB) error {
 	for _, column := range []string{
 		"head UBIGINT DEFAULT 0", "head_observed_at BIGINT DEFAULT 0",
 		"enr_fork_digest VARCHAR DEFAULT ''", "enr_next_fork_version VARCHAR DEFAULT ''", "enr_next_fork_epoch UBIGINT DEFAULT 0",
+		"md_cgc UINTEGER DEFAULT 0", "md_cgc_known BOOLEAN DEFAULT false", "md_attnets UBIGINT DEFAULT 0", "md_syncnets UINTEGER DEFAULT 0", "md_at BIGINT DEFAULT 0",
 	} {
 		if _, err := db.ExecContext(ctx, "ALTER TABLE nodes_staging ADD COLUMN IF NOT EXISTS "+column); err != nil {
 			return fmt.Errorf("add %s snapshot column: %w", strings.Fields(column)[0], err)
@@ -699,8 +723,13 @@ func (f Filter) where(networks []string) (string, []any, error) {
 	if f.Q != "" {
 		literal := escapeLike(f.Q)
 		pattern := "%" + literal + "%"
-		conds = append(conds, "(lower(id) LIKE lower(?) ESCAPE '$' OR lower(ip) LIKE lower(?) ESCAPE '$' OR lower(ip6) LIKE lower(?) ESCAPE '$' OR lower(enode) LIKE lower(?) ESCAPE '$' OR lower(enr) LIKE lower(?) ESCAPE '$')")
+		match := "lower(id) LIKE lower(?) ESCAPE '$' OR lower(ip) LIKE lower(?) ESCAPE '$' OR lower(ip6) LIKE lower(?) ESCAPE '$' OR lower(enode) LIKE lower(?) ESCAPE '$' OR lower(enr) LIKE lower(?) ESCAPE '$'"
 		args = append(args, pattern, pattern, pattern, pattern, pattern)
+		if id, ok := recordNodeID(f.Q); ok {
+			match += " OR id = ?"
+			args = append(args, id)
+		}
+		conds = append(conds, "("+match+")")
 	}
 	if f.CGCMin != "" {
 		if v, err := parseCGC(f.CGCMin); err == nil {
@@ -819,6 +848,9 @@ func (e *Engine) NodeByKey(ctx context.Context, keyval string) (*Node, error) {
 	isPrefix := isNodeIDPrefix(keyval)
 	// Persisted ids are lowercase hex; fold the key so uppercase ids and prefixes still match.
 	idKey := strings.ToLower(keyval)
+	if id, ok := recordNodeID(keyval); ok {
+		idKey = id
+	}
 	q := fmt.Sprintf(`SELECT %s FROM nodes
 		WHERE id = ? OR (? AND starts_with(id, ?)) OR ip = ? OR ip6 = ? OR enode = ? OR enr = ?
 		ORDER BY CASE WHEN id = ? THEN 0 WHEN ? AND starts_with(id, ?) THEN 1 WHEN enode = ? THEN 2 WHEN enr = ? THEN 3 ELSE 4 END,
@@ -838,6 +870,21 @@ func (e *Engine) NodeByKey(ctx context.Context, keyval string) (*Node, error) {
 		return nil, nil
 	}
 	return &ns[0], nil
+}
+
+// maxRecordKeyLen bounds the unauthenticated input whose signature enode.Parse verifies. An ENR
+// is at most 300 bytes, about 400 characters in base64.
+const maxRecordKeyLen = 1 << 10
+
+func recordNodeID(key string) (string, bool) {
+	if len(key) > maxRecordKeyLen || !(strings.HasPrefix(key, "enr:") || strings.HasPrefix(key, "enode://")) {
+		return "", false
+	}
+	n, err := enode.Parse(enode.ValidSchemes, key)
+	if err != nil {
+		return "", false
+	}
+	return n.ID().String(), true
 }
 
 func isNodeIDPrefix(value string) bool {
@@ -865,7 +912,7 @@ func (e *Engine) StatsForMembershipAt(ctx context.Context, network, membership s
 		Generation:      state.LastRefresh,
 		ForkEvaluatedAt: at.UTC().Format(time.RFC3339Nano), FingerprintWindowSeconds: int64(clientname.ChartMaxFingerprintAge.Seconds()),
 		ByNetwork: map[string]int{}, ByClient: map[string]int{}, ByClientEL: map[string]int{}, ByClientCL: map[string]int{},
-		ByDirectionEL: map[string]int{}, ByDirectionCL: map[string]int{},
+		ByDirectionEL: map[string]int{}, ByDirectionCL: map[string]int{}, ByEthVersion: map[string]int{},
 		ByCountry: map[string]int{}, ByOrg: map[string]int{}, ByOS: map[string]int{}, ByLayer: map[string]int{}, ByVersion: map[string]int{},
 	}
 	if !generatedAt.IsZero() {
@@ -919,6 +966,9 @@ func (e *Engine) StatsForMembershipAt(ctx context.Context, network, membership s
 		count(*) FILTER (WHERE cur AND layer = 'cl'),
 		count(*) FILTER (WHERE cur AND has_v4),
 		count(*) FILTER (WHERE cur AND has_v5),
+		count(*) FILTER (WHERE cur AND layer = 'el' AND has_v4 AND NOT has_v5),
+		count(*) FILTER (WHERE cur AND layer = 'el' AND has_v5 AND NOT has_v4),
+		count(*) FILTER (WHERE cur AND layer = 'el' AND has_v4 AND has_v5),
 		count(*) FILTER (WHERE cur AND geolocated),
 		count(*) FILTER (WHERE cur AND ip6 <> ''),
 		count(*) FILTER (WHERE cur AND ip <> '' AND ip6 <> ''),
@@ -936,7 +986,7 @@ func (e *Engine) StatsForMembershipAt(ctx context.Context, network, membership s
 		count(*) FILTER (WHERE cur AND ident_stale AND layer = 'cl')
 		FROM ` + flagged
 	if err := tx.QueryRowContext(ctx, scalars, flaggedArgs...).Scan(
-		&s.Total, &s.Execution, &s.Consensus, &s.Discv4, &s.Discv5, &s.Geolocated, &s.IPv6, &s.DualStack, &s.Hosting, &s.Dialable,
+		&s.Total, &s.Execution, &s.Consensus, &s.Discv4, &s.Discv5, &s.ELDiscv4Only, &s.ELDiscv5Only, &s.ELDiscoveryBoth, &s.Geolocated, &s.IPv6, &s.DualStack, &s.Hosting, &s.Dialable,
 		&s.IPv6Dialable, &s.IPv6ExplicitPort, &s.MembershipVerified, &s.MembershipClaimed,
 		&s.ExecutionStale, &s.ConsensusStale, &s.ELIdentifiedStale, &s.CLIdentifiedStale); err != nil {
 		return s, err
@@ -989,6 +1039,32 @@ func (e *Engine) StatsForMembershipAt(ctx context.Context, network, membership s
 		return s, err
 	}
 
+	caps := `SELECT capabilities, count(*)
+		FROM ` + flagged + ` WHERE cur AND chart AND layer = 'el' AND capabilities <> '' GROUP BY capabilities`
+	capRows, err := tx.QueryContext(ctx, caps, flaggedArgs...)
+	if err != nil {
+		return s, err
+	}
+	defer capRows.Close()
+	for capRows.Next() {
+		var list string
+		var c int
+		if err := capRows.Scan(&list, &c); err != nil {
+			return s, err
+		}
+		s.CapsKnown += c
+		eth, snap := helloCapabilities(list)
+		if eth >= 0 {
+			s.ByEthVersion["eth/"+strconv.Itoa(eth)] += c
+		}
+		if snap {
+			s.SnapAdvertised += c
+		}
+	}
+	if err := capRows.Err(); err != nil {
+		return s, err
+	}
+
 	for _, count := range s.ByClientEL {
 		s.ELIdentified += count
 	}
@@ -999,6 +1075,27 @@ func (e *Engine) StatsForMembershipAt(ctx context.Context, network, membership s
 		return s, err
 	}
 	return s, nil
+}
+
+// helloCapabilities parses in Go, not SQL, because the list is peer-controlled: an oversized
+// version must be skipped, not fail the whole aggregate on a cast overflow.
+func helloCapabilities(list string) (highestEth int, snap bool) {
+	highestEth = -1
+	for _, token := range strings.Split(list, ",") {
+		name, version, ok := strings.Cut(token, "/")
+		if !ok {
+			continue
+		}
+		switch name {
+		case "eth":
+			if v, err := strconv.ParseUint(version, 10, 16); err == nil && int(v) > highestEth {
+				highestEth = int(v)
+			}
+		case "snap":
+			snap = true
+		}
+	}
+	return highestEth, snap
 }
 
 func appendWhereCondition(clause, condition string) string {
@@ -1159,6 +1256,8 @@ func scanNodes(rows *sql.Rows, at time.Time) ([]Node, error) {
 	targets := map[string]*netconf.ForkTarget{}
 	for rows.Next() {
 		var n Node
+		var attnets uint64
+		var syncnets uint32
 		if err := rows.Scan(
 			&n.ID, &n.Enode, &n.ENR, &n.Seq, &n.IP, &n.IP6, &n.TCP, &n.UDP, &n.TCP6, &n.UDP6, &n.QUIC, &n.QUIC6, &n.Network, &n.ForkHash, &n.ForkNext, &n.Layer,
 			&n.CGC, &n.CGCKnown,
@@ -1168,9 +1267,11 @@ func scanNodes(rows *sql.Rows, at time.Time) ([]Node, error) {
 			&n.FPDirection, &n.Pinned, &n.Dialable,
 			&n.Head, &n.HeadObservedAt, &n.SyncState, &n.HeadLag,
 			&n.ENRForkDigest, &n.ENRNextForkVersion, &n.ENRNextForkEpoch,
+			&n.MetadataCGC, &n.MetadataCGCKnown, &attnets, &syncnets, &n.MetadataObservedAt,
 		); err != nil {
 			return nil, err
 		}
+		n.MetadataAttnets, n.MetadataSyncnets = bits.OnesCount64(attnets), bits.OnesCount32(syncnets)
 		n.ForkCompatible = netconf.RowForkCurrentAt(n.Layer, n.Network, n.ForkHash, n.ForkNext, at)
 		target, ok := targets[n.Network]
 		if !ok {

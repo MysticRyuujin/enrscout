@@ -91,6 +91,9 @@ func (c *crawler) applyInbound(nid enode.ID, layer string, r enrich.Fingerprint)
 		mFingerprintRecoveries.WithLabelValues(layer).Inc()
 		slog.Info("fingerprint recovered from inbound connection", "node", nid, "layer", layer, "prior-failures", failures, "client", r.Client)
 	}
+	if layer == layerCL {
+		c.applyMetadata(nid, r)
+	}
 	if r.Network != "" {
 		c.applyStatus(nid, layer, r)
 	}
@@ -263,9 +266,18 @@ func (c *crawler) applyStatus(id enode.ID, layer string, r enrich.Fingerprint) {
 	}
 }
 
+func (c *crawler) applyMetadata(id enode.ID, r enrich.Fingerprint) {
+	if md, ok := r.Metadata.Record(); ok {
+		c.set.SetMetadata(id, md)
+	}
+}
+
 func (c *crawler) finishFingerprint(layer string, n *enode.Node, r enrich.Fingerprint, probeErr error) {
 	if probeErr == nil {
 		failures, applied := c.set.SetClaimedFingerprint(n.ID(), layer, r.Identity(), "outbound")
+		if applied && layer == layerCL {
+			c.applyMetadata(n.ID(), r)
+		}
 		if applied && r.Network != "" {
 			c.applyStatus(n.ID(), layer, r)
 		}

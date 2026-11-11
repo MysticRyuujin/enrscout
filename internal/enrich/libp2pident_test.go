@@ -21,6 +21,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/event"
 	libp2pnetwork "github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/core/protocol"
 	"github.com/libp2p/go-libp2p/p2p/security/noise"
 	ma "github.com/multiformats/go-multiaddr"
 
@@ -373,5 +374,205 @@ func TestCLFingerprinterCloseWaitsForInboundHandlers(t *testing.T) {
 	}
 	if !finished.Load() {
 		t.Fatal("Close returned before the handler completed")
+	}
+}
+
+const testAttnets = 0x8000_0000_0000_0001
+
+func serveCLMetadata(h interface {
+	SetStreamHandler(protocol.ID, libp2pnetwork.StreamHandler)
+}, pid protocol.ID, cgc uint64, hang <-chan struct{}) {
+	h.SetStreamHandler(pid, func(s libp2pnetwork.Stream) {
+		defer s.Close()
+		_, _ = io.Copy(io.Discard, io.LimitReader(s, 1024))
+		if hang != nil {
+			<-hang
+			return
+		}
+		size := metadataV2SSZLen
+		if pid == metadataProtocolV3 {
+			size = metadataV3SSZLen
+		}
+		payload := make([]byte, size)
+		binary.LittleEndian.PutUint64(payload[0:8], 7)
+		binary.LittleEndian.PutUint64(payload[8:16], testAttnets)
+		payload[16] = 0b0101
+		if pid == metadataProtocolV3 {
+			binary.LittleEndian.PutUint64(payload[17:25], cgc)
+		}
+		var response bytes.Buffer
+		response.WriteByte(0)
+		var prefix [binary.MaxVarintLen64]byte
+		response.Write(prefix[:binary.PutUvarint(prefix[:], uint64(size))])
+		writer := snappy.NewBufferedWriter(&response)
+		_, _ = writer.Write(payload)
+		_ = writer.Close()
+		_, _ = s.Write(response.Bytes())
+	})
+}
+
+func TestCLMetadataExchange(t *testing.T) {
+	testIP := privateTestIPv4(t)
+	for _, tc := range []struct {
+		name  string
+		serve []protocol.ID
+		cgc   uint64
+		want  CLMetadata
+	}{
+		{"v3", []protocol.ID{metadataProtocolV3, metadataProtocolV2}, 8,
+			CLMetadata{Outcome: "ok", Version: 3, Attnets: testAttnets, Syncnets: 0b0101, CGC: 8, CGCKnown: true}},
+		{"v2 only", []protocol.ID{metadataProtocolV2}, 0,
+			CLMetadata{Outcome: "ok", Version: 2, Attnets: testAttnets, Syncnets: 0b0101}},
+		{"unsupported", nil, 0, CLMetadata{Outcome: "unsupported"}},
+		{"cgc above the group count", []protocol.ID{metadataProtocolV3}, numberOfCustodyGroups + 1,
+			CLMetadata{Outcome: "invalid", Version: 3, Attnets: testAttnets, Syncnets: 0b0101}},
+		{"cgc wider than 32 bits", []protocol.ID{metadataProtocolV3}, 1<<32 + 8,
+			CLMetadata{Outcome: "invalid", Version: 3, Attnets: testAttnets, Syncnets: 0b0101}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server, err := NewCLFingerprinterWithLimits(2*time.Second, nil, true, 32, "/ip4/"+testIP.String()+"/tcp/0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer server.Close()
+			client, err := NewCLFingerprinterWithLimits(2*time.Second, nil, true, 32)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer client.Close()
+			for _, pid := range tc.serve {
+				serveCLMetadata(server.host, pid, tc.cgc, nil)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			if err := client.host.Connect(ctx, peer.AddrInfo{ID: server.host.ID(), Addrs: server.host.Addrs()}); err != nil {
+				t.Fatal(err)
+			}
+			got := client.exchangeMetadata(ctx, server.host.ID())
+			if got.Outcome == "ok" && got.At.IsZero() {
+				t.Fatal("an answered MetaData carries no receive time")
+			}
+			got.At = time.Time{}
+			if got != tc.want {
+				t.Fatalf("exchangeMetadata = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCLProbeDoesNotWaitPastGraceForMetadata(t *testing.T) {
+	testIP := privateTestIPv4(t)
+	key, err := ethcrypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	lpriv, err := libp2pcrypto.UnmarshalSecp256k1PrivateKey(ethcrypto.FromECDSA(key))
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote, err := libp2p.New(
+		libp2p.Identity(lpriv),
+		libp2p.ListenAddrStrings("/ip4/"+testIP.String()+"/tcp/0"),
+		libp2p.UserAgent("Lighthouse/v8.0.0/x86_64-linux"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer remote.Close()
+	hang := make(chan struct{})
+	defer close(hang)
+	serveCLMetadata(remote, metadataProtocolV3, 8, hang)
+
+	portText, err := remote.Addrs()[0].ValueForProtocol(ma.P_TCP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := enode.OpenDB("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	local := enode.NewLocalNode(db, key)
+	local.SetStaticIP(testIP)
+	local.Set(enr.TCP(port))
+
+	fingerprinter, err := NewCLFingerprinterWithLimits(10*time.Second, nil, true, 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fingerprinter.Close()
+	start := time.Now()
+	fp, err := fingerprinter.Probe(context.Background(), local.Node())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(start); elapsed > clStatusGrace+time.Second {
+		t.Fatalf("probe took %v with a MetaData peer that never answers, want at most the %v grace", elapsed, clStatusGrace)
+	}
+	if fp.Client != "Lighthouse" || fp.Metadata.Outcome != "" {
+		t.Fatalf("fingerprint = %+v, want the client and no MetaData outcome", fp)
+	}
+}
+
+func TestCLInboundDoesNotHoldItsSlotForMetadata(t *testing.T) {
+	testIP := privateTestIPv4(t)
+	local, err := NewCLFingerprinterWithLimits(5*time.Second, nil, true, 32, "/ip4/"+testIP.String()+"/tcp/0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer local.Close()
+	remote, err := NewCLFingerprinterWithLimits(5*time.Second, nil, true, 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer remote.Close()
+
+	state, err := netconf.CLForkStateAt("mainnet", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := state.ENRForkID()
+	serveCLStatus(remote, entry)
+	hang := make(chan struct{})
+	defer close(hang)
+	serveCLMetadata(remote.host, metadataProtocolV3, 8, hang)
+	callbacks := make(chan InboundCLFingerprint, 1)
+	if err := local.WatchInbound(func() []byte { return entry }, func(result InboundCLFingerprint) { callbacks <- result }); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := remote.host.Connect(ctx, peer.AddrInfo{ID: local.host.ID(), Addrs: local.host.Addrs()}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case result := <-callbacks:
+		if result.Fingerprint.Network != "mainnet" || result.Fingerprint.Metadata.Outcome != "late" {
+			t.Fatalf("inbound fingerprint = %+v, want Status applied and MetaData late", result.Fingerprint)
+		}
+	case <-ctx.Done():
+		t.Fatal("inbound handler waited for a stalled MetaData instead of returning after Status")
+	}
+	metadataStreams := func() int {
+		open := 0
+		for _, c := range local.host.Network().ConnsToPeer(remote.host.ID()) {
+			for _, s := range c.GetStreams() {
+				if s.Protocol() == metadataProtocolV3 {
+					open++
+				}
+			}
+		}
+		return open
+	}
+	deadline := time.Now().Add(time.Second)
+	for metadataStreams() > 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the stalled MetaData stream outlived its handler; it would hold until the 5s deadline")
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }

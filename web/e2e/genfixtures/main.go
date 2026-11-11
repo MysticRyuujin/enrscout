@@ -124,27 +124,30 @@ func currentRows(network string, gen time.Time) ([]nodeset.Row, error) {
 		return hex.EncodeToString(h[:])
 	}
 
-	el := []struct{ client, version, os string }{
-		{"Geth", "1.15.0", "linux"},
-		{"Nethermind", "1.30.0", "linux"},
-		{"reth", "1.3.0", "linux"},
-		{"Besu", "25.7.0", "windows"},
+	el := []struct {
+		client, version, os, caps string
+		v5                        bool
+	}{
+		{"Geth", "1.15.0", "linux", "eth/68,eth/69,snap/1", true},
+		{"Nethermind", "1.30.0", "linux", "eth/68,eth/69", true},
+		{"reth", "1.3.0", "linux", "eth/68,eth/69,eth/70,snap/1", false},
+		{"Besu", "25.7.0", "windows", "eth/68", false},
 	}
 	cl := []struct {
 		client, version, os string
-		cgc                 uint32
+		cgc, mdCGC          uint32
 	}{
-		{"Lighthouse", "6.0.0", "linux", 128},
-		{"Prysm", "5.2.0", "linux", 4},
-		{"Teku", "25.7.0", "linux", 8},
+		{"Lighthouse", "6.0.0", "linux", 128, 128},
+		{"Prysm", "5.2.0", "linux", 4, 64},
+		{"Teku", "25.7.0", "linux", 8, 8},
 	}
 
 	rows := make([]nodeset.Row, 0, len(el)+len(cl))
 	for i, c := range el {
 		rows = append(rows, nodeset.Row{
 			ID: id(), Network: network, Layer: "el", ForkHash: elHash, ForkNext: 0,
-			IP: fmt.Sprintf("203.0.113.%d", i+1), TCP: 30303, UDP: 30303, HasV4: true,
-			Client: c.client, Version: c.version, OS: c.os, Caps: "eth/68",
+			IP: fmt.Sprintf("203.0.113.%d", i+1), TCP: 30303, UDP: 30303, HasV4: true, HasV5: c.v5,
+			Client: c.client, Version: c.version, OS: c.os, Caps: c.caps,
 			Country: "US", City: "Ashburn", Lat: 39.04, Lon: -77.48, Geolocated: true, GeoAccuracyRadiusKM: 20,
 			ASN: 16509, Org: "Amazon", Hosting: true, HostingKnown: true,
 			Score: 100, FirstSeen: ts - 3600, LastSeen: ts, LastCheck: ts, LastResolved: ts,
@@ -154,6 +157,7 @@ func currentRows(network string, gen time.Time) ([]nodeset.Row, error) {
 	for i, c := range cl {
 		rows = append(rows, nodeset.Row{
 			ID: id(), Network: network, Layer: "cl", ForkHash: clDigest, CGC: c.cgc, CGCKnown: true,
+			MDCGC: c.mdCGC, MDCGCKnown: true, MDAttnets: 0b1011, MDSyncnets: 0b1, MDAt: ts,
 			IP: fmt.Sprintf("198.51.100.%d", i+1), TCP: 9000, UDP: 9000, QUIC: 9001, HasV5: true,
 			Client: c.client, Version: c.version, OS: c.os,
 			Country: "DE", City: "Frankfurt", Lat: 50.11, Lon: 8.68, Geolocated: true, GeoAccuracyRadiusKM: 20,

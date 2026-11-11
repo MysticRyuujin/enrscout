@@ -425,6 +425,11 @@ func run() error {
 		loops.every(30*time.Second, observeSeeds)
 	}
 
+	if !conf.devnetOnly {
+		monitor := newBootnodeMonitor(advertisedNetworks, identities, restrict)
+		loops.every(bootnodeProbeInterval, func(time.Time) { monitor.probe(loops.ctx) })
+	}
+
 	// Retry retained nodes independently of discovery. A quiet or temporarily
 	// disconnected peer should recover without needing to reappear in a DHT walk.
 	if cr.fp != nil {

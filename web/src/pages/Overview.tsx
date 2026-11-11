@@ -76,6 +76,14 @@ function mapCoverageCaption(
     : `${num(total)} identities located`;
 }
 
+function discoveryTitle(stats: Stats): string {
+  return (
+    `Execution nodes: ${num(stats.el_discv4_only)} discv4 only, ${num(stats.el_discv5_only)} discv5 only, ` +
+    `${num(stats.el_discovery_both)} both. Consensus nodes use only discv5. A node counts for a ` +
+    "protocol once it was sighted or answered over it, and that mark does not expire."
+  );
+}
+
 const WARMUP_HOURS = 48;
 
 function warmupProgress(
@@ -386,8 +394,18 @@ export default function Overview() {
                 ? "✨ supernodes"
                 : undefined,
             },
-            { label: "discv5", value: stats.discv5 },
-            { label: "discv4", value: stats.discv4 },
+            {
+              label: "discv5",
+              value: stats.discv5,
+              hint: `${num(stats.el_discv5_only)} EL discv5 only`,
+              title: discoveryTitle(stats),
+            },
+            {
+              label: "discv4",
+              value: stats.discv4,
+              hint: `${num(stats.el_discv4_only)} EL discv4 only`,
+              title: discoveryTitle(stats),
+            },
             {
               label: "advertises IPv6",
               value: stats.ipv6,

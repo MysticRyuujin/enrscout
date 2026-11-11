@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"maps"
 	"math"
+	"net"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/ethereum/go-ethereum/p2p/enr"
 
@@ -261,6 +263,16 @@ func TestMigrateStagingSchemaAddsSubdivision(t *testing.T) {
 	}
 	if cgc != 0 || cgcKnown {
 		t.Fatalf("cgc defaults = (%d, %v), want (0, false)", cgc, cgcKnown)
+	}
+	var mdCGC, mdSyncnets uint32
+	var mdKnown bool
+	var mdAttnets uint64
+	var mdAt int64
+	if err := eng.db.QueryRow("SELECT md_cgc, md_cgc_known, md_attnets, md_syncnets, md_at FROM nodes_staging WHERE id = 'legacy'").Scan(&mdCGC, &mdKnown, &mdAttnets, &mdSyncnets, &mdAt); err != nil {
+		t.Fatal(err)
+	}
+	if mdCGC != 0 || mdKnown || mdAttnets != 0 || mdSyncnets != 0 || mdAt != 0 {
+		t.Fatalf("MetaData defaults = (%d, %v, %d, %d, %d), want zero", mdCGC, mdKnown, mdAttnets, mdSyncnets, mdAt)
 	}
 	// A schema-3 generation has no head or ENR schedule columns; sync state must still compute.
 	if err := computeSyncState(context.Background(), eng.db, []string{"mainnet"}, time.Now()); err != nil {
@@ -1167,6 +1179,141 @@ func TestStatsClientSharesOnlyIncludeSuccessfulFingerprints(t *testing.T) {
 	}
 }
 
+func TestStatsHelloCapabilitiesAndDiscoverySplit(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.NewFS(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	eng, err := New(st, []string{"mainnet"}, t.TempDir(), "snapshots")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Close()
+
+	mainnet, err := netconf.Get("mainnet")
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := mainnet.CurrentForkID().Hash
+	h := hex.EncodeToString(current[:])
+	fpAt := time.Now().Unix()
+	oldFpAt := time.Now().Add(-8 * 24 * time.Hour).Unix()
+	clState, err := netconf.CLForkStateAt("mainnet", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cl := hex.EncodeToString(clState.Digest[:])
+	_, err = eng.db.Exec(`INSERT INTO nodes (network, layer, fork_hash, client, fp_status, fp_at, capabilities, has_v4, has_v5) VALUES
+		('mainnet', 'el', ?, 'Geth', 'ok', ?, 'eth/68', true, false),
+		('mainnet', 'el', ?, 'Geth', 'ok', ?, 'eth/68,eth/69,snap/1', true, true),
+		('mainnet', 'el', ?, 'Reth', 'ok', ?, 'snap/1,eth/69', false, true),
+		('mainnet', 'el', ?, 'Odd', 'ok', ?, 'eth/4294967295,xeth/99', false, true),
+		('mainnet', 'el', ?, 'Geth', 'ok', ?, 'eth/70', true, true),
+		('mainnet', 'el', ?, '', 'pending', 0, '', false, false),
+		('mainnet', 'cl', ?, 'Lighthouse', 'ok', ?, '', false, true)`,
+		h, fpAt, h, fpAt, h, fpAt, h, fpAt, h, oldFpAt, h, cl, fpAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	stats, err := eng.StatsForMembershipAt(ctx, "mainnet", "", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := map[string]int{"eth/68": 1, "eth/69": 2}; !maps.Equal(stats.ByEthVersion, want) {
+		t.Fatalf("ByEthVersion = %v, want %v (oversized version skipped, stale fingerprint excluded)", stats.ByEthVersion, want)
+	}
+	if stats.CapsKnown != 4 || stats.SnapAdvertised != 2 {
+		t.Fatalf("CapsKnown, SnapAdvertised = %d, %d, want 4, 2", stats.CapsKnown, stats.SnapAdvertised)
+	}
+	if stats.ELDiscv4Only != 1 || stats.ELDiscv5Only != 2 || stats.ELDiscoveryBoth != 2 {
+		t.Fatalf("EL v4 only, v5 only, both = %d, %d, %d, want 1, 2, 2 (the discv5-only consensus row excluded)", stats.ELDiscv4Only, stats.ELDiscv5Only, stats.ELDiscoveryBoth)
+	}
+}
+
+func TestHelloCapabilities(t *testing.T) {
+	for _, tc := range []struct {
+		list string
+		eth  int
+		snap bool
+	}{
+		{"eth/68", 68, false},
+		{"eth/69,eth/68,snap/1", 69, true},
+		{"eth/65536", -1, false},
+		{"xeth/99,snapx/1", -1, false},
+		{"eth/,eth/-1,eth", -1, false},
+	} {
+		eth, snap := helloCapabilities(tc.list)
+		if eth != tc.eth || snap != tc.snap {
+			t.Errorf("helloCapabilities(%q) = %d, %v, want %d, %v", tc.list, eth, snap, tc.eth, tc.snap)
+		}
+	}
+}
+
+func TestNodeByKeyMatchesAnyRecordOfTheNode(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.NewFS(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	mainnet, err := netconf.Get("mainnet")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	signed := func(seq uint64) *enode.Node {
+		var r enr.Record
+		r.SetSeq(seq)
+		r.Set(enr.IPv4{9, 9, 9, 9})
+		r.Set(enr.TCP(30303))
+		r.Set(enr.UDP(30303))
+		r.Set(netconf.EthEntry{ForkID: mainnet.CurrentForkID()})
+		if err := enode.SignV4(&r, key); err != nil {
+			t.Fatal(err)
+		}
+		n, err := enode.New(enode.ValidSchemes, &r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	stored, newer := signed(1), signed(2)
+	set := nodeset.NewWithLimit(0)
+	set.Observe(stored, "v5", time.Now())
+	publishTestSnapshot(t, ctx, st, set, 1, time.Now())
+	eng, err := New(st, []string{"mainnet"}, t.TempDir(), "snapshots")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Close()
+	if err := eng.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, k := range []string{newer.String(), newer.URLv4()} {
+		n, err := eng.NodeByKey(ctx, k)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n == nil || n.ID != stored.ID().String() {
+			t.Fatalf("NodeByKey(%.24q…) = %v, want the stored node", k, n)
+		}
+	}
+	for _, k := range []string{"enr:-not-a-record", "enr:" + strings.Repeat("A", maxRecordKeyLen)} {
+		n, err := eng.NodeByKey(ctx, k)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n != nil {
+			t.Fatalf("NodeByKey(%.24q…) = %v, want no match", k, n)
+		}
+	}
+}
+
 func TestDialableColumnMatchesRowPredicate(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.NewFS(t.TempDir())
@@ -1526,5 +1673,84 @@ func TestRefreshComputesSyncStateAgainstPeerHeads(t *testing.T) {
 	lagging, err := eng.Nodes(ctx, Filter{Network: "mainnet", ForkStatus: "all", Sync: "lagging"})
 	if err != nil || lagging.Total != 1 {
 		t.Fatalf("sync=lagging total = %d, %v; want 1", lagging.Total, err)
+	}
+}
+
+func TestNodeServesMetadataAsSubnetCounts(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.NewFS(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var id enode.ID
+	id[0] = 44
+	set := nodeset.NewWithLimit(0)
+	set.Ingest([]nodeset.Row{{ID: id.String(), Layer: "cl", Network: "mainnet", IP: "1.2.3.4", TCP: 9000, HasV5: true, Score: 100, FPStatus: "pending"}})
+	at := time.Unix(1700000000, 0)
+	set.SetMetadata(id, nodeset.Metadata{CGC: 64, CGCKnown: true, Attnets: 1<<63 | 0b101, Syncnets: 0b1010, At: at})
+	publishTestSnapshot(t, ctx, st, set, 1, time.Now())
+	eng, err := New(st, []string{"mainnet"}, t.TempDir(), "snapshots")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Close()
+	if err := eng.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := eng.NodeByKey(ctx, id.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n == nil || n.MetadataCGC != 64 || !n.MetadataCGCKnown || n.MetadataAttnets != 3 || n.MetadataSyncnets != 2 || n.MetadataObservedAt != at.Unix() {
+		t.Fatalf("node MetaData = %+v", n)
+	}
+}
+
+func TestNodesSearchMatchesAnyRecordOfTheNode(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.NewFS(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	mainnet, err := netconf.Get("mainnet")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var r enr.Record
+	r.Set(enr.IPv4{9, 9, 9, 9})
+	r.Set(enr.TCP(30303))
+	r.Set(enr.UDP(30303))
+	r.Set(netconf.EthEntry{ForkID: mainnet.CurrentForkID()})
+	if err := enode.SignV4(&r, key); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := enode.New(enode.ValidSchemes, &r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	set := nodeset.NewWithLimit(0)
+	set.Observe(stored, "v5", time.Now())
+	publishTestSnapshot(t, ctx, st, set, 1, time.Now())
+	eng, err := New(st, []string{"mainnet"}, t.TempDir(), "snapshots")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Close()
+	if err := eng.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	moved := enode.NewV4(&key.PublicKey, net.IP{9, 9, 9, 10}, 30304, 30304).URLv4()
+	res, err := eng.Nodes(ctx, Filter{Network: "mainnet", Q: moved})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Nodes) != 1 || res.Nodes[0].ID != stored.ID().String() {
+		t.Fatalf("search for a moved enode = %d nodes, want the stored node", len(res.Nodes))
 	}
 }

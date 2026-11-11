@@ -1307,7 +1307,7 @@ func TestRowsFromParquetDefaultsMissingAdditiveColumns(t *testing.T) {
 		t.Fatalf("read legacy parquet: %v", err)
 	}
 	if len(rows) != 1 || rows[0].ID != "legacy" || rows[0].City != "Fond du Lac" || rows[0].Subdivision != "" ||
-		rows[0].CGC != 0 || rows[0].CGCKnown {
+		rows[0].CGC != 0 || rows[0].CGCKnown || rows[0].MDCGCKnown || rows[0].MDAt != 0 {
 		t.Fatalf("legacy rows = %+v", rows)
 	}
 }
@@ -2281,5 +2281,72 @@ func TestUnchangedENRKeepsLaterStatusFork(t *testing.T) {
 	s.Observe(enode.SignNull(&next, n.ID()), "v5", now.Add(2*time.Minute))
 	if row := s.rows("mainnet")[0]; row.ForkHash != "05060708" || row.ForkSource != "enr" {
 		t.Fatalf("newer record did not apply its fork: %s from %s", row.ForkHash, row.ForkSource)
+	}
+}
+
+func TestParquetRoundTripKeepsMetadata(t *testing.T) {
+	var id enode.ID
+	id[0] = 43
+	s := NewWithLimit(0)
+	s.Ingest([]Row{{ID: id.String(), Layer: "cl", Network: "mainnet", IP: "1.2.3.4", TCP: 9000, HasV5: true, Score: 100, FPStatus: "pending"}})
+	at := time.Unix(1700000000, 0)
+	s.SetMetadata(id, Metadata{CGC: 64, CGCKnown: true, Attnets: 1<<63 | 1, Syncnets: 0b1010, At: at})
+
+	data, err := s.ParquetForNetwork("mainnet")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := RowsFromParquet(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored := NewWithLimit(0)
+	restored.Ingest(rows)
+	got := restored.rows("mainnet")
+	if len(got) != 1 || got[0].MDCGC != 64 || !got[0].MDCGCKnown || got[0].MDAttnets != 1<<63|1 || got[0].MDSyncnets != 0b1010 || got[0].MDAt != at.Unix() {
+		t.Fatalf("restored MetaData = %+v", got)
+	}
+}
+
+func TestSetMetadataIgnoresExecutionRows(t *testing.T) {
+	s := NewWithLimit(0)
+	n := elNode(t, 9)
+	s.Observe(n, "v5", time.Now())
+	s.SetMetadata(n.ID(), Metadata{CGC: 8, CGCKnown: true, At: time.Now()})
+	if rows := s.rows("mainnet"); len(rows) != 1 || rows[0].MDCGCKnown {
+		t.Fatalf("execution row took consensus MetaData: %+v", rows)
+	}
+}
+
+func TestLayerChangeClearsMetadata(t *testing.T) {
+	state, err := netconf.CLForkStateAt("mainnet", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var id enode.ID
+	id[0] = 77
+	var cl enr.Record
+	cl.SetSeq(1)
+	cl.Set(enr.IPv4{1, 2, 3, 77})
+	cl.Set(enr.TCP(9000))
+	cl.Set(netconf.Eth2Entry(state.ENRForkID()))
+	s := NewWithLimit(0)
+	s.Observe(enode.SignNull(&cl, id), "v5", time.Now())
+	s.SetMetadata(id, Metadata{CGC: 8, CGCKnown: true, At: time.Now()})
+
+	nw, err := netconf.Get("mainnet")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var el enr.Record
+	el.SetSeq(2)
+	el.Set(enr.IPv4{1, 2, 3, 77})
+	el.Set(enr.TCP(30303))
+	el.Set(netconf.EthEntry{ForkID: nw.CurrentForkID()})
+	s.Observe(enode.SignNull(&el, id), "v5", time.Now())
+
+	rows := s.rows("mainnet")
+	if len(rows) != 1 || rows[0].Layer != "el" || rows[0].MDCGCKnown || rows[0].MDAt != 0 {
+		t.Fatalf("after a CL to EL change = %+v, want the consensus MetaData cleared", rows)
 	}
 }

@@ -50,7 +50,13 @@ export default function Nav() {
   const search = (e: React.FormEvent) => {
     e.preventDefault();
     const v = q.trim();
-    if (v) navigate(`/nodes/execution?q=${encodeURIComponent(v)}`);
+    if (!v) return;
+    // A full record or id names one node on either layer; the list is per-layer and matches text.
+    if (/^(enr:|enode:\/\/)/.test(v) || /^[0-9a-f]{64}$/i.test(v)) {
+      navigate(`/nodes/${encodeURIComponent(v)}`);
+    } else {
+      navigate(`/nodes/execution?q=${encodeURIComponent(v)}`);
+    }
   };
 
   return (
