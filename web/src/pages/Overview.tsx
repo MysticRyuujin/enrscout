@@ -76,6 +76,19 @@ function mapCoverageCaption(
     : `${num(total)} identities located`;
 }
 
+function discoveryTitle(stats: Stats): string {
+  return (
+    `${num(stats.discovery_both)} on both protocols. A node counts for a protocol when it was ` +
+    "sighted or answered over it, so this is a lower bound for what a node speaks."
+  );
+}
+
+function ethVersionRows(byVersion: Record<string, number>): [string, number][] {
+  return Object.entries(byVersion).sort(
+    ([a], [b]) => Number(b.slice(4)) - Number(a.slice(4)),
+  );
+}
+
 const WARMUP_HOURS = 48;
 
 function warmupProgress(
@@ -386,8 +399,18 @@ export default function Overview() {
                 ? "✨ supernodes"
                 : undefined,
             },
-            { label: "discv5", value: stats.discv5 },
-            { label: "discv4", value: stats.discv4 },
+            {
+              label: "discv5",
+              value: stats.discv5,
+              hint: `${num(stats.discv5_only)} discv5 only`,
+              title: discoveryTitle(stats),
+            },
+            {
+              label: "discv4",
+              value: stats.discv4,
+              hint: `${num(stats.discv4_only)} discv4 only`,
+              title: discoveryTitle(stats),
+            },
             {
               label: "advertises IPv6",
               value: stats.ipv6,
@@ -443,6 +466,26 @@ export default function Overview() {
             data={topN(stats.by_os, 20)}
           />
           <ClientVersions network={network} clients={clients} color={color} />
+        </div>
+      )}
+
+      {stats && stats.caps_known > 0 && (
+        <div className="grid-2">
+          <BarList
+            title="Highest eth version (execution Hello)"
+            rows={ethVersionRows(stats.by_eth_version)}
+            total={stats.caps_known}
+            color={() => color}
+          />
+          <BarList
+            title="snap advertised in Hello"
+            rows={[
+              ["advertises snap", stats.snap_advertised],
+              ["no snap", stats.caps_known - stats.snap_advertised],
+            ]}
+            total={stats.caps_known}
+            color={() => color}
+          />
         </div>
       )}
 

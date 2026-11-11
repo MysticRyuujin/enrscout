@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/ethereum/go-ethereum/p2p/enr"
 
@@ -1164,6 +1165,135 @@ func TestStatsClientSharesOnlyIncludeSuccessfulFingerprints(t *testing.T) {
 	}
 	if want := map[string]int{"inbound": 1, "outbound": 1}; !maps.Equal(stats.ByDirectionEL, want) {
 		t.Fatalf("ByDirectionEL = %v, want %v", stats.ByDirectionEL, want)
+	}
+}
+
+func TestStatsHelloCapabilitiesAndDiscoverySplit(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.NewFS(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	eng, err := New(st, []string{"mainnet"}, t.TempDir(), "snapshots")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Close()
+
+	mainnet, err := netconf.Get("mainnet")
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := mainnet.CurrentForkID().Hash
+	h := hex.EncodeToString(current[:])
+	fpAt := time.Now().Unix()
+	oldFpAt := time.Now().Add(-8 * 24 * time.Hour).Unix()
+	_, err = eng.db.Exec(`INSERT INTO nodes (network, layer, fork_hash, client, fp_status, fp_at, capabilities, has_v4, has_v5) VALUES
+		('mainnet', 'el', ?, 'Geth', 'ok', ?, 'eth/68', true, false),
+		('mainnet', 'el', ?, 'Geth', 'ok', ?, 'eth/68,eth/69,snap/1', true, true),
+		('mainnet', 'el', ?, 'Reth', 'ok', ?, 'snap/1,eth/69', false, true),
+		('mainnet', 'el', ?, 'Odd', 'ok', ?, 'eth/4294967295,xeth/99', false, true),
+		('mainnet', 'el', ?, 'Geth', 'ok', ?, 'eth/70', true, true),
+		('mainnet', 'el', ?, '', 'pending', 0, '', false, false)`,
+		h, fpAt, h, fpAt, h, fpAt, h, fpAt, h, oldFpAt, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	stats, err := eng.StatsForMembershipAt(ctx, "mainnet", "", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := map[string]int{"eth/68": 1, "eth/69": 2}; !maps.Equal(stats.ByEthVersion, want) {
+		t.Fatalf("ByEthVersion = %v, want %v (oversized version skipped, stale fingerprint excluded)", stats.ByEthVersion, want)
+	}
+	if stats.CapsKnown != 4 || stats.SnapAdvertised != 2 {
+		t.Fatalf("CapsKnown, SnapAdvertised = %d, %d, want 4, 2", stats.CapsKnown, stats.SnapAdvertised)
+	}
+	if stats.Discv4Only != 1 || stats.Discv5Only != 2 || stats.DiscoveryBoth != 2 {
+		t.Fatalf("v4 only, v5 only, both = %d, %d, %d, want 1, 2, 2", stats.Discv4Only, stats.Discv5Only, stats.DiscoveryBoth)
+	}
+}
+
+func TestHelloCapabilities(t *testing.T) {
+	for _, tc := range []struct {
+		list string
+		eth  int
+		snap bool
+	}{
+		{"eth/68", 68, false},
+		{"eth/69,eth/68,snap/1", 69, true},
+		{"eth/65536", -1, false},
+		{"xeth/99,snapx/1", -1, false},
+		{"eth/,eth/-1,eth", -1, false},
+	} {
+		eth, snap := helloCapabilities(tc.list)
+		if eth != tc.eth || snap != tc.snap {
+			t.Errorf("helloCapabilities(%q) = %d, %v, want %d, %v", tc.list, eth, snap, tc.eth, tc.snap)
+		}
+	}
+}
+
+func TestNodeByKeyMatchesAnyRecordOfTheNode(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.NewFS(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	mainnet, err := netconf.Get("mainnet")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	signed := func(seq uint64) *enode.Node {
+		var r enr.Record
+		r.SetSeq(seq)
+		r.Set(enr.IPv4{9, 9, 9, 9})
+		r.Set(enr.TCP(30303))
+		r.Set(enr.UDP(30303))
+		r.Set(netconf.EthEntry{ForkID: mainnet.CurrentForkID()})
+		if err := enode.SignV4(&r, key); err != nil {
+			t.Fatal(err)
+		}
+		n, err := enode.New(enode.ValidSchemes, &r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	stored, newer := signed(1), signed(2)
+	set := nodeset.NewWithLimit(0)
+	set.Observe(stored, "v5", time.Now())
+	publishTestSnapshot(t, ctx, st, set, 1, time.Now())
+	eng, err := New(st, []string{"mainnet"}, t.TempDir(), "snapshots")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Close()
+	if err := eng.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, k := range []string{newer.String(), newer.URLv4()} {
+		n, err := eng.NodeByKey(ctx, k)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n == nil || n.ID != stored.ID().String() {
+			t.Fatalf("NodeByKey(%.24q…) = %v, want the stored node", k, n)
+		}
+	}
+	for _, k := range []string{"enr:-not-a-record", "enr:" + strings.Repeat("A", maxRecordKeyLen)} {
+		n, err := eng.NodeByKey(ctx, k)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n != nil {
+			t.Fatalf("NodeByKey(%.24q…) = %v, want no match", k, n)
+		}
 	}
 }
 

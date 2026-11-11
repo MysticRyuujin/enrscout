@@ -41,7 +41,7 @@ export default function StatTiles({ tiles }: { tiles: Tile[] }) {
             )}
           </button>
         ) : (
-          <div className="tile" key={t.label}>
+          <div className="tile" key={t.label} title={t.title}>
             <span className="tile-num">{num(t.value)}</span>
             <span className="tile-lbl">{t.label}</span>
             <span className="tile-hint" aria-hidden={!t.hint}>

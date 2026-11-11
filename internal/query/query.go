@@ -15,6 +15,7 @@ import (
 	"time"
 
 	_ "github.com/duckdb/duckdb-go/v2"
+	"github.com/ethereum/go-ethereum/p2p/enode"
 
 	"github.com/MysticRyuujin/enrscout/internal/clientname"
 	"github.com/MysticRyuujin/enrscout/internal/netconf"
@@ -261,11 +262,16 @@ type Stats struct {
 	Consensus      int `json:"consensus"`
 	Discv4         int `json:"discv4"`
 	Discv5         int `json:"discv5"`
-	Geolocated     int `json:"geolocated"`
-	IPv6           int `json:"ipv6"`
-	DualStack      int `json:"dualstack"`
-	Hosting        int `json:"hosting"`
-	Dialable       int `json:"dialable"`
+	// The split counts "sighted or answered over" each protocol: has_v4/has_v5 are also set by
+	// fallback and Status-only observations, not only by an ENR answer.
+	Discv4Only    int `json:"discv4_only"`
+	Discv5Only    int `json:"discv5_only"`
+	DiscoveryBoth int `json:"discovery_both"`
+	Geolocated    int `json:"geolocated"`
+	IPv6          int `json:"ipv6"`
+	DualStack     int `json:"dualstack"`
+	Hosting       int `json:"hosting"`
+	Dialable      int `json:"dialable"`
 	// IPv6 reachability, which IPv6 alone does not imply. IPv6ExplicitPort is the subset carrying
 	// their own tcp6/quic6: sigp's enr crate reads tcp6 with no fallback to tcp, so a discv5-based
 	// client can only dial these over v6.
@@ -283,6 +289,11 @@ type Stats struct {
 	ByClientCL    map[string]int `json:"by_client_cl"`
 	ByDirectionEL map[string]int `json:"by_direction_el"`
 	ByDirectionCL map[string]int `json:"by_direction_cl"`
+	// Hello capabilities of chart-eligible EL rows. Advertising snap in the Hello does not mean
+	// the peer serves snap.
+	CapsKnown      int            `json:"caps_known"`
+	SnapAdvertised int            `json:"snap_advertised"`
+	ByEthVersion   map[string]int `json:"by_eth_version"`
 	// Generation identifies the loaded table this aggregate was computed against, so a caller
 	// pairing it with a separately cached VersionsForMembershipAt result can tell that the two
 	// halves straddled a refresh. A caller's own LastRefresh reading cannot: it is taken before
@@ -819,6 +830,9 @@ func (e *Engine) NodeByKey(ctx context.Context, keyval string) (*Node, error) {
 	isPrefix := isNodeIDPrefix(keyval)
 	// Persisted ids are lowercase hex; fold the key so uppercase ids and prefixes still match.
 	idKey := strings.ToLower(keyval)
+	if id, ok := recordNodeID(keyval); ok {
+		idKey = id
+	}
 	q := fmt.Sprintf(`SELECT %s FROM nodes
 		WHERE id = ? OR (? AND starts_with(id, ?)) OR ip = ? OR ip6 = ? OR enode = ? OR enr = ?
 		ORDER BY CASE WHEN id = ? THEN 0 WHEN ? AND starts_with(id, ?) THEN 1 WHEN enode = ? THEN 2 WHEN enr = ? THEN 3 ELSE 4 END,
@@ -838,6 +852,21 @@ func (e *Engine) NodeByKey(ctx context.Context, keyval string) (*Node, error) {
 		return nil, nil
 	}
 	return &ns[0], nil
+}
+
+// maxRecordKeyLen bounds the unauthenticated input whose signature enode.Parse verifies. An ENR
+// is at most 300 bytes, about 400 characters in base64.
+const maxRecordKeyLen = 1 << 10
+
+func recordNodeID(key string) (string, bool) {
+	if len(key) > maxRecordKeyLen || !(strings.HasPrefix(key, "enr:") || strings.HasPrefix(key, "enode://")) {
+		return "", false
+	}
+	n, err := enode.Parse(enode.ValidSchemes, key)
+	if err != nil {
+		return "", false
+	}
+	return n.ID().String(), true
 }
 
 func isNodeIDPrefix(value string) bool {
@@ -865,7 +894,7 @@ func (e *Engine) StatsForMembershipAt(ctx context.Context, network, membership s
 		Generation:      state.LastRefresh,
 		ForkEvaluatedAt: at.UTC().Format(time.RFC3339Nano), FingerprintWindowSeconds: int64(clientname.ChartMaxFingerprintAge.Seconds()),
 		ByNetwork: map[string]int{}, ByClient: map[string]int{}, ByClientEL: map[string]int{}, ByClientCL: map[string]int{},
-		ByDirectionEL: map[string]int{}, ByDirectionCL: map[string]int{},
+		ByDirectionEL: map[string]int{}, ByDirectionCL: map[string]int{}, ByEthVersion: map[string]int{},
 		ByCountry: map[string]int{}, ByOrg: map[string]int{}, ByOS: map[string]int{}, ByLayer: map[string]int{}, ByVersion: map[string]int{},
 	}
 	if !generatedAt.IsZero() {
@@ -919,6 +948,9 @@ func (e *Engine) StatsForMembershipAt(ctx context.Context, network, membership s
 		count(*) FILTER (WHERE cur AND layer = 'cl'),
 		count(*) FILTER (WHERE cur AND has_v4),
 		count(*) FILTER (WHERE cur AND has_v5),
+		count(*) FILTER (WHERE cur AND has_v4 AND NOT has_v5),
+		count(*) FILTER (WHERE cur AND has_v5 AND NOT has_v4),
+		count(*) FILTER (WHERE cur AND has_v4 AND has_v5),
 		count(*) FILTER (WHERE cur AND geolocated),
 		count(*) FILTER (WHERE cur AND ip6 <> ''),
 		count(*) FILTER (WHERE cur AND ip <> '' AND ip6 <> ''),
@@ -936,7 +968,7 @@ func (e *Engine) StatsForMembershipAt(ctx context.Context, network, membership s
 		count(*) FILTER (WHERE cur AND ident_stale AND layer = 'cl')
 		FROM ` + flagged
 	if err := tx.QueryRowContext(ctx, scalars, flaggedArgs...).Scan(
-		&s.Total, &s.Execution, &s.Consensus, &s.Discv4, &s.Discv5, &s.Geolocated, &s.IPv6, &s.DualStack, &s.Hosting, &s.Dialable,
+		&s.Total, &s.Execution, &s.Consensus, &s.Discv4, &s.Discv5, &s.Discv4Only, &s.Discv5Only, &s.DiscoveryBoth, &s.Geolocated, &s.IPv6, &s.DualStack, &s.Hosting, &s.Dialable,
 		&s.IPv6Dialable, &s.IPv6ExplicitPort, &s.MembershipVerified, &s.MembershipClaimed,
 		&s.ExecutionStale, &s.ConsensusStale, &s.ELIdentifiedStale, &s.CLIdentifiedStale); err != nil {
 		return s, err
@@ -989,6 +1021,32 @@ func (e *Engine) StatsForMembershipAt(ctx context.Context, network, membership s
 		return s, err
 	}
 
+	caps := `SELECT capabilities, count(*)
+		FROM ` + flagged + ` WHERE cur AND chart AND layer = 'el' AND capabilities <> '' GROUP BY capabilities`
+	capRows, err := tx.QueryContext(ctx, caps, flaggedArgs...)
+	if err != nil {
+		return s, err
+	}
+	defer capRows.Close()
+	for capRows.Next() {
+		var list string
+		var c int
+		if err := capRows.Scan(&list, &c); err != nil {
+			return s, err
+		}
+		s.CapsKnown += c
+		eth, snap := helloCapabilities(list)
+		if eth >= 0 {
+			s.ByEthVersion["eth/"+strconv.Itoa(eth)] += c
+		}
+		if snap {
+			s.SnapAdvertised += c
+		}
+	}
+	if err := capRows.Err(); err != nil {
+		return s, err
+	}
+
 	for _, count := range s.ByClientEL {
 		s.ELIdentified += count
 	}
@@ -999,6 +1057,27 @@ func (e *Engine) StatsForMembershipAt(ctx context.Context, network, membership s
 		return s, err
 	}
 	return s, nil
+}
+
+// helloCapabilities parses in Go, not SQL, because the list is peer-controlled: an oversized
+// version must be skipped, not fail the whole aggregate on a cast overflow.
+func helloCapabilities(list string) (highestEth int, snap bool) {
+	highestEth = -1
+	for _, token := range strings.Split(list, ",") {
+		name, version, ok := strings.Cut(token, "/")
+		if !ok {
+			continue
+		}
+		switch name {
+		case "eth":
+			if v, err := strconv.ParseUint(version, 10, 16); err == nil && int(v) > highestEth {
+				highestEth = int(v)
+			}
+		case "snap":
+			snap = true
+		}
+	}
+	return highestEth, snap
 }
 
 func appendWhereCondition(clause, condition string) string {
