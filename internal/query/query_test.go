@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"maps"
 	"math"
+	"net"
 	"strconv"
 	"strings"
 	"sync"
@@ -1198,14 +1199,20 @@ func TestStatsHelloCapabilitiesAndDiscoverySplit(t *testing.T) {
 	h := hex.EncodeToString(current[:])
 	fpAt := time.Now().Unix()
 	oldFpAt := time.Now().Add(-8 * 24 * time.Hour).Unix()
+	clState, err := netconf.CLForkStateAt("mainnet", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cl := hex.EncodeToString(clState.Digest[:])
 	_, err = eng.db.Exec(`INSERT INTO nodes (network, layer, fork_hash, client, fp_status, fp_at, capabilities, has_v4, has_v5) VALUES
 		('mainnet', 'el', ?, 'Geth', 'ok', ?, 'eth/68', true, false),
 		('mainnet', 'el', ?, 'Geth', 'ok', ?, 'eth/68,eth/69,snap/1', true, true),
 		('mainnet', 'el', ?, 'Reth', 'ok', ?, 'snap/1,eth/69', false, true),
 		('mainnet', 'el', ?, 'Odd', 'ok', ?, 'eth/4294967295,xeth/99', false, true),
 		('mainnet', 'el', ?, 'Geth', 'ok', ?, 'eth/70', true, true),
-		('mainnet', 'el', ?, '', 'pending', 0, '', false, false)`,
-		h, fpAt, h, fpAt, h, fpAt, h, fpAt, h, oldFpAt, h)
+		('mainnet', 'el', ?, '', 'pending', 0, '', false, false),
+		('mainnet', 'cl', ?, 'Lighthouse', 'ok', ?, '', false, true)`,
+		h, fpAt, h, fpAt, h, fpAt, h, fpAt, h, oldFpAt, h, cl, fpAt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1220,8 +1227,8 @@ func TestStatsHelloCapabilitiesAndDiscoverySplit(t *testing.T) {
 	if stats.CapsKnown != 4 || stats.SnapAdvertised != 2 {
 		t.Fatalf("CapsKnown, SnapAdvertised = %d, %d, want 4, 2", stats.CapsKnown, stats.SnapAdvertised)
 	}
-	if stats.Discv4Only != 1 || stats.Discv5Only != 2 || stats.DiscoveryBoth != 2 {
-		t.Fatalf("v4 only, v5 only, both = %d, %d, %d, want 1, 2, 2", stats.Discv4Only, stats.Discv5Only, stats.DiscoveryBoth)
+	if stats.ELDiscv4Only != 1 || stats.ELDiscv5Only != 2 || stats.ELDiscoveryBoth != 2 {
+		t.Fatalf("EL v4 only, v5 only, both = %d, %d, %d, want 1, 2, 2 (the discv5-only consensus row excluded)", stats.ELDiscv4Only, stats.ELDiscv5Only, stats.ELDiscoveryBoth)
 	}
 }
 
@@ -1697,5 +1704,53 @@ func TestNodeServesMetadataAsSubnetCounts(t *testing.T) {
 	}
 	if n == nil || n.MetadataCGC != 64 || !n.MetadataCGCKnown || n.MetadataAttnets != 3 || n.MetadataSyncnets != 2 || n.MetadataObservedAt != at.Unix() {
 		t.Fatalf("node MetaData = %+v", n)
+	}
+}
+
+func TestNodesSearchMatchesAnyRecordOfTheNode(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.NewFS(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	mainnet, err := netconf.Get("mainnet")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var r enr.Record
+	r.Set(enr.IPv4{9, 9, 9, 9})
+	r.Set(enr.TCP(30303))
+	r.Set(enr.UDP(30303))
+	r.Set(netconf.EthEntry{ForkID: mainnet.CurrentForkID()})
+	if err := enode.SignV4(&r, key); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := enode.New(enode.ValidSchemes, &r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	set := nodeset.NewWithLimit(0)
+	set.Observe(stored, "v5", time.Now())
+	publishTestSnapshot(t, ctx, st, set, 1, time.Now())
+	eng, err := New(st, []string{"mainnet"}, t.TempDir(), "snapshots")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Close()
+	if err := eng.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	moved := enode.NewV4(&key.PublicKey, net.IP{9, 9, 9, 10}, 30304, 30304).URLv4()
+	res, err := eng.Nodes(ctx, Filter{Network: "mainnet", Q: moved})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Nodes) != 1 || res.Nodes[0].ID != stored.ID().String() {
+		t.Fatalf("search for a moved enode = %d nodes, want the stored node", len(res.Nodes))
 	}
 }

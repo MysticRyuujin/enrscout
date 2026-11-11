@@ -271,16 +271,17 @@ type Stats struct {
 	Consensus      int `json:"consensus"`
 	Discv4         int `json:"discv4"`
 	Discv5         int `json:"discv5"`
-	// The split counts "sighted or answered over" each protocol: has_v4/has_v5 are also set by
-	// fallback and Status-only observations, not only by an ENR answer.
-	Discv4Only    int `json:"discv4_only"`
-	Discv5Only    int `json:"discv5_only"`
-	DiscoveryBoth int `json:"discovery_both"`
-	Geolocated    int `json:"geolocated"`
-	IPv6          int `json:"ipv6"`
-	DualStack     int `json:"dualstack"`
-	Hosting       int `json:"hosting"`
-	Dialable      int `json:"dialable"`
+	// The split counts execution rows only: consensus clients speak only discv5, so counting them
+	// would measure the layer mix, not discv4 adoption. A row counts for a protocol when it was
+	// sighted or answered over it; has_v4/has_v5 are also set by fallback and Status-only paths.
+	ELDiscv4Only    int `json:"el_discv4_only"`
+	ELDiscv5Only    int `json:"el_discv5_only"`
+	ELDiscoveryBoth int `json:"el_discovery_both"`
+	Geolocated      int `json:"geolocated"`
+	IPv6            int `json:"ipv6"`
+	DualStack       int `json:"dualstack"`
+	Hosting         int `json:"hosting"`
+	Dialable        int `json:"dialable"`
 	// IPv6 reachability, which IPv6 alone does not imply. IPv6ExplicitPort is the subset carrying
 	// their own tcp6/quic6: sigp's enr crate reads tcp6 with no fallback to tcp, so a discv5-based
 	// client can only dial these over v6.
@@ -721,8 +722,13 @@ func (f Filter) where(networks []string) (string, []any, error) {
 	if f.Q != "" {
 		literal := escapeLike(f.Q)
 		pattern := "%" + literal + "%"
-		conds = append(conds, "(lower(id) LIKE lower(?) ESCAPE '$' OR lower(ip) LIKE lower(?) ESCAPE '$' OR lower(ip6) LIKE lower(?) ESCAPE '$' OR lower(enode) LIKE lower(?) ESCAPE '$' OR lower(enr) LIKE lower(?) ESCAPE '$')")
+		match := "lower(id) LIKE lower(?) ESCAPE '$' OR lower(ip) LIKE lower(?) ESCAPE '$' OR lower(ip6) LIKE lower(?) ESCAPE '$' OR lower(enode) LIKE lower(?) ESCAPE '$' OR lower(enr) LIKE lower(?) ESCAPE '$'"
 		args = append(args, pattern, pattern, pattern, pattern, pattern)
+		if id, ok := recordNodeID(f.Q); ok {
+			match += " OR id = ?"
+			args = append(args, id)
+		}
+		conds = append(conds, "("+match+")")
 	}
 	if f.CGCMin != "" {
 		if v, err := parseCGC(f.CGCMin); err == nil {
@@ -959,9 +965,9 @@ func (e *Engine) StatsForMembershipAt(ctx context.Context, network, membership s
 		count(*) FILTER (WHERE cur AND layer = 'cl'),
 		count(*) FILTER (WHERE cur AND has_v4),
 		count(*) FILTER (WHERE cur AND has_v5),
-		count(*) FILTER (WHERE cur AND has_v4 AND NOT has_v5),
-		count(*) FILTER (WHERE cur AND has_v5 AND NOT has_v4),
-		count(*) FILTER (WHERE cur AND has_v4 AND has_v5),
+		count(*) FILTER (WHERE cur AND layer = 'el' AND has_v4 AND NOT has_v5),
+		count(*) FILTER (WHERE cur AND layer = 'el' AND has_v5 AND NOT has_v4),
+		count(*) FILTER (WHERE cur AND layer = 'el' AND has_v4 AND has_v5),
 		count(*) FILTER (WHERE cur AND geolocated),
 		count(*) FILTER (WHERE cur AND ip6 <> ''),
 		count(*) FILTER (WHERE cur AND ip <> '' AND ip6 <> ''),
@@ -979,7 +985,7 @@ func (e *Engine) StatsForMembershipAt(ctx context.Context, network, membership s
 		count(*) FILTER (WHERE cur AND ident_stale AND layer = 'cl')
 		FROM ` + flagged
 	if err := tx.QueryRowContext(ctx, scalars, flaggedArgs...).Scan(
-		&s.Total, &s.Execution, &s.Consensus, &s.Discv4, &s.Discv5, &s.Discv4Only, &s.Discv5Only, &s.DiscoveryBoth, &s.Geolocated, &s.IPv6, &s.DualStack, &s.Hosting, &s.Dialable,
+		&s.Total, &s.Execution, &s.Consensus, &s.Discv4, &s.Discv5, &s.ELDiscv4Only, &s.ELDiscv5Only, &s.ELDiscoveryBoth, &s.Geolocated, &s.IPv6, &s.DualStack, &s.Hosting, &s.Dialable,
 		&s.IPv6Dialable, &s.IPv6ExplicitPort, &s.MembershipVerified, &s.MembershipClaimed,
 		&s.ExecutionStale, &s.ConsensusStale, &s.ELIdentifiedStale, &s.CLIdentifiedStale); err != nil {
 		return s, err

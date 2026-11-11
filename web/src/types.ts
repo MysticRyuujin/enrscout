@@ -20,9 +20,9 @@ export interface Stats {
   consensus: number;
   discv4: number;
   discv5: number;
-  discv4_only: number;
-  discv5_only: number;
-  discovery_both: number;
+  el_discv4_only: number;
+  el_discv5_only: number;
+  el_discovery_both: number;
   caps_known: number;
   snap_advertised: number;
   by_eth_version: Record<string, number>;

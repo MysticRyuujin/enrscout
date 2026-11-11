@@ -78,8 +78,9 @@ function mapCoverageCaption(
 
 function discoveryTitle(stats: Stats): string {
   return (
-    `${num(stats.discovery_both)} on both protocols. A node counts for a protocol when it was ` +
-    "sighted or answered over it, so this is a lower bound for what a node speaks."
+    `Execution nodes: ${num(stats.el_discv4_only)} discv4 only, ${num(stats.el_discv5_only)} discv5 only, ` +
+    `${num(stats.el_discovery_both)} both. Consensus nodes use only discv5. A node counts for a ` +
+    "protocol when it was sighted or answered over it, so this is a lower bound."
   );
 }
 
@@ -402,13 +403,13 @@ export default function Overview() {
             {
               label: "discv5",
               value: stats.discv5,
-              hint: `${num(stats.discv5_only)} discv5 only`,
+              hint: `${num(stats.el_discv5_only)} EL discv5 only`,
               title: discoveryTitle(stats),
             },
             {
               label: "discv4",
               value: stats.discv4,
-              hint: `${num(stats.discv4_only)} discv4 only`,
+              hint: `${num(stats.el_discv4_only)} EL discv4 only`,
               title: discoveryTitle(stats),
             },
             {
