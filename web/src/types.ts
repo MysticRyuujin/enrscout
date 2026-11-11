@@ -23,9 +23,6 @@ export interface Stats {
   el_discv4_only: number;
   el_discv5_only: number;
   el_discovery_both: number;
-  caps_known: number;
-  snap_advertised: number;
-  by_eth_version: Record<string, number>;
   geolocated: number;
   ipv6: number;
   dualstack: number;

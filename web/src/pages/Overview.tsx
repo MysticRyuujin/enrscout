@@ -84,12 +84,6 @@ function discoveryTitle(stats: Stats): string {
   );
 }
 
-function ethVersionRows(byVersion: Record<string, number>): [string, number][] {
-  return Object.entries(byVersion).sort(
-    ([a], [b]) => Number(b.slice(4)) - Number(a.slice(4)),
-  );
-}
-
 const WARMUP_HOURS = 48;
 
 function warmupProgress(
@@ -467,26 +461,6 @@ export default function Overview() {
             data={topN(stats.by_os, 20)}
           />
           <ClientVersions network={network} clients={clients} color={color} />
-        </div>
-      )}
-
-      {stats && stats.caps_known > 0 && (
-        <div className="grid-2">
-          <BarList
-            title="Highest eth version (execution Hello)"
-            rows={ethVersionRows(stats.by_eth_version)}
-            total={stats.caps_known}
-            color={() => color}
-          />
-          <BarList
-            title="snap advertised in Hello"
-            rows={[
-              ["advertises snap", stats.snap_advertised],
-              ["no snap", stats.caps_known - stats.snap_advertised],
-            ]}
-            total={stats.caps_known}
-            color={() => color}
-          />
         </div>
       )}
 
