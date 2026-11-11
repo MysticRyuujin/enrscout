@@ -5,6 +5,10 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 10
+    ignore:
+      # Old go-libp2p tags v2-v6 resolve as +incompatible and break the update job.
+      - dependency-name: github.com/libp2p/go-libp2p
+        versions: [">= 2.0.0"]
   - package-ecosystem: npm
     directory: /web
     schedule:
@@ -24,10 +28,17 @@ updates:
         patterns:
           - github/codeql-action/*
   - package-ecosystem: docker
-    directory: /
+    directories:
+      - /
+      - /deploy/local
     schedule:
       interval: weekly
     open-pull-requests-limit: 10
+    cooldown:
+      # golang tags are re-pushed every few days, so the default 3-day
+      # cooldown skips every weekly run and the Go patch level goes stale.
+      exclude:
+        - golang
   - package-ecosystem: docker
     directory: /web
     schedule:
