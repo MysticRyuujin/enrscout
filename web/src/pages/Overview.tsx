@@ -80,7 +80,7 @@ function discoveryTitle(stats: Stats): string {
   return (
     `Execution nodes: ${num(stats.el_discv4_only)} discv4 only, ${num(stats.el_discv5_only)} discv5 only, ` +
     `${num(stats.el_discovery_both)} both. Consensus nodes use only discv5. A node counts for a ` +
-    "protocol when it was sighted or answered over it, so this is a lower bound."
+    "protocol once it was sighted or answered over it, and that mark does not expire."
   );
 }
 

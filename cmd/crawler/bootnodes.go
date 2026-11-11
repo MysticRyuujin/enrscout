@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/p2p/enode"
+	"github.com/ethereum/go-ethereum/p2p/netutil"
 	"github.com/ethereum/go-ethereum/params"
 
 	"github.com/MysticRyuujin/enrscout/internal/discovery"
@@ -46,13 +47,13 @@ type bootnodeMonitor struct {
 	failures map[string]int
 }
 
-func newBootnodeMonitor(networks []string, identities []*runtimeIdentity) *bootnodeMonitor {
+func newBootnodeMonitor(networks []string, identities []*runtimeIdentity, restrict *netutil.Netlist) *bootnodeMonitor {
 	m := &bootnodeMonitor{failures: map[string]int{}}
 	for _, network := range networks {
 		el, cl := monitorIdentities(network, identities)
 		seen := map[enode.ID]bool{}
 		add := func(n *enode.Node, layer string, disc *discovery.Crawler) {
-			if disc == nil || seen[n.ID()] {
+			if disc == nil || seen[n.ID()] || !allowedByNetrestrict(n, restrict) {
 				return
 			}
 			seen[n.ID()] = true
@@ -142,7 +143,7 @@ func (m *bootnodeMonitor) probeTarget(ctx context.Context, t bootnodeTarget) {
 		}
 		nodes, err := t.disc.FindnodeV5(t.node, family, []uint{256})
 		if err != nil {
-			nodes = nil
+			continue
 		}
 		mBootnodeFindnodeNodes.WithLabelValues(t.network, t.layer, family, label).Set(float64(len(nodes)))
 	}

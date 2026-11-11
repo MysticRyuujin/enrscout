@@ -548,6 +548,7 @@ func (s *Set) observe(n *enode.Node, via string, now time.Time, forceNetwork, fo
 		// An EL head is a block number and a CL head a slot, so a layer change invalidates it.
 		if cur.Layer != e.layer {
 			cur.Head, cur.HeadObservedAt = 0, time.Time{}
+			cur.Metadata = Metadata{}
 			if cur.Layer != "" {
 				cur.clearFingerprintLocked()
 			}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/p2p/enode"
+	"github.com/ethereum/go-ethereum/p2p/netutil"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/MysticRyuujin/enrscout/internal/discovery"
@@ -108,7 +109,7 @@ func TestBootnodeTargetsCoverEveryListWithItsProtocols(t *testing.T) {
 		{spec: identitySpec{Network: "mainnet", Layer: layerEL, Walker: true}, discovery: disc},
 		{spec: identitySpec{Network: "mainnet", Layer: layerCL}, discovery: disc},
 	}
-	m := newBootnodeMonitor([]string{"mainnet"}, identities)
+	m := newBootnodeMonitor([]string{"mainnet"}, identities, nil)
 
 	byKind := map[string]int{}
 	seen := map[enode.ID]bool{}
@@ -137,5 +138,20 @@ func TestBootnodeTargetsCoverEveryListWithItsProtocols(t *testing.T) {
 	}
 	if byKind["enode"] == 0 || byKind["el"] == 0 || byKind["cl"] == 0 {
 		t.Fatalf("targets by kind = %v, want legacy enodes, EL ENRs and CL ENRs", byKind)
+	}
+}
+
+func TestBootnodeTargetsHonourNetrestrict(t *testing.T) {
+	disc := &discovery.Crawler{}
+	identities := []*runtimeIdentity{
+		{spec: identitySpec{Network: "mainnet", Layer: layerEL, Walker: true}, discovery: disc},
+		{spec: identitySpec{Network: "mainnet", Layer: layerCL}, discovery: disc},
+	}
+	restrict, err := netutil.ParseNetlist("192.0.2.0/24")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m := newBootnodeMonitor([]string{"mainnet"}, identities, restrict); len(m.targets) != 0 {
+		t.Fatalf("%d targets outside --netrestrict, want none", len(m.targets))
 	}
 }

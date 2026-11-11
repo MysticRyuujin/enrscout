@@ -132,11 +132,11 @@ var (
 	}, []string{"network", "layer", "protocol", "family", "node"})
 	mBootnodeRTT = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "enrscout_crawler_bootnode_rtt_seconds",
-		Help: "Round-trip time of the last answered bootnode PING.",
+		Help: "Time of the last answered bootnode PING. A discv5 PING without a cached session includes the handshake round trip.",
 	}, []string{"network", "layer", "protocol", "family", "node"})
 	mBootnodeFindnodeNodes = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "enrscout_crawler_bootnode_findnode_nodes",
-		Help: "Records a bootnode returned for a discv5 FINDNODE at distance 256 in the last round; 0 on error.",
+		Help: "Records from the last answered discv5 FINDNODE at distance 256 that pass go-ethereum's response checks; unchanged when a request fails.",
 	}, []string{"network", "layer", "family", "node"})
 	mAdvertiserInbound = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "enrscout_crawler_advertiser_inbound_total",

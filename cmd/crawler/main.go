@@ -426,7 +426,7 @@ func run() error {
 	}
 
 	if !conf.devnetOnly {
-		monitor := newBootnodeMonitor(advertisedNetworks, identities)
+		monitor := newBootnodeMonitor(advertisedNetworks, identities, restrict)
 		loops.every(bootnodeProbeInterval, func(time.Time) { monitor.probe(loops.ctx) })
 	}
 

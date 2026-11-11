@@ -273,7 +273,8 @@ type Stats struct {
 	Discv5         int `json:"discv5"`
 	// The split counts execution rows only: consensus clients speak only discv5, so counting them
 	// would measure the layer mix, not discv4 adoption. A row counts for a protocol when it was
-	// sighted or answered over it; has_v4/has_v5 are also set by fallback and Status-only paths.
+	// sighted or answered over it; has_v4/has_v5 are also set by fallback and Status-only paths,
+	// and they are never cleared.
 	ELDiscv4Only    int `json:"el_discv4_only"`
 	ELDiscv5Only    int `json:"el_discv5_only"`
 	ELDiscoveryBoth int `json:"el_discovery_both"`

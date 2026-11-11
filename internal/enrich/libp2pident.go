@@ -266,9 +266,15 @@ func (f *CLFingerprinter) handleInboundIdentification(evt event.EvtPeerIdentific
 	select {
 	case fp.Metadata = <-metaCh:
 	case <-grace.C:
-		fp.Metadata = CLMetadata{Outcome: "late"}
 	case <-cctx.Done():
-		fp.Metadata = CLMetadata{Outcome: "late"}
+	}
+	if fp.Metadata.Outcome == "" {
+		// select picks at random among ready cases, so an answer that is already in may lose to the timer.
+		select {
+		case fp.Metadata = <-metaCh:
+		default:
+			fp.Metadata = CLMetadata{Outcome: "late"}
+		}
 	}
 	safeInboundCLCallback(onFP, InboundCLFingerprint{NodeID: enode.PubkeyToIDV4(pub), Node: node, Fingerprint: fp})
 }
@@ -582,6 +588,10 @@ func (f *CLFingerprinter) exchangeMetadata(ctx context.Context, pid peer.ID) CLM
 		return CLMetadata{Outcome: "error"}
 	}
 	defer s.Close()
+	// The inbound caller stops waiting after a short grace; the reset releases the stream then,
+	// not at the full deadline, so stalled peers cannot pile up streams behind a freed slot.
+	stop := context.AfterFunc(ctx, func() { _ = s.Reset() })
+	defer stop()
 	_ = s.SetDeadline(time.Now().Add(f.timeout))
 	md := CLMetadata{Outcome: "error", Version: 2}
 	wantLen := uint64(metadataV2SSZLen)

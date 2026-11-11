@@ -2317,3 +2317,36 @@ func TestSetMetadataIgnoresExecutionRows(t *testing.T) {
 		t.Fatalf("execution row took consensus MetaData: %+v", rows)
 	}
 }
+
+func TestLayerChangeClearsMetadata(t *testing.T) {
+	state, err := netconf.CLForkStateAt("mainnet", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var id enode.ID
+	id[0] = 77
+	var cl enr.Record
+	cl.SetSeq(1)
+	cl.Set(enr.IPv4{1, 2, 3, 77})
+	cl.Set(enr.TCP(9000))
+	cl.Set(netconf.Eth2Entry(state.ENRForkID()))
+	s := NewWithLimit(0)
+	s.Observe(enode.SignNull(&cl, id), "v5", time.Now())
+	s.SetMetadata(id, Metadata{CGC: 8, CGCKnown: true, At: time.Now()})
+
+	nw, err := netconf.Get("mainnet")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var el enr.Record
+	el.SetSeq(2)
+	el.Set(enr.IPv4{1, 2, 3, 77})
+	el.Set(enr.TCP(30303))
+	el.Set(netconf.EthEntry{ForkID: nw.CurrentForkID()})
+	s.Observe(enode.SignNull(&el, id), "v5", time.Now())
+
+	rows := s.rows("mainnet")
+	if len(rows) != 1 || rows[0].Layer != "el" || rows[0].MDCGCKnown || rows[0].MDAt != 0 {
+		t.Fatalf("after a CL to EL change = %+v, want the consensus MetaData cleared", rows)
+	}
+}

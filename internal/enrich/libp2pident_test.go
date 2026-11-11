@@ -557,4 +557,22 @@ func TestCLInboundDoesNotHoldItsSlotForMetadata(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("inbound handler waited for a stalled MetaData instead of returning after Status")
 	}
+	metadataStreams := func() int {
+		open := 0
+		for _, c := range local.host.Network().ConnsToPeer(remote.host.ID()) {
+			for _, s := range c.GetStreams() {
+				if s.Protocol() == metadataProtocolV3 {
+					open++
+				}
+			}
+		}
+		return open
+	}
+	deadline := time.Now().Add(time.Second)
+	for metadataStreams() > 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the stalled MetaData stream outlived its handler; it would hold until the 5s deadline")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
