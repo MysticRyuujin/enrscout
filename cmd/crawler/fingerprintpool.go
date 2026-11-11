@@ -158,6 +158,7 @@ func (p *fingerprintPool) startCL(ctx context.Context, cr *crawler, workers int)
 				observeFingerprintAttempt("cl", "outbound", time.Since(start), err)
 				if err == nil {
 					mCLStatus.WithLabelValues("outbound", clStatusOutcome(r)).Inc()
+					observeCLMetadata(cr.set, "outbound", n.ID(), r)
 				}
 				if err != nil && ctx.Err() != nil {
 					cr.set.UnclaimFingerprint(n.ID())

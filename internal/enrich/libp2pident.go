@@ -34,6 +34,7 @@ import (
 	"github.com/libp2p/go-libp2p/p2p/security/noise"
 	ma "github.com/multiformats/go-multiaddr"
 	manet "github.com/multiformats/go-multiaddr/net"
+	msmux "github.com/multiformats/go-multistream"
 
 	"github.com/MysticRyuujin/enrscout/internal/clientname"
 	"github.com/MysticRyuujin/enrscout/internal/netconf"
@@ -51,6 +52,27 @@ const (
 	statusV1SSZLen = 84
 	statusV2SSZLen = 92
 )
+
+const (
+	metadataProtocolV2 protocol.ID = "/eth2/beacon_chain/req/metadata/2/ssz_snappy"
+	metadataProtocolV3 protocol.ID = "/eth2/beacon_chain/req/metadata/3/ssz_snappy"
+	// MetaData SSZ: seq_number uint64, attnets Bitvector[64], syncnets Bitvector[4], and from v3
+	// (Fulu) custody_group_count uint64.
+	metadataV2SSZLen = 17
+	metadataV3SSZLen = 25
+	// numberOfCustodyGroups is the Fulu NUMBER_OF_CUSTODY_GROUPS; a larger count is invalid.
+	numberOfCustodyGroups = 128
+)
+
+// CLMetadata is a peer's self-reported MetaData. Outcome is empty when no request was made.
+type CLMetadata struct {
+	Outcome  string
+	Version  int
+	Attnets  uint64
+	Syncnets uint8
+	CGC      uint32
+	CGCKnown bool
+}
 
 type CLFingerprinter struct {
 	host         host.Host
@@ -223,8 +245,17 @@ func (f *CLFingerprinter) handleInboundIdentification(evt event.EvtPeerIdentific
 	node := inboundCLNode(pub, evt.Conn.RemoteMultiaddr(), evt.ListenAddrs, f.allowPrivate)
 	cctx, cancel := context.WithTimeout(context.Background(), f.timeout)
 	defer cancel()
+	metaCh := make(chan CLMetadata, 1)
+	go func() { metaCh <- f.exchangeMetadata(cctx, pid) }()
 	if status, err := f.exchangeStatus(cctx, pid, localFork); err == nil {
 		fp.applyCLStatus(status)
+	}
+	// Never wait for MetaData past Status: the inboundSem slot is shared by every CL advertiser,
+	// and a peer that stalls MetaData would otherwise hold it until the timeout.
+	select {
+	case fp.Metadata = <-metaCh:
+	default:
+		fp.Metadata = CLMetadata{Outcome: "late"}
 	}
 	safeInboundCLCallback(onFP, InboundCLFingerprint{NodeID: enode.PubkeyToIDV4(pub), Node: node, Fingerprint: fp})
 }
@@ -318,10 +349,12 @@ func (f *CLFingerprinter) probe(ctx context.Context, n *enode.Node, localFork []
 	} else {
 		statusCh <- statusOutcome{err: errors.New("no consensus fork entry for status request")}
 	}
+	metaCh := make(chan CLMetadata, 1)
+	go func() { metaCh <- f.exchangeMetadata(cctx, pid) }()
 
 	if agent, ok := f.awaitAgent(cctx, pid); ok {
 		fp.Client, fp.Version, fp.OS, fp.Lang = parseCLAgent(agent)
-		f.awaitStatus(cctx, statusCh, &fp)
+		f.awaitExchanges(cctx, statusCh, metaCh, &fp)
 		return fp, nil
 	}
 	return fp, atProbeStage("identify", errors.New("identify did not complete"))
@@ -397,14 +430,25 @@ func (f *CLFingerprinter) settleAgent(ctx context.Context, pid peer.ID) (string,
 	return f.agent(pid)
 }
 
-func (f *CLFingerprinter) awaitStatus(ctx context.Context, statusCh <-chan statusOutcome, fp *Fingerprint) {
-	select {
-	case r := <-statusCh:
-		if r.err == nil {
-			fp.applyCLStatus(r.status)
+// awaitExchanges shares one clStatusGrace between Status and MetaData, so adding MetaData does
+// not lengthen an identify-only probe.
+func (f *CLFingerprinter) awaitExchanges(ctx context.Context, statusCh <-chan statusOutcome, metaCh <-chan CLMetadata, fp *Fingerprint) {
+	grace := time.NewTimer(clStatusGrace)
+	defer grace.Stop()
+	for statusCh != nil || metaCh != nil {
+		select {
+		case r := <-statusCh:
+			if r.err == nil {
+				fp.applyCLStatus(r.status)
+			}
+			statusCh = nil
+		case fp.Metadata = <-metaCh:
+			metaCh = nil
+		case <-grace.C:
+			return
+		case <-ctx.Done():
+			return
 		}
-	case <-time.After(clStatusGrace):
-	case <-ctx.Done():
 	}
 }
 
@@ -511,6 +555,55 @@ func (f *CLFingerprinter) exchangeStatus(ctx context.Context, pid peer.ID, local
 	copy(status.digest[:], response[:4])
 	status.headSlot = binary.LittleEndian.Uint64(response[76:84])
 	return status, nil
+}
+
+func (f *CLFingerprinter) exchangeMetadata(ctx context.Context, pid peer.ID) CLMetadata {
+	s, err := f.host.NewStream(ctx, pid, metadataProtocolV3, metadataProtocolV2)
+	if err != nil {
+		var unsupported msmux.ErrNotSupported[protocol.ID]
+		if errors.As(err, &unsupported) {
+			return CLMetadata{Outcome: "unsupported"}
+		}
+		return CLMetadata{Outcome: "error"}
+	}
+	defer s.Close()
+	_ = s.SetDeadline(time.Now().Add(f.timeout))
+	md := CLMetadata{Outcome: "error", Version: 2}
+	wantLen := uint64(metadataV2SSZLen)
+	if s.Protocol() == metadataProtocolV3 {
+		md.Version, wantLen = 3, metadataV3SSZLen
+	}
+	if err := s.CloseWrite(); err != nil {
+		return md
+	}
+	br := bufio.NewReader(io.LimitReader(s, 1024))
+	code, err := br.ReadByte()
+	if err != nil || code != 0 {
+		return md
+	}
+	responseLen, err := binary.ReadUvarint(br)
+	if err != nil {
+		return md
+	}
+	if responseLen != wantLen {
+		md.Outcome = "invalid"
+		return md
+	}
+	response := make([]byte, wantLen)
+	if _, err := io.ReadFull(snappy.NewReader(br), response); err != nil {
+		return md
+	}
+	md.Attnets = binary.LittleEndian.Uint64(response[8:16])
+	md.Syncnets = response[16] & 0x0f
+	md.Outcome = "ok"
+	if md.Version == 3 {
+		if cgc := binary.LittleEndian.Uint64(response[17:25]); cgc <= numberOfCustodyGroups {
+			md.CGC, md.CGCKnown = uint32(cgc), true
+		} else {
+			md.Outcome = "invalid"
+		}
+	}
+	return md
 }
 
 func inboundCLNode(pub *ecdsa.PublicKey, remote ma.Multiaddr, listenAddrs []ma.Multiaddr, allowPrivate bool) *enode.Node {

@@ -75,7 +75,8 @@ type Fingerprint struct {
 	Head uint64
 	// HeadAt is when the Status carrying Head was received, which can precede applying it: an inbound
 	// result may wait in the pending cache until discovery registers its node.
-	HeadAt time.Time
+	HeadAt   time.Time
+	Metadata CLMetadata
 }
 
 func (f Fingerprint) Identity() nodeset.Fingerprint {

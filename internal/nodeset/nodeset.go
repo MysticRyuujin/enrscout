@@ -931,6 +931,15 @@ func (s *Set) NetworkOf(id enode.ID) string {
 	return ""
 }
 
+func (s *Set) CGCOf(id enode.ID) (uint32, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if n := s.m[id]; n != nil && n.CGCKnown {
+		return n.CGC, true
+	}
+	return 0, false
+}
+
 func (s *Set) IPOf(id enode.ID) net.IP {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

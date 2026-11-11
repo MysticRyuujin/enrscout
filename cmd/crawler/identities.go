@@ -260,6 +260,7 @@ func newIdentityRuntime(ctx context.Context, cr *crawler, families []string, res
 				}
 				observeFingerprintAttempt(layerCL, "inbound", 0, nil)
 				mCLStatus.WithLabelValues("inbound", clStatusOutcome(result.Fingerprint)).Inc()
+				observeCLMetadata(set, "inbound", result.NodeID, result.Fingerprint)
 				if set.LayerOf(result.NodeID) == "" && result.Fingerprint.Network != "" {
 					now := time.Now()
 					if candidate := consensusInboundCandidate(set, result); candidate != nil {

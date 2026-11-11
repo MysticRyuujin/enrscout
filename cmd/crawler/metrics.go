@@ -1,9 +1,12 @@
 package main
 
 import (
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/ethereum/go-ethereum/p2p/enode"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -241,6 +244,14 @@ var (
 		Name: "enrscout_crawler_cl_status_total",
 		Help: "Consensus Status exchanges accompanying successful identifies, by direction and bounded outcome.",
 	}, []string{"direction", "outcome"})
+	mCLMetadata = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "enrscout_crawler_cl_metadata_total",
+		Help: "Consensus MetaData requests accompanying successful identifies, by direction, version, and bounded outcome.",
+	}, []string{"direction", "version", "outcome"})
+	mCLCGCCompare = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "enrscout_crawler_cl_cgc_compare_total",
+		Help: "MetaData v3 custody group count against the stored ENR cgc, by client; enr_unknown when the ENR value is absent.",
+	}, []string{"client", "result"})
 	mWalkIterators = promauto.NewGauge(prometheus.GaugeOpts{
 		Name: "enrscout_crawler_walk_iterators",
 		Help: "Discovery random-walk iterators feeding the resolve pipeline.",
@@ -275,6 +286,33 @@ func clStatusOutcome(fp enrich.Fingerprint) string {
 		return "classify_miss"
 	default:
 		return "none"
+	}
+}
+
+// observeCLMetadata reads the ENR cgc from the set, never from the probed record: an inbound
+// record is built from the connection and carries no cgc.
+func observeCLMetadata(set *nodeset.Set, direction string, id enode.ID, fp enrich.Fingerprint) {
+	md := fp.Metadata
+	if md.Outcome == "" {
+		return
+	}
+	mCLMetadata.WithLabelValues(direction, strconv.Itoa(md.Version), md.Outcome).Inc()
+	if !md.CGCKnown {
+		return
+	}
+	client := fp.Client
+	if !clientname.Recognized(layerCL, client) {
+		client = clientname.Other
+	}
+	enrCGC, ok := set.CGCOf(id)
+	switch {
+	case !ok:
+		mCLCGCCompare.WithLabelValues(client, "enr_unknown").Inc()
+	case enrCGC == md.CGC:
+		mCLCGCCompare.WithLabelValues(client, "match").Inc()
+	default:
+		mCLCGCCompare.WithLabelValues(client, "mismatch").Inc()
+		slog.Info("consensus custody mismatch", "node", id, "direction", direction, "client", fp.Client, "version", fp.Version, "enr_cgc", enrCGC, "metadata_cgc", md.CGC)
 	}
 }
 
