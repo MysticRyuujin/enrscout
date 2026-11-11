@@ -448,7 +448,12 @@ func TestCLMetadataExchange(t *testing.T) {
 			if err := client.host.Connect(ctx, peer.AddrInfo{ID: server.host.ID(), Addrs: server.host.Addrs()}); err != nil {
 				t.Fatal(err)
 			}
-			if got := client.exchangeMetadata(ctx, server.host.ID()); got != tc.want {
+			got := client.exchangeMetadata(ctx, server.host.ID())
+			if got.Outcome == "ok" && got.At.IsZero() {
+				t.Fatal("an answered MetaData carries no receive time")
+			}
+			got.At = time.Time{}
+			if got != tc.want {
 				t.Fatalf("exchangeMetadata = %+v, want %+v", got, tc.want)
 			}
 		})

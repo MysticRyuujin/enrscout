@@ -263,6 +263,16 @@ func TestMigrateStagingSchemaAddsSubdivision(t *testing.T) {
 	if cgc != 0 || cgcKnown {
 		t.Fatalf("cgc defaults = (%d, %v), want (0, false)", cgc, cgcKnown)
 	}
+	var mdCGC, mdSyncnets uint32
+	var mdKnown bool
+	var mdAttnets uint64
+	var mdAt int64
+	if err := eng.db.QueryRow("SELECT md_cgc, md_cgc_known, md_attnets, md_syncnets, md_at FROM nodes_staging WHERE id = 'legacy'").Scan(&mdCGC, &mdKnown, &mdAttnets, &mdSyncnets, &mdAt); err != nil {
+		t.Fatal(err)
+	}
+	if mdCGC != 0 || mdKnown || mdAttnets != 0 || mdSyncnets != 0 || mdAt != 0 {
+		t.Fatalf("MetaData defaults = (%d, %v, %d, %d, %d), want zero", mdCGC, mdKnown, mdAttnets, mdSyncnets, mdAt)
+	}
 	// A schema-3 generation has no head or ENR schedule columns; sync state must still compute.
 	if err := computeSyncState(context.Background(), eng.db, []string{"mainnet"}, time.Now()); err != nil {
 		t.Fatal(err)
@@ -1656,5 +1666,36 @@ func TestRefreshComputesSyncStateAgainstPeerHeads(t *testing.T) {
 	lagging, err := eng.Nodes(ctx, Filter{Network: "mainnet", ForkStatus: "all", Sync: "lagging"})
 	if err != nil || lagging.Total != 1 {
 		t.Fatalf("sync=lagging total = %d, %v; want 1", lagging.Total, err)
+	}
+}
+
+func TestNodeServesMetadataAsSubnetCounts(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.NewFS(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var id enode.ID
+	id[0] = 44
+	set := nodeset.NewWithLimit(0)
+	set.Ingest([]nodeset.Row{{ID: id.String(), Layer: "cl", Network: "mainnet", IP: "1.2.3.4", TCP: 9000, HasV5: true, Score: 100, FPStatus: "pending"}})
+	at := time.Unix(1700000000, 0)
+	set.SetMetadata(id, nodeset.Metadata{CGC: 64, CGCKnown: true, Attnets: 1<<63 | 0b101, Syncnets: 0b1010, At: at})
+	publishTestSnapshot(t, ctx, st, set, 1, time.Now())
+	eng, err := New(st, []string{"mainnet"}, t.TempDir(), "snapshots")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Close()
+	if err := eng.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := eng.NodeByKey(ctx, id.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n == nil || n.MetadataCGC != 64 || !n.MetadataCGCKnown || n.MetadataAttnets != 3 || n.MetadataSyncnets != 2 || n.MetadataObservedAt != at.Unix() {
+		t.Fatalf("node MetaData = %+v", n)
 	}
 }

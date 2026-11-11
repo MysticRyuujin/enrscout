@@ -237,6 +237,27 @@ export default function NodeDetail() {
               }
             />
           )}
+          {node.layer === "cl" && node.md_observed_at > 0 && (
+            <Row
+              label="MetaData"
+              value={
+                <span title="Self-reported in the node's req/resp MetaData answer, not its signed ENR. A custody count that differs from the ENR means the two disagree.">
+                  {node.md_cgc_known ? (
+                    <>
+                      {node.md_cgc} custody groups
+                      {node.cgc_known && node.md_cgc !== node.cgc && (
+                        <span className="warn-tag"> ≠ ENR {node.cgc}</span>
+                      )}
+                      {" · "}
+                    </>
+                  ) : null}
+                  {node.md_attnets_subscribed} of 64 attnets ·{" "}
+                  {node.md_syncnets_subscribed} of 4 syncnets ·{" "}
+                  {relTime(node.md_observed_at)}
+                </span>
+              }
+            />
+          )}
         </div>
 
         <div className="card">

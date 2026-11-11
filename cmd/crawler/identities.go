@@ -273,6 +273,7 @@ func newIdentityRuntime(ctx context.Context, cr *crawler, families []string, res
 								geo.Record(set, result.NodeID, candidate.IP())
 							}
 							set.SetFingerprint(result.NodeID, layerCL, result.Fingerprint.Identity(), "inbound")
+							cr.applyMetadata(result.NodeID, result.Fingerprint)
 							mAdvertiserInbound.WithLabelValues(spec.Network, layerCL, "identified_new").Inc()
 							slog.Info("inbound CL node identified", "node", result.NodeID, "network", result.Fingerprint.Network, "client", result.Fingerprint.Client)
 							return

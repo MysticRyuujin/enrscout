@@ -39,6 +39,7 @@ import (
 	"github.com/MysticRyuujin/enrscout/internal/clientname"
 	"github.com/MysticRyuujin/enrscout/internal/netconf"
 	"github.com/MysticRyuujin/enrscout/internal/netpolicy"
+	"github.com/MysticRyuujin/enrscout/internal/nodeset"
 )
 
 const agentVersionKey = "AgentVersion"
@@ -72,6 +73,14 @@ type CLMetadata struct {
 	Syncnets uint8
 	CGC      uint32
 	CGCKnown bool
+	At       time.Time
+}
+
+func (m CLMetadata) Record() (nodeset.Metadata, bool) {
+	if m.Outcome != "ok" {
+		return nodeset.Metadata{}, false
+	}
+	return nodeset.Metadata{CGC: m.CGC, CGCKnown: m.CGCKnown, Attnets: m.Attnets, Syncnets: m.Syncnets, At: m.At}, true
 }
 
 type CLFingerprinter struct {
@@ -601,7 +610,7 @@ func (f *CLFingerprinter) exchangeMetadata(ctx context.Context, pid peer.ID) CLM
 	}
 	md.Attnets = binary.LittleEndian.Uint64(response[8:16])
 	md.Syncnets = response[16] & 0x0f
-	md.Outcome = "ok"
+	md.Outcome, md.At = "ok", time.Now()
 	if md.Version == 3 {
 		if cgc := binary.LittleEndian.Uint64(response[17:25]); cgc <= numberOfCustodyGroups {
 			md.CGC, md.CGCKnown = uint32(cgc), true

@@ -86,6 +86,7 @@ type Node struct {
 	// Head is the last Status-reported head (EL block or CL slot); zero is unknown.
 	Head           uint64
 	HeadObservedAt time.Time
+	Metadata       Metadata
 
 	Client        string
 	ClientVersion string
@@ -1245,6 +1246,25 @@ type extracted struct {
 	schedule          ENRForkSchedule
 }
 
+// Metadata is a consensus node's self-reported MetaData. It is kept apart from CGC, which comes
+// from the signed record, so the two can be compared. At is zero when none was received.
+type Metadata struct {
+	CGC      uint32
+	CGCKnown bool
+	Attnets  uint64
+	Syncnets uint8
+	At       time.Time
+}
+
+// SetMetadata keeps the last answer; a later probe without one does not clear it.
+func (s *Set) SetMetadata(id enode.ID, md Metadata) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if n := s.m[id]; n != nil && n.Layer == "cl" {
+		n.Metadata = md
+	}
+}
+
 // ENRForkSchedule is a consensus record's own eth2 fork schedule. It is kept apart from ForkHash and
 // ForkNext, which a Status exchange overwrites, so the next-fork claim always pairs with the digest
 // the same record advertised.
@@ -1435,6 +1455,11 @@ type Row struct {
 	ENRForkDigest        string  `parquet:"enr_fork_digest"`
 	ENRNextForkVersion   string  `parquet:"enr_next_fork_version"`
 	ENRNextForkEpoch     uint64  `parquet:"enr_next_fork_epoch"`
+	MDCGC                uint32  `parquet:"md_cgc"`
+	MDCGCKnown           bool    `parquet:"md_cgc_known"`
+	MDAttnets            uint64  `parquet:"md_attnets"`
+	MDSyncnets           uint32  `parquet:"md_syncnets"`
+	MDAt                 int64   `parquet:"md_at"`
 }
 
 func (s *Set) rows(network string) []Row {
@@ -1489,6 +1514,7 @@ func (n *Node) row() Row {
 		ForkSource: n.ForkSource, ForkObservedAt: unixOrZero(n.ForkObservedAt), FPDirection: n.FPDirection, Pinned: n.pinned,
 		Head: n.Head, HeadObservedAt: unixOrZero(n.HeadObservedAt),
 		ENRForkDigest: n.ENRSchedule.Digest, ENRNextForkVersion: n.ENRSchedule.NextVersion, ENRNextForkEpoch: n.ENRSchedule.NextEpoch,
+		MDCGC: n.Metadata.CGC, MDCGCKnown: n.Metadata.CGCKnown, MDAttnets: n.Metadata.Attnets, MDSyncnets: uint32(n.Metadata.Syncnets), MDAt: unixOrZero(n.Metadata.At),
 	}
 }
 
@@ -1562,6 +1588,7 @@ func (s *Set) Ingest(rows []Row) (dropped, evicted int) {
 			Geolocated: r.Geolocated, GeoAccuracyRadiusKM: r.GeoAccuracyRadiusKM, pinned: r.Pinned,
 			Head: r.Head, HeadObservedAt: timeOrZero(r.HeadObservedAt),
 			ENRSchedule:  ENRForkSchedule{Digest: r.ENRForkDigest, NextVersion: r.ENRNextForkVersion, NextEpoch: r.ENRNextForkEpoch},
+			Metadata:     Metadata{CGC: r.MDCGC, CGCKnown: r.MDCGCKnown, Attnets: r.MDAttnets, Syncnets: uint8(r.MDSyncnets), At: timeOrZero(r.MDAt)},
 			fpDone:       verifiedFingerprint,
 			fpRefreshDue: verifiedFingerprint && r.FPStatus == "stale",
 			fpAttempts:   restoredAttempts(r),

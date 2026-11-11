@@ -64,6 +64,11 @@ export interface Node {
   layer: string;
   cgc: number;
   cgc_known: boolean;
+  md_cgc: number;
+  md_cgc_known: boolean;
+  md_attnets_subscribed: number;
+  md_syncnets_subscribed: number;
+  md_observed_at: number;
   has_v4: boolean;
   has_v5: boolean;
   score: number;

@@ -135,11 +135,11 @@ func currentRows(network string, gen time.Time) ([]nodeset.Row, error) {
 	}
 	cl := []struct {
 		client, version, os string
-		cgc                 uint32
+		cgc, mdCGC          uint32
 	}{
-		{"Lighthouse", "6.0.0", "linux", 128},
-		{"Prysm", "5.2.0", "linux", 4},
-		{"Teku", "25.7.0", "linux", 8},
+		{"Lighthouse", "6.0.0", "linux", 128, 128},
+		{"Prysm", "5.2.0", "linux", 4, 64},
+		{"Teku", "25.7.0", "linux", 8, 8},
 	}
 
 	rows := make([]nodeset.Row, 0, len(el)+len(cl))
@@ -157,6 +157,7 @@ func currentRows(network string, gen time.Time) ([]nodeset.Row, error) {
 	for i, c := range cl {
 		rows = append(rows, nodeset.Row{
 			ID: id(), Network: network, Layer: "cl", ForkHash: clDigest, CGC: c.cgc, CGCKnown: true,
+			MDCGC: c.mdCGC, MDCGCKnown: true, MDAttnets: 0b1011, MDSyncnets: 0b1, MDAt: ts,
 			IP: fmt.Sprintf("198.51.100.%d", i+1), TCP: 9000, UDP: 9000, QUIC: 9001, HasV5: true,
 			Client: c.client, Version: c.version, OS: c.os,
 			Country: "DE", City: "Frankfurt", Lat: 50.11, Lon: 8.68, Geolocated: true, GeoAccuracyRadiusKM: 20,

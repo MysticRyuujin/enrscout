@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/bits"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -32,13 +33,15 @@ const columns = `id, enode, enr, seq, ip, ip6, tcp, udp, tcp6, udp6, quic, quic6
 	coalesce(membership_source, ''), coalesce(membership_verified_at, 0), coalesce(fork_source, ''), coalesce(fork_observed_at, 0),
 	coalesce(fp_direction, ''), coalesce(pinned, false), dialable,
 	coalesce(head, 0), coalesce(head_observed_at, 0), ` + syncStateColumn + `, head_lag,
-	` + enrScheduleColumns
+	` + enrScheduleColumns + `, ` + metadataColumns
 
 const verifiedFingerprintCondition = "fp_status IN ('ok', 'stale')"
 
 const syncStateColumn = "coalesce(sync_state, 'unknown')"
 
 const enrScheduleColumns = "coalesce(enr_fork_digest, ''), coalesce(enr_next_fork_version, ''), coalesce(enr_next_fork_epoch, 0)"
+
+const metadataColumns = "coalesce(md_cgc, 0), coalesce(md_cgc_known, false), coalesce(md_attnets, 0), coalesce(md_syncnets, 0), coalesce(md_at, 0)"
 
 // warmupPeriod gates the disclosure banner only — not the same window as clientname.ChartMaxFingerprintAge.
 const warmupPeriod = 48 * time.Hour
@@ -206,6 +209,12 @@ type Node struct {
 	ENRForkDigest      string `json:"enr_fork_digest,omitempty"`
 	ENRNextForkVersion string `json:"enr_next_fork_version,omitempty"`
 	ENRNextForkEpoch   uint64 `json:"enr_next_fork_epoch,omitempty,string"`
+	// MetaData is served as subnet counts: a 64-bit attnets bitfield loses precision as a JSON number.
+	MetadataCGC        uint32 `json:"md_cgc"`
+	MetadataCGCKnown   bool   `json:"md_cgc_known"`
+	MetadataAttnets    int    `json:"md_attnets_subscribed"`
+	MetadataSyncnets   int    `json:"md_syncnets_subscribed"`
+	MetadataObservedAt int64  `json:"md_observed_at"`
 	// ForkReadiness is the row's state against its network's tracked fork, empty when none is tracked.
 	ForkReadiness netconf.Readiness `json:"fork_readiness,omitempty"`
 }
@@ -399,7 +408,8 @@ const emptyTableDDL = `CREATE TABLE IF NOT EXISTS nodes (
 	membership_source VARCHAR, membership_verified_at BIGINT, fork_source VARCHAR, fork_observed_at BIGINT,
 	fp_direction VARCHAR, pinned BOOLEAN, dialable BOOLEAN,
 	head UBIGINT, head_observed_at BIGINT, sync_state VARCHAR, head_lag BIGINT,
-	enr_fork_digest VARCHAR, enr_next_fork_version VARCHAR, enr_next_fork_epoch UBIGINT
+	enr_fork_digest VARCHAR, enr_next_fork_version VARCHAR, enr_next_fork_epoch UBIGINT,
+	md_cgc UINTEGER, md_cgc_known BOOLEAN, md_attnets UBIGINT, md_syncnets UINTEGER, md_at BIGINT
 )`
 
 // migrateStagingSchema supplies defaults for additive columns that older,
@@ -417,6 +427,7 @@ func migrateStagingSchema(ctx context.Context, db *sql.DB) error {
 	for _, column := range []string{
 		"head UBIGINT DEFAULT 0", "head_observed_at BIGINT DEFAULT 0",
 		"enr_fork_digest VARCHAR DEFAULT ''", "enr_next_fork_version VARCHAR DEFAULT ''", "enr_next_fork_epoch UBIGINT DEFAULT 0",
+		"md_cgc UINTEGER DEFAULT 0", "md_cgc_known BOOLEAN DEFAULT false", "md_attnets UBIGINT DEFAULT 0", "md_syncnets UINTEGER DEFAULT 0", "md_at BIGINT DEFAULT 0",
 	} {
 		if _, err := db.ExecContext(ctx, "ALTER TABLE nodes_staging ADD COLUMN IF NOT EXISTS "+column); err != nil {
 			return fmt.Errorf("add %s snapshot column: %w", strings.Fields(column)[0], err)
@@ -1238,6 +1249,8 @@ func scanNodes(rows *sql.Rows, at time.Time) ([]Node, error) {
 	targets := map[string]*netconf.ForkTarget{}
 	for rows.Next() {
 		var n Node
+		var attnets uint64
+		var syncnets uint32
 		if err := rows.Scan(
 			&n.ID, &n.Enode, &n.ENR, &n.Seq, &n.IP, &n.IP6, &n.TCP, &n.UDP, &n.TCP6, &n.UDP6, &n.QUIC, &n.QUIC6, &n.Network, &n.ForkHash, &n.ForkNext, &n.Layer,
 			&n.CGC, &n.CGCKnown,
@@ -1247,9 +1260,11 @@ func scanNodes(rows *sql.Rows, at time.Time) ([]Node, error) {
 			&n.FPDirection, &n.Pinned, &n.Dialable,
 			&n.Head, &n.HeadObservedAt, &n.SyncState, &n.HeadLag,
 			&n.ENRForkDigest, &n.ENRNextForkVersion, &n.ENRNextForkEpoch,
+			&n.MetadataCGC, &n.MetadataCGCKnown, &attnets, &syncnets, &n.MetadataObservedAt,
 		); err != nil {
 			return nil, err
 		}
+		n.MetadataAttnets, n.MetadataSyncnets = bits.OnesCount64(attnets), bits.OnesCount32(syncnets)
 		n.ForkCompatible = netconf.RowForkCurrentAt(n.Layer, n.Network, n.ForkHash, n.ForkNext, at)
 		target, ok := targets[n.Network]
 		if !ok {
