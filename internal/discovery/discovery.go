@@ -28,6 +28,8 @@ type endpoint struct {
 	family string
 	iter   enode.Iterator
 	res    resolver
+	v4     *discover.UDPv4
+	v5     *discover.UDPv5
 }
 
 type Config struct {
@@ -198,8 +200,8 @@ func New(cfg Config) (*Crawler, error) {
 		}
 		c.conns = append(c.conns, conn)
 		c.closers = append(c.closers, v4.Close, v5.Close)
-		c.endpoints = append(c.endpoints, endpoint{proto: "v4", family: fam, iter: v4.RandomNodes(), res: v4})
-		c.endpoints = append(c.endpoints, endpoint{proto: "v5", family: fam, iter: v5.RandomNodes(), res: v5})
+		c.endpoints = append(c.endpoints, endpoint{proto: "v4", family: fam, iter: v4.RandomNodes(), res: v4, v4: v4})
+		c.endpoints = append(c.endpoints, endpoint{proto: "v5", family: fam, iter: v5.RandomNodes(), res: v5, v5: v5})
 	}
 	return c, nil
 }
@@ -318,6 +320,49 @@ func (c *Crawler) ResolveProtocol(n *enode.Node, proto string) (*enode.Node, str
 		return rn, e.proto, nil
 	}
 	return nil, "", errUnresolved
+}
+
+func (c *Crawler) ProbeFamilies(n *enode.Node) []string {
+	fams := nodeFamilies(n)
+	var out []string
+	for _, e := range c.endpoints {
+		if e.proto == "v4" && fams[e.family] {
+			out = append(out, e.family)
+		}
+	}
+	return out
+}
+
+func (c *Crawler) Ping(n *enode.Node, proto, family string) error {
+	e, ok := c.endpoint(proto, family)
+	if !ok {
+		return errUnresolved
+	}
+	target := familyNode(n, family)
+	var err error
+	if e.v4 != nil {
+		_, err = e.v4.Ping(target)
+	} else {
+		_, err = e.v5.Ping(target)
+	}
+	return err
+}
+
+func (c *Crawler) FindnodeV5(n *enode.Node, family string, distances []uint) ([]*enode.Node, error) {
+	e, ok := c.endpoint("v5", family)
+	if !ok {
+		return nil, errUnresolved
+	}
+	return e.v5.Findnode(familyNode(n, family), distances)
+}
+
+func (c *Crawler) endpoint(proto, family string) (endpoint, bool) {
+	for _, e := range c.endpoints {
+		if e.proto == proto && e.family == family && (e.v4 != nil || e.v5 != nil) {
+			return e, true
+		}
+	}
+	return endpoint{}, false
 }
 
 // familyNode returns n when its preferred endpoint already uses family. go-ethereum

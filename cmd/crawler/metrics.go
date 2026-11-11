@@ -123,6 +123,18 @@ var (
 		Name: "enrscout_crawler_invalid_records_total",
 		Help: "Observations rejected before retention, by bounded reason.",
 	}, []string{"reason"})
+	mBootnodeUp = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "enrscout_crawler_bootnode_up",
+		Help: "1 after a PING answer, 0 after three missed rounds in a row; unset until then.",
+	}, []string{"network", "layer", "protocol", "family", "node"})
+	mBootnodeRTT = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "enrscout_crawler_bootnode_rtt_seconds",
+		Help: "Round-trip time of the last answered bootnode PING.",
+	}, []string{"network", "layer", "protocol", "family", "node"})
+	mBootnodeFindnodeNodes = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "enrscout_crawler_bootnode_findnode_nodes",
+		Help: "Records a bootnode returned for a discv5 FINDNODE at distance 256 in the last round; 0 on error.",
+	}, []string{"network", "layer", "family", "node"})
 	mAdvertiserInbound = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "enrscout_crawler_advertiser_inbound_total",
 		Help: "Inbound advertiser fingerprint connections by network, layer, and bounded outcome.",

@@ -279,3 +279,88 @@ func TestResolveDualStackUnreachableIPv4(t *testing.T) {
 		})
 	}
 }
+
+func loopbackCrawler(t *testing.T, boot []*enode.Node) *Crawler {
+	t.Helper()
+	loopback := net.IP{127, 0, 0, 1}
+	probe, err := net.ListenUDP("udp4", &net.UDPAddr{IP: loopback})
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := probe.LocalAddr().(*net.UDPAddr).Port
+	probe.Close()
+	c, err := New(Config{
+		PortV4: port, PortV5: port, Families: []string{"udp4"},
+		StaticIPs: []net.IP{loopback}, Bootnodes: boot, CLOnly: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { c.Close() })
+	return c
+}
+
+func TestCrawlerProbesAnotherNodeOverBothProtocols(t *testing.T) {
+	peer := loopbackCrawler(t, nil)
+	other := loopbackCrawler(t, []*enode.Node{peer.LocalNode()})
+	prober := loopbackCrawler(t, nil)
+	target := peer.LocalNode()
+
+	for _, proto := range []string{"v4", "v5"} {
+		if err := prober.Ping(target, proto, "udp4"); err != nil {
+			t.Fatalf("Ping %s: %v", proto, err)
+		}
+	}
+	if err := prober.Ping(target, "v4", "udp6"); err == nil {
+		t.Fatal("Ping over a family the crawler has no socket for succeeded")
+	}
+
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		nodes, err := prober.FindnodeV5(target, "udp4", []uint{uint(enode.LogDist(target.ID(), other.LocalNode().ID()))})
+		if err != nil {
+			t.Fatalf("FindnodeV5: %v", err)
+		}
+		if len(nodes) == 1 && nodes[0].ID() == other.LocalNode().ID() {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("FindnodeV5 returned %d nodes, want the one peer in that bucket", len(nodes))
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+func TestProbeFamiliesIntersectsRecordAndSockets(t *testing.T) {
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var r enr.Record
+	r.Set(enr.IP(net.ParseIP("192.0.2.1")))
+	r.Set(enr.IP(net.ParseIP("2001:db8::1")))
+	r.Set(enr.UDP(30303))
+	if err := enode.SignV4(&r, key); err != nil {
+		t.Fatal(err)
+	}
+	dual, err := enode.New(enode.ValidSchemes, &r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v6only := enode.NewV4(&key.PublicKey, net.ParseIP("2001:db8::1"), 0, 30303)
+
+	c := &Crawler{endpoints: []endpoint{
+		{proto: "v4", family: "udp4"}, {proto: "v5", family: "udp4"},
+		{proto: "v4", family: "udp6"}, {proto: "v5", family: "udp6"},
+	}}
+	if got := c.ProbeFamilies(dual); strings.Join(got, ",") != "udp4,udp6" {
+		t.Fatalf("dual-stack record on a dual-stack crawler = %v, want udp4,udp6", got)
+	}
+	c.endpoints = c.endpoints[:2]
+	if got := c.ProbeFamilies(dual); strings.Join(got, ",") != "udp4" {
+		t.Fatalf("dual-stack record on an IPv4-only crawler = %v, want udp4", got)
+	}
+	if got := c.ProbeFamilies(v6only); len(got) != 0 {
+		t.Fatalf("IPv6-only record on an IPv4-only crawler = %v, want none", got)
+	}
+}
