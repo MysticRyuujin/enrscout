@@ -250,11 +250,15 @@ func (f *CLFingerprinter) handleInboundIdentification(evt event.EvtPeerIdentific
 	if status, err := f.exchangeStatus(cctx, pid, localFork); err == nil {
 		fp.applyCLStatus(status)
 	}
-	// Never wait for MetaData past Status: the inboundSem slot is shared by every CL advertiser,
-	// and a peer that stalls MetaData would otherwise hold it until the timeout.
+	// Bounded: the inboundSem slot is shared by every CL advertiser, and a peer that stalls MetaData
+	// would otherwise hold it until the timeout. Not zero: MetaData often lands just after Status.
+	grace := time.NewTimer(clInboundMetadataGrace)
+	defer grace.Stop()
 	select {
 	case fp.Metadata = <-metaCh:
-	default:
+	case <-grace.C:
+		fp.Metadata = CLMetadata{Outcome: "late"}
+	case <-cctx.Done():
 		fp.Metadata = CLMetadata{Outcome: "late"}
 	}
 	safeInboundCLCallback(onFP, InboundCLFingerprint{NodeID: enode.PubkeyToIDV4(pub), Node: node, Fingerprint: fp})
@@ -297,6 +301,8 @@ func (f *CLFingerprinter) ProbeStatus(ctx context.Context, n *enode.Node, localF
 
 // Status must not delay or fail an identify-only success beyond this grace.
 const clStatusGrace = 2 * time.Second
+
+const clInboundMetadataGrace = 500 * time.Millisecond
 
 type clStatus struct {
 	digest   [4]byte
