@@ -124,6 +124,13 @@ Reviewed and deliberately not fixed; re-litigate only with new information.
   rows to the connection IP needs the check inside the nodeset lock, and binding signed rows drops
   inbound identification for NAT and dual-stack nodes. Two scan-driven fixes were rejected for these
   reasons.
+- **A DNS tree record proves its key, not its endpoint.** A signed record for an address its key
+  holder does not own can reach a tree, because the score credits the key and no step proves the
+  endpoint; go-ethereum's crawl pipeline has the same property. `--max-per-ip` on the DNS publisher
+  (default 5, per IPv4 address or IPv6 /64) bounds how many records one address can hold in a tree.
+  It does not prove an endpoint, and it lets five higher-ranked records for an address push the real
+  nodes at that address out of the tree. An endpoint proof was rejected: it needs an evidence column
+  and an outbound dial that most peers refuse at their peer limit, for a tree that is a fallback.
 - **CORS preflight carries no `Allow-Headers` or `Max-Age`.** Only simple requests are made.
   `Vary: Origin` is unnecessary because `--cors-origin` is static and never reflected.
 - **The final publish quiesces every nodeset writer, and each new one must opt in.** `shutdown`

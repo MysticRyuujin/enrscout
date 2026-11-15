@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -958,6 +959,63 @@ func TestSelectNodesPrefersScoreThenFreshness(t *testing.T) {
 	}
 }
 
+func TestSelectNodesCapsRecordsPerIP(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	var rows []nodeset.Row
+	for i := range 7 {
+		rows = append(rows, currentMainnetEL(t, v4Row(t, 1, 30303+i, int32(i+1), now), now))
+	}
+	lowest := rows[0].ID
+	other := currentMainnetEL(t, v4Row(t, 2, 30303, 1, now), now)
+	rows = append(rows, other)
+
+	got := selectNodes(rows, selectOpts{minScore: 1, protocol: "any", maxPerIP: 5}, now)
+	if len(got) != 6 {
+		t.Fatalf("selected %d nodes, want 5 for the shared address and 1 for the other", len(got))
+	}
+	ids := map[string]bool{}
+	for _, n := range got {
+		ids[n.ID().String()] = true
+	}
+	if ids[lowest] || !ids[other.ID] {
+		t.Fatalf("cap must drop the lowest-ranked record of the shared address and keep the other address")
+	}
+	if got := selectNodes(rows, selectOpts{minScore: 1, protocol: "any"}, now); len(got) != 8 {
+		t.Fatalf("selected %d nodes with no cap, want 8", len(got))
+	}
+}
+
+func TestCapKeys(t *testing.T) {
+	tests := []struct {
+		ip, ip6 string
+		want    []string
+	}{
+		{"1.2.3.4", "", []string{"1.2.3.4"}},
+		{"1.2.3.4", "2001:db8:1:2:3::9", []string{"1.2.3.4", "2001:db8:1:2::/64"}},
+		{"", "2001:db8:1:2:ffff::1", []string{"2001:db8:1:2::/64"}},
+		{"1.2.3.4", "::ffff:1.2.3.4", []string{"1.2.3.4"}},
+	}
+	for _, tt := range tests {
+		if got := capKeys(&nodeset.Row{IP: tt.ip, IP6: tt.ip6}); !slices.Equal(got, tt.want) {
+			t.Errorf("capKeys(%q, %q) = %v, want %v", tt.ip, tt.ip6, got, tt.want)
+		}
+	}
+}
+
+func TestCapPerIPCountsEachAddressOfADualStackRecord(t *testing.T) {
+	row := func(ip, ip6 string) candidate { return candidate{row: &nodeset.Row{IP: ip, IP6: ip6}} }
+	got := capPerIP([]candidate{
+		row("1.2.3.4", "2001:db8::1"),
+		row("1.2.3.5", "2001:db8::2"),
+		row("1.2.3.6", "2001:db8::3"),
+		row("1.2.3.4", ""),
+		row("1.2.3.4", ""),
+	}, 2)
+	if len(got) != 3 || got[0].row.IP != "1.2.3.4" || got[1].row.IP != "1.2.3.5" || got[2].row.IP6 != "" {
+		t.Fatalf("kept %d records, want the first two of the /64 and one more for 1.2.3.4", len(got))
+	}
+}
+
 func TestSelectNodesAgeUsesPublicationTime(t *testing.T) {
 	snapshotTime := time.Unix(1700000000, 0)
 	row := currentMainnetEL(t, v4Row(t, 1, 30303, 5, snapshotTime), snapshotTime)
@@ -988,6 +1046,7 @@ func TestSelectOptsValidate(t *testing.T) {
 		{"invalid protocol", mutate(func(o *selectOpts) { o.protocol = "v6" })},
 		{"invalid layer", mutate(func(o *selectOpts) { o.layer = "exec" })},
 		{"negative limit", mutate(func(o *selectOpts) { o.limit = -1 })},
+		{"negative per-IP cap", mutate(func(o *selectOpts) { o.maxPerIP = -1 })},
 		{"unknown client balance", mutate(func(o *selectOpts) { o.balance = "weighted" })},
 	}
 	for _, tt := range tests {

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"log/slog"
 	"math"
+	"net"
+	"slices"
 	"sort"
 	"time"
 
@@ -30,6 +32,7 @@ type selectOpts struct {
 	layer      string
 	capability string
 	limit      int
+	maxPerIP   int
 	balance    string
 }
 
@@ -49,6 +52,9 @@ func (o selectOpts) Validate() error {
 	}
 	if o.limit < 0 {
 		return errors.New("--limit must not be negative")
+	}
+	if o.maxPerIP < 0 {
+		return errors.New("--max-per-ip must not be negative")
 	}
 	if o.balance != balanceProportional && o.balance != balanceNone {
 		return errors.New("--client-balance must be proportional or none")
@@ -228,6 +234,46 @@ func rankCandidates(rows []nodeset.Row, opt selectOpts, now time.Time) []candida
 	return out
 }
 
+// capPerIP keeps the first perIP candidates for each address. A signed record proves its key, not its
+// endpoint, so without a cap one key holder can fill a tree with records that name one address.
+func capPerIP(cands []candidate, perIP int) []candidate {
+	if perIP <= 0 {
+		return cands
+	}
+	seen := map[string]int{}
+	out := make([]candidate, 0, len(cands))
+	for _, c := range cands {
+		keys := capKeys(c.row)
+		if slices.ContainsFunc(keys, func(k string) bool { return seen[k] >= perIP }) {
+			continue
+		}
+		for _, k := range keys {
+			seen[k]++
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+// capKeys counts IPv6 by /64: every address in one routes to the same site and costs nothing to name.
+func capKeys(r *nodeset.Row) []string {
+	var keys []string
+	for _, s := range []string{r.IP, r.IP6} {
+		ip := net.ParseIP(s)
+		if ip == nil {
+			continue
+		}
+		key := ip.String()
+		if ip.To4() == nil {
+			key = ip.Mask(net.CIDRMask(64, 128)).String() + "/64"
+		}
+		if !slices.Contains(keys, key) {
+			keys = append(keys, key)
+		}
+	}
+	return keys
+}
+
 // pick selects one tree's nodes from the ranked candidates.
 func pick(cands []candidate, opt selectOpts) []candidate {
 	if opt.capability == "snap" {
@@ -239,6 +285,7 @@ func pick(cands []candidate, opt selectOpts) []candidate {
 		}
 		cands = snap
 	}
+	cands = capPerIP(cands, opt.maxPerIP)
 	if opt.limit <= 0 || len(cands) <= opt.limit {
 		return cands
 	}
