@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/ethereum/go-ethereum/core/forkid"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -1228,6 +1229,51 @@ func TestObserveCanonicalizesSelfDeclaredClient(t *testing.T) {
 	}
 	if got := s.rows("")[0].Client; got != "Erigon" {
 		t.Fatalf("client = %q, want Erigon", got)
+	}
+}
+
+func TestParquetHoldsValidUTF8ForPeerStrings(t *testing.T) {
+	s := NewWithLimit(0)
+	now := time.Now()
+
+	declared := elNode(t, 91)
+	r := *declared.Record()
+	r.Set(clientEntry{"Geth", "v1\xff"})
+	declared = enode.SignNull(&r, declared.ID())
+	s.Observe(declared, "v5", now)
+
+	probed := elNode(t, 92)
+	s.Observe(probed, "v5", now)
+	s.SetFingerprint(probed.ID(), "el", Fingerprint{"Ge\xffth", "v1.17\xff", "linux\xff", "go\xff1.24", "eth\xff/68"}, "outbound")
+
+	var restored enode.ID
+	restored[0] = 93
+	s.Ingest([]Row{{
+		ID: restored.String(), Layer: "el", Network: "mainnet", IP: "1.2.3.93", TCP: 30303, HasV5: true, Score: scoreInit,
+		Client: "Geth", Version: "v1\xff",
+	}})
+
+	data, err := s.ParquetForNetwork("mainnet")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := RowsFromParquet(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 3 {
+		t.Fatalf("rows = %d, want 3", len(rows))
+	}
+	replaced := string(utf8.RuneError)
+	for _, row := range rows {
+		for _, v := range []string{row.Client, row.Version, row.OS, row.Lang, row.Caps} {
+			if !utf8.ValidString(v) {
+				t.Errorf("row %s holds invalid UTF-8: %q", row.ID, v)
+			}
+		}
+		if row.ID == probed.ID().String() && (row.Client != "Ge"+replaced+"th" || row.Caps != "eth"+replaced+"/68") {
+			t.Errorf("probed row = %q %q, want the invalid bytes replaced", row.Client, row.Caps)
+		}
 	}
 }
 
