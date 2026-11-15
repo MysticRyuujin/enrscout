@@ -8,8 +8,10 @@ import (
 	"encoding/hex"
 	"net"
 	"sort"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/ethereum/go-ethereum/core/forkid"
 	"github.com/ethereum/go-ethereum/p2p/enode"
@@ -1507,7 +1509,7 @@ func (n *Node) row() Row {
 		CGC: n.CGC, CGCKnown: n.CGCKnown,
 		HasV4: n.HasV4, HasV5: n.HasV5, Score: int32(n.Score),
 		FirstSeen: n.FirstSeen.Unix(), LastSeen: n.LastSeen.Unix(), LastCheck: n.LastCheck.Unix(), LastResolved: unixOrZero(n.LastResolved),
-		Client: n.Client, Version: n.ClientVersion, OS: n.OS, Lang: n.Lang, Caps: n.Capabilities,
+		Client: validUTF8(n.Client), Version: validUTF8(n.ClientVersion), OS: validUTF8(n.OS), Lang: validUTF8(n.Lang), Caps: validUTF8(n.Capabilities),
 		Country: n.Country, City: n.City, Subdivision: n.Subdivision, Lat: n.Lat, Lon: n.Lon, ASN: uint32(n.ASN), Org: n.Org, Hosting: n.Hosting, HostingKnown: n.HostingKnown,
 		Geolocated: n.Geolocated, GeoAccuracyRadiusKM: n.GeoAccuracyRadiusKM,
 		FPStatus: n.fpStatus(), FPAttempts: int32(attempts), FPAt: unixOrZero(n.fpAt), FPNext: unixOrZero(n.fpNext),
@@ -1517,6 +1519,11 @@ func (n *Node) row() Row {
 		ENRForkDigest: n.ENRSchedule.Digest, ENRNextForkVersion: n.ENRSchedule.NextVersion, ENRNextForkEpoch: n.ENRSchedule.NextEpoch,
 		MDCGC: n.Metadata.CGC, MDCGCKnown: n.Metadata.CGCKnown, MDAttnets: n.Metadata.Attnets, MDSyncnets: uint32(n.Metadata.Syncnets), MDAt: unixOrZero(n.Metadata.At),
 	}
+}
+
+// A peer chooses the bytes of the client fields, and DuckDB rejects a whole Parquet file for one string that is not valid UTF-8.
+func validUTF8(s string) string {
+	return strings.ToValidUTF8(s, string(utf8.RuneError))
 }
 
 func unixOrZero(t time.Time) int64 {

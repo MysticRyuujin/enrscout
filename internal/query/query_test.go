@@ -13,6 +13,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/p2p/enode"
@@ -510,6 +511,56 @@ func TestFailedRefreshPreservesLiveTable(t *testing.T) {
 	}
 	if res.Total != 1 {
 		t.Fatalf("failed refresh replaced live table: total=%d, want 1", res.Total)
+	}
+}
+
+func TestRefreshLoadsGenerationWithInvalidUTF8(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.NewFS(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	set := nodeset.NewWithLimit(0)
+	set.Observe(mainnetNode(t), "v5", time.Now())
+	rows := set.SnapshotNetworks([]string{"mainnet"})["mainnet"]
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(rows))
+	}
+	rows[0].Client, rows[0].Version, rows[0].Caps = "Geth", "v1.17\xff", "eth\xff/68"
+	data, err := nodeset.ParquetFromRows(rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	layout := snapshot.Layout{}
+	gen := time.Now()
+	key := layout.GenerationKey("mainnet", gen)
+	if err := st.Put(ctx, key, data, ""); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(data)
+	if err := snapshot.Write(ctx, st, layout, testManifest(gen, "test-crawler", map[string]snapshot.NetworkSnapshot{
+		"mainnet": {GenerationKey: key, NodeCount: 1, Bytes: len(data), SHA256: hex.EncodeToString(sum[:])},
+	})); err != nil {
+		t.Fatal(err)
+	}
+
+	eng, err := New(st, []string{"mainnet"}, t.TempDir(), "snapshots")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Close()
+	if err := eng.Refresh(ctx); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	res, err := eng.Nodes(ctx, Filter{Network: "mainnet"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Total != 1 || len(res.Nodes) != 1 {
+		t.Fatalf("total = %d, nodes = %d, want 1", res.Total, len(res.Nodes))
+	}
+	if n := res.Nodes[0]; n.Client != "Geth" || !utf8.ValidString(n.ClientVersion) || !utf8.ValidString(n.Capabilities) {
+		t.Errorf("node = %q %q %q, want valid UTF-8", n.Client, n.ClientVersion, n.Capabilities)
 	}
 }
 
