@@ -3,6 +3,7 @@ package discovery
 import (
 	"errors"
 	"net"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -321,6 +322,8 @@ func TestCrawlerProbesAnotherNodeOverBothProtocols(t *testing.T) {
 		if err != nil {
 			t.Fatalf("FindnodeV5: %v", err)
 		}
+		// The pings put the prober in the target's table, in the same bucket as other for half of all keys.
+		nodes = slices.DeleteFunc(nodes, func(n *enode.Node) bool { return n.ID() == prober.LocalNode().ID() })
 		if len(nodes) == 1 && nodes[0].ID() == other.LocalNode().ID() {
 			return
 		}
