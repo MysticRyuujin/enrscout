@@ -15,6 +15,7 @@ import (
 	"github.com/ethereum/go-ethereum/p2p/netutil"
 
 	"github.com/MysticRyuujin/enrscout/internal/netconf"
+	"github.com/MysticRyuujin/enrscout/internal/netpolicy"
 )
 
 var errUnresolved = errors.New("no resolver reached node")
@@ -40,6 +41,8 @@ type Config struct {
 	PortV5      int
 	NodeDBPath  string
 	NetRestrict *netutil.Netlist
+
+	AllowPrivate bool
 
 	// A CL identity (Eth2/Attnets/TCP, shared Key, CLOnly to drop eth so bootnodes file it as consensus) draws peer-hungry consensus clients to dial in.
 	Key       *ecdsa.PrivateKey
@@ -90,6 +93,7 @@ type Crawler struct {
 	endpoints []endpoint
 	conns     []*net.UDPConn
 	closers   []func()
+	usable    func(net.IP) bool
 }
 
 // sharedUDPConn gives discv5 the packets discv4 could not decode while both
@@ -170,7 +174,7 @@ func New(cfg Config) (*Crawler, error) {
 	}
 
 	dcfg := discover.Config{PrivateKey: key, Bootnodes: cfg.Bootnodes, NetRestrict: cfg.NetRestrict}
-	c := &Crawler{ln: ln, db: db}
+	c := &Crawler{ln: ln, db: db, usable: func(ip net.IP) bool { return netpolicy.Usable(ip, cfg.AllowPrivate) }}
 
 	families := cfg.Families
 	if len(families) == 0 {
@@ -310,7 +314,13 @@ func (c *Crawler) ResolveProtocol(n *enode.Node, proto string) (*enode.Node, str
 		if e.proto != proto || !fams[e.family] {
 			continue
 		}
-		rn, err := e.res.RequestENR(familyNode(n, e.family))
+		// n is peer-supplied. go-ethereum checks only the preferred endpoint of a relayed
+		// record, and no endpoint of a record from an inbound discv5 handshake.
+		target := familyNode(n, e.family)
+		if !c.usable(target.IP()) {
+			continue
+		}
+		rn, err := e.res.RequestENR(target)
 		if err != nil || rn == nil {
 			continue
 		}

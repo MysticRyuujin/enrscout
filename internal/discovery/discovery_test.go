@@ -25,6 +25,9 @@ func (r *countingResolver) RequestENR(*enode.Node) (*enode.Node, error) {
 	return r.node, r.err
 }
 
+// The address policy never accepts the loopback and documentation addresses these tests resolve.
+func anyAddress(net.IP) bool { return true }
+
 func TestValidateConfig(t *testing.T) {
 	valid := Config{CLOnly: true, PortV4: 30303, PortV5: 30303}
 	if err := validateConfig(valid); err != nil {
@@ -63,7 +66,7 @@ func TestResolveProtocolUsesOnlyRequestedProtocol(t *testing.T) {
 	node := enode.NewV4(&key.PublicKey, net.ParseIP("127.0.0.1"), 30303, 30303)
 	v4 := &countingResolver{node: node}
 	v5 := &countingResolver{err: errors.New("unexpected")}
-	crawler := &Crawler{endpoints: []endpoint{
+	crawler := &Crawler{usable: anyAddress, endpoints: []endpoint{
 		{proto: "v5", family: "udp4", res: v5},
 		{proto: "v4", family: "udp4", res: v4},
 	}}
@@ -183,7 +186,7 @@ func TestResolveProtocolAsksEachFamilyAtItsOwnEndpoint(t *testing.T) {
 
 	v4 := &recordingResolver{countingResolver: countingResolver{err: errors.New("unreachable")}}
 	v6 := &recordingResolver{countingResolver: countingResolver{node: node}}
-	crawler := &Crawler{endpoints: []endpoint{
+	crawler := &Crawler{usable: anyAddress, endpoints: []endpoint{
 		{proto: "v4", family: "udp4", res: v4},
 		{proto: "v4", family: "udp6", res: v6},
 	}}
@@ -212,6 +215,82 @@ func TestResolveProtocolAsksEachFamilyAtItsOwnEndpoint(t *testing.T) {
 	v6.node = older
 	if got, _, err := crawler.ResolveProtocol(node, "v4"); err != nil || got != node {
 		t.Fatalf("older response: ResolveProtocol = %v, %v, want the newer input record", got, err)
+	}
+}
+
+func TestResolveProtocolSkipsAddressesThePolicyRejects(t *testing.T) {
+	const global4, global6 = "8.8.8.8", "2001:4860:4860::8888"
+	tests := []struct {
+		name         string
+		allowPrivate bool
+		ip4, ip6     string
+		want4, want6 string
+	}{
+		{"loopback as the only endpoint", false, "127.0.0.1", "", "", ""},
+		{"private as the only endpoint", false, "10.0.0.1", "", "", ""},
+		{"loopback beside a preferred global ip6", false, "127.0.0.1", global6, "", "[" + global6 + "]:30304"},
+		{"link-local ip6 beside a preferred global ip", false, global4, "fe80::1", global4 + ":30303", ""},
+		{"private on a devnet", true, "10.0.0.1", "", "10.0.0.1:30303", ""},
+		{"loopback on a devnet", true, "127.0.0.1", "", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			key, err := crypto.GenerateKey()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var r enr.Record
+			r.Set(enr.IP(net.ParseIP(tt.ip4)))
+			r.Set(enr.UDP(30303))
+			if tt.ip6 != "" {
+				r.Set(enr.IP(net.ParseIP(tt.ip6)))
+				r.Set(enr.UDP6(30304))
+			}
+			r.SetSeq(1)
+			if err := enode.SignV4(&r, key); err != nil {
+				t.Fatal(err)
+			}
+			node, err := enode.New(enode.ValidSchemes, &r)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			loopback := net.IP{127, 0, 0, 1}
+			probe, err := net.ListenUDP("udp4", &net.UDPAddr{IP: loopback})
+			if err != nil {
+				t.Fatal(err)
+			}
+			port := probe.LocalAddr().(*net.UDPAddr).Port
+			probe.Close()
+			crawler, err := New(Config{
+				CLOnly: true, PortV4: port, PortV5: port, Families: []string{"udp4"},
+				StaticIPs: []net.IP{loopback}, AllowPrivate: tt.allowPrivate,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer crawler.Close()
+			v4 := &recordingResolver{countingResolver: countingResolver{err: errors.New("unreachable")}}
+			v6 := &recordingResolver{countingResolver: countingResolver{err: errors.New("unreachable")}}
+			crawler.endpoints = []endpoint{
+				{proto: "v4", family: "udp4", res: v4},
+				{proto: "v4", family: "udp6", res: v6},
+			}
+
+			if _, _, err := crawler.ResolveProtocol(node, "v4"); err == nil {
+				t.Fatal("resolved through resolvers that never answer")
+			}
+			asked := func(r *recordingResolver) string {
+				if r.got == nil {
+					return ""
+				}
+				ep, _ := r.got.UDPEndpoint()
+				return ep.String()
+			}
+			if got4, got6 := asked(v4), asked(v6); got4 != tt.want4 || got6 != tt.want6 {
+				t.Fatalf("asked udp4 %q and udp6 %q, want %q and %q", got4, got6, tt.want4, tt.want6)
+			}
+		})
 	}
 }
 
@@ -269,6 +348,7 @@ func TestResolveDualStackUnreachableIPv4(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer crawler.Close()
+			crawler.usable = anyAddress
 
 			got, via, err := crawler.ResolveProtocol(ln.Node(), proto)
 			if err != nil {

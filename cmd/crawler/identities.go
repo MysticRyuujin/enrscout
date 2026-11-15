@@ -150,6 +150,7 @@ func newIdentityRuntime(ctx context.Context, cr *crawler, families []string, res
 		cfg := discovery.Config{
 			Network: nw, Families: families, PortV4: spec.DiscoveryPort, PortV5: spec.DiscoveryPort,
 			Key: key, NetRestrict: restrict, StaticIPs: staticIPs, TCP: spec.TCPPort, QUIC: spec.QUICPort,
+			AllowPrivate: conf.allowPrivate || conf.devnetOnly,
 		}
 		if spec.Layer == layerEL {
 			cfg.Bootnodes, err = netconf.Bootnodes(spec.Network)
