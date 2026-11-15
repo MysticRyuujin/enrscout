@@ -1521,7 +1521,8 @@ func (n *Node) row() Row {
 	}
 }
 
-// A peer chooses the bytes of the client fields, and DuckDB rejects a whole Parquet file for one string that is not valid UTF-8.
+// A peer chooses the bytes of the client fields, and DuckDB rejects a whole
+// Parquet file for one string that is not valid UTF-8.
 func validUTF8(s string) string {
 	return strings.ToValidUTF8(s, string(utf8.RuneError))
 }

@@ -506,7 +506,9 @@ func (e *Engine) Refresh(ctx context.Context) error {
 	// node to one network, and the per-network count assertion below deliberately fails the whole
 	// refresh if it ever fires, keeping the previously committed table rather than serving a
 	// silently deduplicated one.
-	// utf8_validation: the default fails the load of every network for one string that is not valid UTF-8.
+	//
+	// utf8_validation: the default fails the load of every network for one string that is not
+	// valid UTF-8.
 	q := fmt.Sprintf(`CREATE OR REPLACE TABLE nodes_staging AS
 		SELECT * EXCLUDE (rn, fp_attempts, fp_next),
 			((ip <> '' AND (tcp <> 0 OR quic <> 0)) OR (ip6 <> '' AND (tcp6 <> 0 OR tcp <> 0 OR quic6 <> 0 OR quic <> 0))) AS dialable
