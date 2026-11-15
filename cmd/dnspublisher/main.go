@@ -107,7 +107,7 @@ func run() error {
 		protocol     = flag.String("protocol", "any", "require discovery protocol: any|v4|v5")
 		layer        = flag.String("layer", "el", "restrict to a layer: el|cl|any (EL-only matches discv4-crawl trees and excludes un-peerable beacon nodes)")
 		limit        = flag.Int("limit", 0, "maximum nodes to include (0 = all)")
-		maxPerIP     = flag.Int("max-per-ip", 5, "maximum records per IP address in one tree, highest ranked first (0 = no cap)")
+		maxPerIP     = flag.Int("max-per-ip", 5, "maximum records per IPv4 address or IPv6 /64 in one tree, highest ranked first (0 = no cap)")
 		balance      = flag.String("client-balance", balanceProportional, "how --limit is shared across clients: proportional (every identified client gets a slot, the rest by pool share) or none (highest scoring first)")
 		dryRun       = flag.Bool("dry-run", false, "allow an ephemeral key and never require --key-file")
 		validate     = flag.Bool("validate", false, "parse the signed tree URL back to verify it")
