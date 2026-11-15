@@ -30,6 +30,7 @@ type selectOpts struct {
 	layer      string
 	capability string
 	limit      int
+	maxPerIP   int
 	balance    string
 }
 
@@ -49,6 +50,9 @@ func (o selectOpts) Validate() error {
 	}
 	if o.limit < 0 {
 		return errors.New("--limit must not be negative")
+	}
+	if o.maxPerIP < 0 {
+		return errors.New("--max-per-ip must not be negative")
 	}
 	if o.balance != balanceProportional && o.balance != balanceNone {
 		return errors.New("--client-balance must be proportional or none")
@@ -228,6 +232,29 @@ func rankCandidates(rows []nodeset.Row, opt selectOpts, now time.Time) []candida
 	return out
 }
 
+// capPerIP keeps the first max candidates for each address. A signed record proves its key, not its
+// endpoint, so without a cap one key holder can fill a tree with records that name one address.
+func capPerIP(cands []candidate, max int) []candidate {
+	if max <= 0 {
+		return cands
+	}
+	seen := map[string]int{}
+	out := make([]candidate, 0, len(cands))
+	for _, c := range cands {
+		if (c.row.IP != "" && seen[c.row.IP] >= max) || (c.row.IP6 != "" && seen[c.row.IP6] >= max) {
+			continue
+		}
+		if c.row.IP != "" {
+			seen[c.row.IP]++
+		}
+		if c.row.IP6 != "" {
+			seen[c.row.IP6]++
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
 // pick selects one tree's nodes from the ranked candidates.
 func pick(cands []candidate, opt selectOpts) []candidate {
 	if opt.capability == "snap" {
@@ -239,6 +266,7 @@ func pick(cands []candidate, opt selectOpts) []candidate {
 		}
 		cands = snap
 	}
+	cands = capPerIP(cands, opt.maxPerIP)
 	if opt.limit <= 0 || len(cands) <= opt.limit {
 		return cands
 	}

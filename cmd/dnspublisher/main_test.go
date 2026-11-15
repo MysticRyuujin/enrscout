@@ -958,6 +958,32 @@ func TestSelectNodesPrefersScoreThenFreshness(t *testing.T) {
 	}
 }
 
+func TestSelectNodesCapsRecordsPerIP(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	var rows []nodeset.Row
+	for i := range 7 {
+		rows = append(rows, currentMainnetEL(t, v4Row(t, 1, 30303+i, int32(i+1), now), now))
+	}
+	lowest := rows[0].ID
+	other := currentMainnetEL(t, v4Row(t, 2, 30303, 1, now), now)
+	rows = append(rows, other)
+
+	got := selectNodes(rows, selectOpts{minScore: 1, protocol: "any", maxPerIP: 5}, now)
+	if len(got) != 6 {
+		t.Fatalf("selected %d nodes, want 5 for the shared address and 1 for the other", len(got))
+	}
+	ids := map[string]bool{}
+	for _, n := range got {
+		ids[n.ID().String()] = true
+	}
+	if ids[lowest] || !ids[other.ID] {
+		t.Fatalf("cap must drop the lowest-ranked record of the shared address and keep the other address")
+	}
+	if got := selectNodes(rows, selectOpts{minScore: 1, protocol: "any"}, now); len(got) != 8 {
+		t.Fatalf("selected %d nodes with no cap, want 8", len(got))
+	}
+}
+
 func TestSelectNodesAgeUsesPublicationTime(t *testing.T) {
 	snapshotTime := time.Unix(1700000000, 0)
 	row := currentMainnetEL(t, v4Row(t, 1, 30303, 5, snapshotTime), snapshotTime)
@@ -988,6 +1014,7 @@ func TestSelectOptsValidate(t *testing.T) {
 		{"invalid protocol", mutate(func(o *selectOpts) { o.protocol = "v6" })},
 		{"invalid layer", mutate(func(o *selectOpts) { o.layer = "exec" })},
 		{"negative limit", mutate(func(o *selectOpts) { o.limit = -1 })},
+		{"negative per-IP cap", mutate(func(o *selectOpts) { o.maxPerIP = -1 })},
 		{"unknown client balance", mutate(func(o *selectOpts) { o.balance = "weighted" })},
 	}
 	for _, tt := range tests {

@@ -58,6 +58,11 @@ Guidance for coding agents working in `cmd/dnspublisher`. Repo-wide rules are in
   and a post-fork publish from a pre-fork snapshot never passes the guards, because no record in it
   is current. `enrscout_dns_tree_nodes_by_readiness` and the
   `ready`/`ready_only` log fields show what each tree holds.
+  **`--max-per-ip` (default 5) caps records per address in one tree**, before `--limit`, in rank
+  order, counted separately for `all` and `snap`. A dual-stack record counts against each of its
+  addresses. A signed record proves its key, not its endpoint (see the root `AGENTS.md`), so the cap
+  bounds how far one key holder can aim a tree at one address. It costs operators with more than
+  that many nodes behind one NAT address the extra records.
   When `--limit` binds, IPv6 also gets a reserved share: address family is not a client-balance
   dimension, so a family holding a few percent of the pool otherwise rounds away to nothing (at
   `--limit=25` a 2.4% IPv6 share expects 0.6 nodes). `reserveIPv6` gives it its proportional share and

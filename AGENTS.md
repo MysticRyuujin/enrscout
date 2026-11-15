@@ -119,8 +119,13 @@ Reviewed and deliberately not fixed; re-litigate only with new information.
   promote a row whose endpoint came from elsewhere: an unsigned discv4 sighting (`pendingLegacy`, a
   retained candidate, or the cached Status in `resolverPool.resolve`), or an ENR the key holder signed
   for any IP. So a key holder can get a `status` row at an address it does not own, and a third party
-  can relay a wrong IP for a real legacy node until it resolves or is dialed. The impact is on the
-  explorer dataset; unsigned rows never reach DNS trees, which need a signed ENR. Binding unsigned
+  can relay a wrong IP for a real legacy node until it resolves or is dialed. Unsigned rows never
+  reach DNS trees, which need a signed ENR. A signed record for an address its key holder does not
+  own can reach a DNS tree, because the score credits the key and no step proves the endpoint;
+  go-ethereum's crawl pipeline has the same property. `--max-per-ip` on the DNS publisher (default 5)
+  bounds how many records one address can hold in a tree; it does not prove an endpoint. An endpoint
+  proof was rejected: it needs an evidence column and an outbound dial that most peers refuse at
+  their peer limit, for a tree that is a fallback. Binding unsigned
   rows to the connection IP needs the check inside the nodeset lock, and binding signed rows drops
   inbound identification for NAT and dual-stack nodes. Two scan-driven fixes were rejected for these
   reasons.
