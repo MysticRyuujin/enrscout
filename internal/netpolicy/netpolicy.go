@@ -14,6 +14,13 @@ var (
 	classE = net.IPNet{IP: net.IPv4(240, 0, 0, 0).To4(), Mask: net.CIDRMask(4, 32)}
 )
 
+// A NAT64 gateway forwards these prefixes (RFC 6052, RFC 8215) to the IPv4 address embedded
+// in them, private ranges included, so the IPv4 rules never see the real destination.
+var (
+	nat64      = net.IPNet{IP: net.ParseIP("64:ff9b::"), Mask: net.CIDRMask(96, 128)}
+	nat64Local = net.IPNet{IP: net.ParseIP("64:ff9b:1::"), Mask: net.CIDRMask(48, 128)}
+)
+
 // Usable reports whether ip is safe to retain or dial. Private addresses are
 // accepted only for an explicitly isolated devnet; loopback, link-local,
 // multicast, unspecified, documentation, and other special-use ranges never are.
@@ -25,7 +32,7 @@ func Usable(ip net.IP, allowPrivate bool) bool {
 	if ip.IsPrivate() {
 		return allowPrivate
 	}
-	if cgnat.Contains(ip) || classE.Contains(ip) {
+	if cgnat.Contains(ip) || classE.Contains(ip) || nat64.Contains(ip) || nat64Local.Contains(ip) {
 		return false
 	}
 	return !netutil.IsSpecialNetwork(ip)
