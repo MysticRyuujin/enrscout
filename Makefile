@@ -57,7 +57,7 @@ web-install:
 	cd web && npm ci --ignore-scripts
 
 web-audit:
-	cd web && npm audit --audit-level=moderate
+	cd web && npm audit --json | node audit.mjs
 
 web-build:
 	cd web && npm run build
