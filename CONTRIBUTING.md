@@ -15,7 +15,7 @@ go build ./...
 
 cd web
 npm ci
-npm audit --audit-level=moderate
+npm audit --json | node audit.mjs
 npm run build
 ```
 
