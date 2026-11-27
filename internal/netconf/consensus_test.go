@@ -176,6 +176,7 @@ func TestGlamsterdamTransition(t *testing.T) {
 		clBefore, clAfter string
 	}{
 		{"sepolia", sepoliaGlamsterdam, 353024, "268956b6", "6c1d9423", "74d01459", "669e6c11"},
+		{"hoodi", hoodiGlamsterdam, 143616, "23aa1351", "3ae0b2e6", "c6ecb76c", "5ad30129"},
 	} {
 		n, _ := Get(net.name)
 		for _, tc := range []struct {

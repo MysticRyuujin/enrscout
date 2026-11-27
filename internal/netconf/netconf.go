@@ -368,7 +368,10 @@ var registry = []*Network{
 // elScheduleOverrides schedules EL forks that the pinned go-ethereum does not carry yet, by network.
 // A name is the genesis key without "Time", such as "Amsterdam". Delete an entry once go-ethereum
 // ships it: TestELScheduleOverridesAreStillNeeded fails from that upgrade on.
-var elScheduleOverrides = map[string][]elForkTime{}
+var elScheduleOverrides = map[string][]elForkTime{
+	// eth-clients/hoodi#35; go-ethereum#36247 is not released yet.
+	"hoodi": {{name: "Amsterdam", time: 1797361944}},
+}
 
 // Execution bootnodes are the NodeOps fleet's dual-stack records (discv4 and discv5 on the EL
 // port), as go-ethereum PR #35682 ships them. They carry no eth entry, so they never need

@@ -163,8 +163,14 @@ Delete the cancellation only when both hold: the time plus 14 days has passed, a
 binary still compiles the fork (go-ethereum and `internal/netconf/consensus.go` both dropped it).
 Otherwise a restart brings the cancelled fork back as canonical.
 
-If a fork is rescheduled, update the fork schedule first. Entries verified against the old time then
-show as outdated, and their labels stay hidden until each one is checked again and its `fork_time`
+If a fork is rescheduled, update the fork schedule first. The fork keeps its name, so a
+`cancelled_forks` entry for the old time stops startup once the new schedule is compiled. Delete that
+entry and its notice in the same deploy. The old time must be more than 14 days past: a cancellation
+matches its fork by name, so the old and new times cannot be tracked side by side. A CL node that
+activated the fork at the old time can advertise the new post-fork digest, because the digest
+depends on the fork version and blob parameters, not the epoch. After the new time it reads as
+current. The EL fork id includes the time, so EL nodes are not affected. Entries verified against
+the old time then show as outdated, and their labels stay hidden until each one is checked again and its `fork_time`
 is updated. The trend chart restarts too: the API withholds history recorded against the old
 time, and the crawler starts a new series on its next point.
 
