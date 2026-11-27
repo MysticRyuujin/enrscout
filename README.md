@@ -135,11 +135,12 @@ It holds three things:
   after a change. See the [fork runbook](docs/operations.md#cancelling-a-scheduled-fork).
 
 ```yaml
+# Illustration only: these are the coordinates of the compiled Hoodi schedule.
 cancelled_forks:
   - network: hoodi
     fork: Glamsterdam
-    el: {name: Amsterdam, time: 1793036568}
-    cl: {name: gloas, epoch: 132352, version: "80000910"}
+    el: {name: Amsterdam, time: 1797361944}
+    cl: {name: gloas, epoch: 143616, version: "80000910"}
 notices:
   - network: hoodi
     severity: critical
@@ -180,7 +181,7 @@ releases:
     network: hoodi
     layer: el
     client: Nethermind
-    fork_time: 1793036568 # the activation this entry was checked against
+    fork_time: 1797361944 # the activation this entry was checked against
     min_versions: ["2.2.0"] # one floor per release line; add a backport line's floor here
     released: 2026-10-16
     url: https://github.com/NethermindEth/nethermind/releases/tag/2.2.0

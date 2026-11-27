@@ -30,7 +30,7 @@ func freshNetwork(t *testing.T, name string) *Network {
 func hoodiGlamsterdamCancellation() CancelledFork {
 	return CancelledFork{Network: "hoodi", Fork: "Glamsterdam",
 		EL: &CancelledELFork{Name: "Amsterdam", Time: hoodiGlamsterdam},
-		CL: &CancelledCLFork{Name: "gloas", Epoch: 132352, Version: "80000910"}}
+		CL: &CancelledCLFork{Name: "gloas", Epoch: 143616, Version: "80000910"}}
 }
 
 func sepoliaGlamsterdamCancellation() CancelledFork {
@@ -42,8 +42,8 @@ func sepoliaGlamsterdamCancellation() CancelledFork {
 func TestCancelHoodiGlamsterdam(t *testing.T) {
 	n := freshNetwork(t, "hoodi")
 	absent, err := ApplyCancellations([]CancelledFork{hoodiGlamsterdamCancellation()})
-	if err != nil || len(absent) != 2 {
-		t.Fatalf("ApplyCancellations = %v, %v; want both layers absent from the compiled schedule", absent, err)
+	if err != nil || len(absent) != 0 {
+		t.Fatalf("ApplyCancellations = %v, %v; want both layers in the compiled schedule", absent, err)
 	}
 	before, activation := time.Unix(hoodiGlamsterdam-86400, 0), time.Unix(hoodiGlamsterdam, 0)
 
@@ -64,7 +64,7 @@ func TestCancelHoodiGlamsterdam(t *testing.T) {
 		t.Fatal(err)
 	}
 	if target.Name != "Glamsterdam" || !target.IsCancelled() || target.Phase() != PhaseCancelled ||
-		target.EL.PreHash != "23aa1351" || target.EL.PostHash != "3d068b59" ||
+		target.EL.PreHash != "23aa1351" || target.EL.PostHash != "3ae0b2e6" ||
 		target.CL.PreDigest != "c6ecb76c" || target.CL.PostDigest != "5ad30129" || target.Activation() != activation.UTC() {
 		t.Fatalf("target = %+v (EL %+v, CL %+v)", target, target.EL, target.CL)
 	}
@@ -72,13 +72,13 @@ func TestCancelHoodiGlamsterdam(t *testing.T) {
 		t.Fatalf("target after grace = %+v, want none", expired)
 	}
 
-	if _, ok := n.gatherHashes(before)[[4]byte{0x3d, 0x06, 0x8b, 0x59}]; !ok {
+	if _, ok := n.gatherHashes(before)[[4]byte{0x3a, 0xe0, 0xb2, 0xe6}]; !ok {
 		t.Error("a node on the cancelled fork no longer classifies as hoodi")
 	}
 	if got := ClassifyCL([4]byte{0x5a, 0xd3, 0x01, 0x29}); got != "hoodi" {
 		t.Errorf("cancelled Gloas digest classifies as %q", got)
 	}
-	if IsCurrentCLForkAt("hoodi", "5ad30129", activation.Add(time.Hour)) || IsCurrentForkAt("hoodi", "3d068b59", activation.Add(time.Hour)) {
+	if IsCurrentCLForkAt("hoodi", "5ad30129", activation.Add(time.Hour)) || IsCurrentForkAt("hoodi", "3ae0b2e6", activation.Add(time.Hour)) {
 		t.Error("the cancelled fork reads as current")
 	}
 
@@ -92,9 +92,9 @@ func TestCancelHoodiGlamsterdam(t *testing.T) {
 		{"el still scheduled, unrefreshed after", ReadinessEvidence{Layer: "el", ForkHash: "23aa1351", ForkNext: hoodiGlamsterdam}, activation.Add(time.Hour), NotReady},
 		{"el unscheduled", ReadinessEvidence{Layer: "el", ForkHash: "23aa1351"}, before, Ready},
 		{"el unscheduled after", ReadinessEvidence{Layer: "el", ForkHash: "23aa1351"}, activation.Add(time.Hour), Ready},
-		{"el on the cancelled fork", ReadinessEvidence{Layer: "el", ForkHash: "3d068b59"}, activation.Add(time.Hour), NotReady},
+		{"el on the cancelled fork", ReadinessEvidence{Layer: "el", ForkHash: "3ae0b2e6"}, activation.Add(time.Hour), NotReady},
 		{"el older fork", ReadinessEvidence{Layer: "el", ForkHash: "deadbeef"}, before, Stale},
-		{"cl still scheduled", ReadinessEvidence{Layer: "cl", ForkHash: "c6ecb76c", ENRForkDigest: "c6ecb76c", ENRNextForkVersion: "80000910", ENRNextForkEpoch: 132352}, before, NotReady},
+		{"cl still scheduled", ReadinessEvidence{Layer: "cl", ForkHash: "c6ecb76c", ENRForkDigest: "c6ecb76c", ENRNextForkVersion: "80000910", ENRNextForkEpoch: 143616}, before, NotReady},
 		{"cl unscheduled", ReadinessEvidence{Layer: "cl", ForkHash: "c6ecb76c", ENRForkDigest: "c6ecb76c", ENRNextForkVersion: "70000910", ENRNextForkEpoch: math.MaxUint64}, before, Ready},
 		{"cl on the cancelled fork", ReadinessEvidence{Layer: "cl", ForkHash: "5ad30129"}, activation.Add(time.Hour), NotReady},
 		{"cl without ENR", ReadinessEvidence{Layer: "cl", ForkHash: "c6ecb76c"}, before, Unknown},
@@ -211,12 +211,12 @@ func TestCancelAbsentForkTracksOnly(t *testing.T) {
 	const later = hoodiGlamsterdam + 384*7000
 	absent, err := ApplyCancellations([]CancelledFork{{Network: "hoodi", Fork: "Hegota",
 		EL: &CancelledELFork{Name: "Bogota", Time: later},
-		CL: &CancelledCLFork{Name: "heze", Epoch: 132352 + 7000, Version: "90000910"}}})
+		CL: &CancelledCLFork{Name: "heze", Epoch: 143616 + 7000, Version: "90000910"}}})
 	if err != nil || len(absent) != 2 {
 		t.Fatalf("ApplyCancellations = %v, %v; want both layers reported absent", absent, err)
 	}
 	at := time.Unix(hoodiGlamsterdam+3600, 0)
-	if id := n.CurrentForkIDAt(at); id != (forkid.ID{Hash: [4]byte{0x23, 0xaa, 0x13, 0x51}}) {
+	if id := n.CurrentForkIDAt(at); id != (forkid.ID{Hash: [4]byte{0x3a, 0xe0, 0xb2, 0xe6}}) {
 		t.Fatalf("canonical schedule changed: %x/%d", id.Hash, id.Next)
 	}
 	target, err := ForkTargetAt("hoodi", time.Unix(later-60, 0))

@@ -5,167 +5,94 @@
 # releases is the whole client release table: a client without an entry has no label.
 # fork_time is the activation an entry was verified against.
 ---
-updated: 2026-10-22
-cancelled_forks:
-  # eth-clients/hoodi#33 unscheduled Hoodi Glamsterdam; decided on AllCoreDevs Execution #248.
-  - network: hoodi
-    fork: Glamsterdam
-    el: {name: Amsterdam, time: 1793036568}
-    cl: {name: gloas, epoch: 132352, version: "80000910"}
-notices:
-  - network: hoodi
-    fork: Glamsterdam
-    severity: critical
-    title: Hoodi Glamsterdam is cancelled
-    body: |
-      The Glamsterdam upgrade planned for Hoodi on 26 October 2026 at 17:42:48 UTC (epoch 132352) is
-      cancelled for now. A node on a client release that still schedules it will fork away from Hoodi
-      at that time.
-
-      Before then, downgrade to a release without the Hoodi Glamsterdam schedule, or upgrade to a
-      release that removes it. This page counts the nodes that still schedule the fork.
-    links:
-      - {label: "eth-clients/hoodi#33: unschedule Hoodi Glamsterdam", url: "https://github.com/eth-clients/hoodi/pull/33"}
-      - {label: "AllCoreDevs Execution #248", url: "https://forkcast.org/calls/acde/248/"}
+updated: 2026-11-27
 releases:
-  # v30.0.0 schedules Amsterdam on Hoodi at amsterdamTime 1793036568 (PR #7391).
-  - fork: Glamsterdam
-    network: hoodi
-    layer: el
-    client: Ethrex
-    fork_time: 1793036568
-    min_versions: ["30.0.0"]
-    # Only pre-releases drop amsterdamTime from networks/hoodi/genesis.json so far (f2602cd).
-    unscheduled_in: ["30.0.1-rc.2"]
-    released: 2026-10-16
-    url: https://github.com/lambdaclass/ethrex/releases/tag/v30.0.0
-    latest_url: https://github.com/lambdaclass/ethrex/releases/tag/v30.0.1-rc.3
-  # 2.2.0 schedules Amsterdam on Hoodi at 1793036568 (#14489).
-  - fork: Glamsterdam
-    network: hoodi
-    layer: el
-    client: Nethermind
-    fork_time: 1793036568
-    min_versions: ["2.2.0"]
-    released: 2026-10-16
-    url: https://github.com/NethermindEth/nethermind/releases/tag/2.2.0
-  # 26.10.0 schedules Amsterdam on Hoodi at timestamp 1793036568 (#11531).
+  # 26.11.3 schedules Amsterdam on Hoodi at amsterdamTime 1797361944 (besu-eth/besu#12058).
   - fork: Glamsterdam
     network: hoodi
     layer: el
     client: Besu
-    fork_time: 1793036568
-    min_versions: ["26.10.0"]
-    # 26.10.1 drops amsterdamTime from hoodi.json again (besu-eth/besu#11709).
-    unscheduled_in: ["26.10.1"]
-    released: 2026-10-16
-    url: https://github.com/besu-eth/besu/releases/tag/26.10.0
-    latest: 26.10.1
-    latest_url: https://github.com/besu-eth/besu/releases/tag/26.10.1
-  # v0.4.3 execution_chain/common/chain_config.nim: amsterdamTime 1793036568.
-  - fork: Glamsterdam
-    network: hoodi
-    layer: el
-    client: Nimbus
-    fork_time: 1793036568
-    min_versions: ["0.4.3"]
-    released: 2026-10-17
-    url: https://github.com/status-im/nimbus-eth1/releases/tag/v0.4.3
-  # v3.8.0 hoodi.json: amsterdamTime 1793036568.
-  - fork: Glamsterdam
-    network: hoodi
-    layer: el
-    client: Erigon
-    fork_time: 1793036568
-    min_versions: ["3.8.0"]
-    released: 2026-10-20
-    url: https://github.com/erigontech/erigon/releases/tag/v3.8.0
-  # v1.17.9 params/chainspecs/hoodi.json: amsterdamTime 1793036568 (#35974).
+    fork_time: 1797361944
+    min_versions: ["26.11.3"]
+    released: 2026-11-27
+    url: https://github.com/besu-eth/besu/releases/tag/26.11.3
+    latest: 26.11.3
+    latest_url: https://github.com/besu-eth/besu/releases/tag/26.11.3
+  # No release yet. go-ethereum#36247 is open.
   - fork: Glamsterdam
     network: hoodi
     layer: el
     client: Geth
-    fork_time: 1793036568
-    min_versions: ["1.17.9"]
-    # v1.17.10 drops amsterdamTime from params/chainspecs/hoodi.json again (#36001).
-    unscheduled_in: ["1.17.10"]
-    released: 2026-10-21
-    url: https://github.com/ethereum/go-ethereum/releases/tag/v1.17.9
-    latest: 1.17.10
-    latest_url: https://github.com/ethereum/go-ethereum/releases/tag/v1.17.10
-  # v2.8.0 alloy-hardforks 0.4.10: HOODI_AMSTERDAM_TIMESTAMP 1793036568 (#27811).
+    fork_time: 1797361944
+  # No release yet. NethermindEth/nethermind#16447 is open.
+  - fork: Glamsterdam
+    network: hoodi
+    layer: el
+    client: Nethermind
+    fork_time: 1797361944
+  # No release yet. erigontech/erigon#26948 is merged to main, not released.
+  - fork: Glamsterdam
+    network: hoodi
+    layer: el
+    client: Erigon
+    fork_time: 1797361944
+  # No release yet. paradigmxyz/reth#28782 is open (alloy-hardforks 0.4.12).
   - fork: Glamsterdam
     network: hoodi
     layer: el
     client: Reth
-    fork_time: 1793036568
-    min_versions: ["2.8.0"]
-    released: 2026-10-20
-    url: https://github.com/paradigmxyz/reth/releases/tag/v2.8.0
-  # v8.3.0 schedules Gloas on Hoodi at epoch 132352.
+    fork_time: 1797361944
+  # No release yet. No PR yet.
+  - fork: Glamsterdam
+    network: hoodi
+    layer: el
+    client: Ethrex
+    fork_time: 1797361944
+  # No release yet. No release since 0.4.4.
+  - fork: Glamsterdam
+    network: hoodi
+    layer: el
+    client: Nimbus
+    fork_time: 1797361944
+  # No release yet. No PR yet.
   - fork: Glamsterdam
     network: hoodi
     layer: cl
     client: Lighthouse
-    fork_time: 1793036568
-    min_versions: ["8.3.0"]
-    released: 2026-10-19
-    url: https://github.com/sigp/lighthouse/releases/tag/v8.3.0
-  # v7.3.0 schedules Gloas on Hoodi at epoch 132352 (PR #17650).
-  - fork: Glamsterdam
-    network: hoodi
-    layer: cl
-    client: Prysm
-    fork_time: 1793036568
-    min_versions: ["7.3.0"]
-    released: 2026-10-16
-    url: https://github.com/OffchainLabs/prysm/releases/tag/v7.3.0
-  # 26.10.1 schedules Gloas on Hoodi at epoch 132352.
-  - fork: Glamsterdam
-    network: hoodi
-    layer: cl
-    client: Teku
-    fork_time: 1793036568
-    min_versions: ["26.10.1"]
-    released: 2026-10-15
-    url: https://github.com/Consensys-Incorporated/teku/releases/tag/26.10.1
-  # v26.10.1 schedules the Hoodi Glamsterdam activation.
-  - fork: Glamsterdam
-    network: hoodi
-    layer: cl
-    client: Nimbus
-    fork_time: 1793036568
-    min_versions: ["26.10.1"]
-    released: 2026-10-16
-    url: https://github.com/status-im/nimbus-eth2/releases/tag/v26.10.1
-  # v1.50.0 packages/config/src/chainConfig/networks/hoodi.ts: GLOAS_FORK_EPOCH 132352.
+    fork_time: 1797361944
+  # No release yet. ChainSafe/lodestar#10806 is merged to unstable, not released.
   - fork: Glamsterdam
     network: hoodi
     layer: cl
     client: Lodestar
-    fork_time: 1793036568
-    min_versions: ["1.50.0"]
-    # v1.50.1 sets the Hoodi GLOAS_FORK_EPOCH to Infinity again (#10461).
-    unscheduled_in: ["1.50.1"]
-    released: 2026-10-12
-    url: https://github.com/ChainSafe/lodestar/releases/tag/v1.50.0
-    latest: 1.50.1
-    latest_url: https://github.com/ChainSafe/lodestar/releases/tag/v1.50.1
-  # Caplin ships in Erigon v3.8.0, which schedules Gloas on Hoodi at epoch 132352.
+    fork_time: 1797361944
+  # No release yet. OffchainLabs/prysm#17939 is open.
+  - fork: Glamsterdam
+    network: hoodi
+    layer: cl
+    client: Prysm
+    fork_time: 1797361944
+  # No release yet. No PR yet.
+  - fork: Glamsterdam
+    network: hoodi
+    layer: cl
+    client: Teku
+    fork_time: 1797361944
+  # No release yet. Waits for eth-clients/hoodi#35 and a vendor/hoodi bump.
+  - fork: Glamsterdam
+    network: hoodi
+    layer: cl
+    client: Nimbus
+    fork_time: 1797361944
+  # No release yet. erigontech/erigon#26948 is merged to main, not released.
   - fork: Glamsterdam
     network: hoodi
     layer: cl
     client: Caplin
-    fork_time: 1793036568
-    min_versions: ["3.8.0"]
-    released: 2026-10-20
-    url: https://github.com/erigontech/erigon/releases/tag/v3.8.0
-  # 3.0.0-rc.1 schedules Gloas on Hoodi at epoch 132352 (PR #980).
+    fork_time: 1797361944
+  # No release yet. No release since 3.0.0-rc.4.
   - fork: Glamsterdam
     network: hoodi
     layer: cl
     client: Grandine
-    fork_time: 1793036568
-    prerelease: "3.0.0-rc.1"
-    released: 2026-10-19
-    url: https://github.com/grandinetech/grandine/releases/tag/3.0.0-rc.1
+    fork_time: 1797361944

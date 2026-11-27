@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	hoodiGlamsterdam   = 1793036568
+	hoodiGlamsterdam   = 1797361944
 	sepoliaGlamsterdam = 1791294816
 )
 
